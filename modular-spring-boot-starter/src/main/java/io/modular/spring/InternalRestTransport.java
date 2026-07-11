@@ -33,10 +33,13 @@ class InternalRestTransport implements ServiceTransport {
         ModularProperties.ServiceConfig config = properties.getServices().get(invocation.serviceName());
         String url = (config != null) ? config.resolveUrl(invocation.serviceVersion()) : null;
         if (url == null || url.isBlank()) {
+            url = resolveFromTemplate(invocation.serviceName());
+        }
+        if (url == null || url.isBlank()) {
             throw new RemoteServiceException("No url configured for modular service '" + invocation.serviceName()
                     + "' version '" + invocation.serviceVersion() + "' (set modular.services." + invocation.serviceName()
-                    + ".url, or modular.services." + invocation.serviceName() + ".versions." + invocation.serviceVersion()
-                    + ".url for a per-version override)");
+                    + ".url, modular.services." + invocation.serviceName() + ".versions." + invocation.serviceVersion()
+                    + ".url for a per-version override, or modular.remote-url-template for a shared convention)");
         }
 
         String uri = url + properties.getServer().getPathPrefix() + "/" + invocation.serviceName() + "/"
@@ -74,5 +77,20 @@ class InternalRestTransport implements ServiceTransport {
             throw new RemoteServiceException("Failed to deserialize response from modular service '"
                     + invocation.serviceName() + "#" + invocation.methodName() + "'", e);
         }
+    }
+
+    /**
+     * Fallback used when a service has no explicit {@code url} configured: substitutes
+     * {@code {service}} in {@code modular.remote-url-template} with the service's name, e.g.
+     * {@code http://{service}.default.svc.cluster.local:8080} -> {@code http://audit-service.default.svc.cluster.local:8080}.
+     * Package-private (rather than {@code private}) so it's directly, deterministically testable
+     * without needing a real HTTP call.
+     */
+    String resolveFromTemplate(String serviceName) {
+        String template = properties.getRemoteUrlTemplate();
+        if (template == null || template.isBlank()) {
+            return null;
+        }
+        return template.replace("{service}", serviceName);
     }
 }

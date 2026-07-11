@@ -69,6 +69,41 @@ class ModularServiceMultiVersionTest {
     }
 
     @Test
+    void serveSpecOverridesLocalImplDefaultToRemote() {
+        contextRunner
+                .withPropertyValues("modular.serve=counter-service@1")
+                .run(ctx -> {
+                    // v1 is served here -> real bean, unaffected.
+                    assertThat(ctx.getBean(CounterServiceV1.class)).isNotNull();
+                    // v2 has a local impl too, but isn't listed in --modular.serve -> proxy instead,
+                    // proving --modular.serve overrides the local-impl-implies-embedded default.
+                    assertThat(ctx.getBeanProvider(CounterServiceV2.class).getIfAvailable()).isNull();
+
+                    boolean anyProxy = ctx.getBeansOfType(CounterService.class).values().stream()
+                            .anyMatch(bean -> Proxy.isProxyClass(bean.getClass()));
+                    assertThat(anyProxy).isTrue();
+                });
+    }
+
+    @Test
+    void serveSpecContradictingExplicitInternalRestModeFailsFast() {
+        contextRunner
+                .withPropertyValues(
+                        "modular.serve=counter-service@2",
+                        "modular.services.counter-service.versions.2.mode=internal-rest",
+                        "modular.services.counter-service.versions.2.url=http://localhost:0")
+                .run(ctx -> {
+                    assertThat(ctx).hasFailed();
+                    Throwable root = ctx.getStartupFailure();
+                    while (root.getCause() != null) {
+                        root = root.getCause();
+                    }
+                    assertThat(root).isInstanceOf(IllegalStateException.class);
+                    assertThat(root).hasMessageContaining("counter-service@2").hasMessageContaining("--modular.serve");
+                });
+    }
+
+    @Test
     void duplicateVersionClaimFailsFast() {
         new ApplicationContextRunner().withUserConfiguration(DuplicateVersionTestApp.class).run(ctx -> {
             assertThat(ctx).hasFailed();

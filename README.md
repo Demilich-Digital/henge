@@ -30,10 +30,12 @@ code-organization discipline alone doesn't:
 
 That combination — monolith development ergonomics plus microservice deployment flexibility,
 without a rewrite or a redeploy to move between them — is the actual goal. It's honestly not
-fully there yet: there's no service discovery (see "Not in v1" below), so splitting past a
-couple of hand-configured hosts gets tedious, and no retries/auth on the internal transport. The
-versioning-in-the-binary and deploy-time-topology mechanics are solid; the operational maturity
-for scaling like a "real" microservice fleet isn't built yet.
+fully there yet: modular-spring itself still tracks nothing about which instances are alive or
+where (see "Not in v1" below) — `--modular.serve` and `--modular.remote-url-template` let the
+binary lean on an existing orchestrator's own discovery (k8s DNS, Consul DNS, ...) rather than
+requiring hand-configured hosts, but there's still no health-aware routing, retries, or auth on
+the internal transport. The versioning-in-the-binary and deploy-time-topology mechanics are
+solid; the operational maturity for scaling like a "real" microservice fleet isn't built yet.
 
 ## Concept
 
@@ -75,7 +77,11 @@ for scaling like a "real" microservice fleet isn't built yet.
 
   or the CLI-flag equivalent: `--modular.services.audit-service.mode=internal-rest --modular.services.audit-service.url=http://localhost:8082`.
   Single-version services never need the `versions` block at all.
-
+- For deployments with more than a couple of services, spelling out `mode`/`url` for every
+  service *other* than the one(s) a given process hosts gets old fast — **`--modular.serve`** and
+  **`--modular.remote-url-template`** exist so a process can instead just declare what it *is* and
+  let an existing orchestrator (Kubernetes, ECS, Nomad, ...) handle the rest. See "Fitting into an
+  existing orchestrator" below.
 - Callers always just `@Autowired` the interface (optionally qualified with `@ServiceVersion`).
   They never know or care which mode is in effect — that's the location transparency the whole
   framework exists for.
@@ -204,22 +210,23 @@ crossed the network for this particular request.
 
 ### Run as two split processes (same jar, two CLI-flag-configured instances)
 
-Terminal 1 — hosts `AuditServiceImpl`, treats `greeting-service` as remote (unused in this demo,
-but pointed somewhere so a stray call doesn't silently misconfigure to itself):
+Terminal 1 — hosts `audit-service` only; everything else this process discovers on the classpath
+(`greeting-service`) defaults to `internal-rest` automatically because `--modular.serve` is set:
 
 ```bash
 java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar \
   --server.port=8082 \
-  --modular.services.greeting-service.mode=internal-rest \
-  --modular.services.greeting-service.url=http://localhost:1
+  --modular.serve=audit-service
 ```
 
-Terminal 2 — hosts `GreetingServiceImpl`, dispatches `audit-service` calls to terminal 1 over HTTP:
+Terminal 2 — hosts `greeting-service` only, and is told where to find `audit-service` (no real DNS
+on localhost, so this uses an explicit `url` — see "Fitting into an existing orchestrator" below
+for the templated form real deployments would use instead):
 
 ```bash
 java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar \
   --server.port=8080 \
-  --modular.services.audit-service.mode=internal-rest \
+  --modular.serve=greeting-service \
   --modular.services.audit-service.url=http://localhost:8082
 ```
 
@@ -228,8 +235,41 @@ curl http://localhost:8080/api/greet/Bob   # -> "Hello, Bob!" (crossed processes
 curl http://localhost:8082/api/audit       # -> ["greeted:Bob"], recorded by the *other* process
 ```
 
-Same code, same jar, two independently deployable processes — the only difference is three CLI
-flags.
+Same code, same jar, two independently deployable processes — the only difference is what each
+one declares itself to *be*, not a growing list of everything it isn't.
+
+### Fitting into an existing orchestrator
+
+`--modular.serve` and `--modular.remote-url-template` are independent and composable:
+
+- **`--modular.serve=<name>[@<version>][,...]`** sets what's embedded in this process; everything
+  else discovered on the classpath defaults to `internal-rest` instead of the usual `embedded`
+  default. Leaving it unset (the default) changes nothing — today's "everything embedded unless
+  configured otherwise" behavior is exactly as before.
+- **`--modular.remote-url-template=http://{service}.default.svc.cluster.local:8080`** fills in a
+  `url` for anything that ends up `internal-rest` without one, substituting `{service}` with the
+  service's name — matching whatever DNS convention an orchestrator already hands you for free (a
+  Kubernetes `Service`, an ECS Cloud Map namespace, Consul DNS, ...).
+
+Precedence, per service: an explicit `modular.services.<name>.url` always wins (the escape hatch
+for anything that doesn't fit the convention) → else derived from `--modular.remote-url-template`
+→ else the call fails, naming exactly which config key is missing. Mode works the same way:
+explicit `modular.services.<name>.mode` always wins → else `embedded` if `--modular.serve` names
+this (service, version) or `--modular.serve` is empty → else `internal-rest`. Declaring a service
+in `--modular.serve` while also explicitly setting its mode to `internal-rest` is a contradiction
+and fails fast at startup rather than silently picking one.
+
+There's no real DNS on localhost, but the fallback itself is fully exercisable there too —
+equivalent to terminal 2 above, just via the template instead of an explicit `.url`:
+
+```bash
+--modular.serve=greeting-service --modular.remote-url-template=http://localhost:8082
+```
+
+This is deliberately *not* service discovery — modular-spring never tracks "who is currently
+running where." It just makes the binary a well-behaved, single-purpose replica so whatever's
+already scheduling and load-balancing containers can do that job, instead of this framework
+reinventing it. See "Why this isn't just a 'modulith'" above.
 
 ### Two versions of a service side by side
 
@@ -278,7 +318,11 @@ error JSON.
 
 Deliberately out of scope for now, to keep the core mechanism small and correct:
 
-- Service discovery/registry (Eureka, Consul, DNS-based) — URLs are static config today.
+- Service discovery/registry — `--modular.serve` + `--modular.remote-url-template` (see "Fitting
+  into an existing orchestrator") let the binary lean on whatever discovery an existing
+  orchestrator already provides (k8s DNS, Consul DNS, ...), but modular-spring itself still tracks
+  nothing about which instances are actually alive or where — no health-aware routing, no dynamic
+  membership.
 - A `grpc` `ServiceTransport` implementation (the SPI is ready for it).
 - Auth / mTLS between internal services — `/_modular/**` endpoints are unauthenticated and are
   expected to sit behind a network boundary (VPC / service mesh), not the public internet.

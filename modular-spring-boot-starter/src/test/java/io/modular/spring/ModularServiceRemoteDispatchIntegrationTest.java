@@ -51,4 +51,37 @@ class ModularServiceRemoteDispatchIntegrationTest {
             server.close();
         }
     }
+
+    @Test
+    void remoteUrlTemplateFillsInUrlWhenNoneIsExplicitlyConfigured() {
+        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
+                .web(WebApplicationType.SERVLET)
+                .properties("server.port=0", "spring.main.banner-mode=off")
+                .run();
+        try {
+            int serverPort = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
+
+            ConfigurableApplicationContext client = new SpringApplicationBuilder(EchoTestApp.class)
+                    .web(WebApplicationType.NONE)
+                    .properties(
+                            "spring.main.banner-mode=off",
+                            "modular.server.enabled=false",
+                            "modular.services.echo-service.mode=internal-rest",
+                            // No modular.services.echo-service.url at all -- resolved via the
+                            // template fallback instead (this fixture has only one service, so a
+                            // literal template with no {service} placeholder is a legitimate,
+                            // realistic usage here; substitution itself is covered by
+                            // InternalRestTransportTest).
+                            "modular.remote-url-template=http://localhost:" + serverPort)
+                    .run();
+            try {
+                EchoService proxied = client.getBean(EchoService.class);
+                assertThat(proxied.echo("via-template")).isEqualTo("echo:via-template");
+            } finally {
+                client.close();
+            }
+        } finally {
+            server.close();
+        }
+    }
 }

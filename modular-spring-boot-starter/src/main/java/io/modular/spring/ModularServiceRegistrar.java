@@ -66,6 +66,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         Set<Class<?>> serviceInterfaces = discoverServiceInterfaces(basePackages);
         Map<Class<?>, Map<String, Class<?>>> localImpls = discoverServiceVersionImpls(basePackages, serviceInterfaces);
         Binder binder = Binder.get(environment);
+        ServeSpec serveSpec = ServeSpec.parse(binder.bind("modular.serve", Bindable.listOf(String.class)).orElse(List.of()));
 
         List<ModularServiceDescriptor> embedded = new ArrayList<>();
 
@@ -80,11 +81,22 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
             Set<String> versions = new LinkedHashSet<>(implsByVersion.keySet());
             versions.addAll(config.getVersions().keySet());
+            versions.addAll(serveSpec.versionsFor(name));
             versions.add(defaultVersion);
 
             for (String version : versions) {
                 String qualifiedName = name + "@" + version;
-                ModularMode mode = ModularMode.parse(config.resolveMode(version), qualifiedName);
+                String explicitMode = config.resolveMode(version);
+                boolean servedHere = serveSpec.isEmpty() || serveSpec.matches(name, version);
+                ModularMode mode = ModularMode.parse(explicitMode != null ? explicitMode : (servedHere ? "embedded" : "internal-rest"), qualifiedName);
+
+                if (explicitMode != null && mode == ModularMode.INTERNAL_REST && serveSpec.matches(name, version)) {
+                    throw new IllegalStateException("Modular service '" + qualifiedName + "' is listed in --modular.serve "
+                            + "(meaning it should be embedded in this process) but its configured mode (under "
+                            + "modular.services." + name + ", possibly per-version) is explicitly internal-rest -- "
+                            + "remove it from --modular.serve, or drop the explicit mode override.");
+                }
+
                 Class<?> implClass = implsByVersion.get(version);
                 String beanName = ClassUtils.getShortNameAsProperty(serviceInterface) + "-" + version;
                 boolean isDefault = version.equals(defaultVersion);

@@ -1,6 +1,8 @@
 package io.modular.spring;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -16,12 +18,46 @@ public class ModularProperties {
 
     private final Server server = new Server();
 
+    /**
+     * Which (service, version) pairs this process embeds — entries are {@code name} or
+     * {@code name@version}; omitting the version matches any version this classpath has a local
+     * implementation for. Everything else discovered on the classpath defaults to
+     * {@code internal-rest} instead of the usual {@code embedded} default (unless explicitly
+     * configured otherwise under {@link #services}). Empty (the default) leaves today's
+     * "everything embedded unless configured otherwise" behavior unchanged. See {@link ServeSpec}.
+     */
+    private List<String> serve = new ArrayList<>();
+
+    /**
+     * URL template used to reach a service that ends up {@code internal-rest} but has no explicit
+     * {@code modular.services.<name>.url} — {@code {service}} is substituted with the service's
+     * name, e.g. {@code http://{service}.default.svc.cluster.local:8080}. Independent of
+     * {@link #serve}; also fills in URLs for services explicitly configured {@code internal-rest}.
+     */
+    private String remoteUrlTemplate;
+
     public Map<String, ServiceConfig> getServices() {
         return services;
     }
 
     public Server getServer() {
         return server;
+    }
+
+    public List<String> getServe() {
+        return serve;
+    }
+
+    public void setServe(List<String> serve) {
+        this.serve = serve;
+    }
+
+    public String getRemoteUrlTemplate() {
+        return remoteUrlTemplate;
+    }
+
+    public void setRemoteUrlTemplate(String remoteUrlTemplate) {
+        this.remoteUrlTemplate = remoteUrlTemplate;
     }
 
     public static class Server {
@@ -51,8 +87,12 @@ public class ModularProperties {
 
     public static class ServiceConfig {
 
-        /** {@code embedded} (default) or {@code internal-rest}. Applies to any version without its own override. */
-        private String mode = "embedded";
+        /**
+         * {@code embedded} or {@code internal-rest}. Applies to any version without its own
+         * override. Unset (the default) means "no explicit choice" — {@link ModularServiceRegistrar}
+         * picks the effective default contextually, based on {@link ModularProperties#getServe()}.
+         */
+        private String mode;
 
         /** Base URL of the process hosting this service; required when {@code mode=internal-rest}. */
         private String url;
@@ -84,7 +124,10 @@ public class ModularProperties {
             return versions;
         }
 
-        /** Per-version mode, falling back to the service-level {@link #getMode()} when unset. */
+        /**
+         * Per-version mode, falling back to the service-level {@link #getMode()} when unset.
+         * {@code null} if neither is explicitly configured — callers decide the contextual default.
+         */
         public String resolveMode(String version) {
             VersionConfig versionConfig = versions.get(version);
             return (versionConfig != null && versionConfig.getMode() != null) ? versionConfig.getMode() : mode;
