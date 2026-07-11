@@ -1,0 +1,9 @@
+server:
+  port: 8080
+
+# Monolith defaults: both greeting-service and audit-service run embedded in this one process
+# (mode defaults to "embedded" when unset). Split-process mode is driven entirely by CLI flags —
+# see the examples/README.md for exact commands, no separate config files required.
+modular:
+  server:
+    enabled: true
