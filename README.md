@@ -9,6 +9,32 @@ Multiple implementations of the same interface can run side by side — each dep
 version it wants, or gets the default automatically, so a version change never requires the whole
 deployment to move in lockstep.
 
+## Why this isn't just a "modulith"
+
+The term "modulith" usually means a code-organization discipline: one deployable, forever,
+internally organized into well-bounded modules (this is what Spring Modulith itself gives you).
+That's not what this project does. modular-spring makes two specific, load-bearing claims that a
+code-organization discipline alone doesn't:
+
+1. **API versioning lives in the binary, not the network.** `@ServiceVersion` plus
+   `@AddedIn`/`@DeprecatedSince` mean two generations of a service's API coexist as real compiled
+   types in the same jar, resolved by Spring DI qualifier. There's no gateway doing header-based
+   routing between differently-versioned deployed revisions to make this work — the "old" and
+   "new" implementation are just classes, and which one a given caller gets is a compile-time-checked,
+   runtime-resolved fact, not an infrastructure concern layered on afterward.
+2. **The monolith-vs-microservice topology is a deployment-time decision, not a build-time one.**
+   The exact same jar you run as a single local process (direct method calls, one thing to debug)
+   is the exact same jar you split across machines (independent scaling, independent failure
+   domains) — switched entirely by `--modular.services.*` flags, including per-version, mid
+   migration if you want v1 of a service embedded while v2 is already split out.
+
+That combination — monolith development ergonomics plus microservice deployment flexibility,
+without a rewrite or a redeploy to move between them — is the actual goal. It's honestly not
+fully there yet: there's no service discovery (see "Not in v1" below), so splitting past a
+couple of hand-configured hosts gets tedious, and no retries/auth on the internal transport. The
+versioning-in-the-binary and deploy-time-topology mechanics are solid; the operational maturity
+for scaling like a "real" microservice fleet isn't built yet.
+
 ## Concept
 
 - **`@ModularService`** marks an *internal* service boundary interface. It is never used for a
