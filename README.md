@@ -53,6 +53,10 @@ deployment to move in lockstep.
 - Callers always just `@Autowired` the interface (optionally qualified with `@ServiceVersion`).
   They never know or care which mode is in effect — that's the location transparency the whole
   framework exists for.
+- **`@AddedIn("2")`** / **`@DeprecatedSince("3")`** on an interface method mark it as only
+  existing from that version onward, or optional from that version onward, respectively — so an
+  older (or newer) `@ServiceVersion` implementation isn't forced by the Java compiler to
+  implement a method that doesn't apply to it. See "Compile-time method versioning" below.
 
 ## How it works
 
@@ -76,20 +80,78 @@ deployment to move in lockstep.
 - Transport is pluggable behind the `ServiceTransport` SPI (`io.modular.core`). `internal-rest` is
   the only implementation today; a `grpc` transport can be added later without any change to
   `@ModularService` or generated proxies.
-- No bytecode generation, no annotation processing — just `BeanDefinitionRegistry` manipulation,
-  `java.lang.reflect.Proxy`, and Spring's own `@Primary`/qualifier autowiring machinery. See the
-  Javadoc on
+- The runtime wiring itself is just `BeanDefinitionRegistry` manipulation, `java.lang.reflect.Proxy`,
+  and Spring's own `@Primary`/qualifier autowiring machinery — no bytecode generation there. See
+  the Javadoc on
   [`ModularServiceRegistrar`](modular-spring-boot-starter/src/main/java/io/modular/spring/ModularServiceRegistrar.java)
-  for the exact bean-wiring mechanics.
+  for the exact bean-wiring mechanics. `@AddedIn`/`@DeprecatedSince` are the one place this
+  project *does* use real annotation processing — see below.
+
+## Compile-time method versioning: `@AddedIn` / `@DeprecatedSince`
+
+Java forces every concrete class to implement every abstract interface method — so without help,
+adding a method to a `@ModularService` interface for version 2 would force version 1's
+implementation to implement it too, even though it's meaningless there. `@AddedIn`/
+`@DeprecatedSince` fix this at compile time via a real `javax.annotation.processing.Processor`
+(the `modular-processor` module):
+
+```java
+public interface AuditService {
+    void recordEvent(String event);
+    List<String> getEvents();
+
+    @AddedIn("2")
+    List<String> getRecentEvents(int limit);
+}
+```
+
+For any `@ModularService` interface with at least one `@AddedIn`/`@DeprecatedSince` method, the
+processor generates a companion abstract class, `{Interface}Skeleton`, in the same package, with a
+throwing override of every such method. An implementation `extends {Interface}Skeleton` instead of
+`implements {Interface}` directly, and only overrides the methods actually in range for its
+declared version — everything else falls through to the generated stub, with zero hand-written
+boilerplate:
+
+```java
+@ServiceVersion(value = AuditService.class, version = "1")
+public class AuditServiceImpl extends AuditServiceSkeleton {
+    // doesn't override getRecentEvents at all -- calling it throws
+    // ServiceVersionUnsupportedException: "...AuditServiceImpl#getRecentEvents is not
+    // supported by this implementation (requires version >= 2)"
+}
+
+@ServiceVersion(value = AuditService.class, version = "2")
+public class AuditServiceImplV2 extends AuditServiceSkeleton {
+    @Override
+    public List<String> getRecentEvents(int limit) { ... } // version "2" actually supports it
+}
+```
+
+The same processor also *validates* every `@ServiceVersion` implementation: if a method's
+`[addedIn, deprecatedSince)` range includes the implementation's own declared version, it must be
+genuinely overridden — silently relying on the generated throwing stub for a method the
+implementation is actually supposed to support is a compile error, not a runtime surprise.
+
+Two things worth knowing:
+- Version strings used with `@AddedIn`/`@DeprecatedSince` (and the `@ServiceVersion` they're
+  checked against) must be parseable as plain integers — that's how the processor orders
+  versions to compute ranges. This is scoped to this feature only; dispatch elsewhere still
+  matches version strings exactly and never needed ordering.
+- Any module that compiles a `@ModularService` interface with versioned methods, or a
+  `@ServiceVersion` implementation, needs `modular-processor` on its `annotationProcessor` (or
+  `testAnnotationProcessor`) configuration explicitly — Gradle does not propagate annotation
+  processors transitively. See `examples/example-contracts` and `examples/example-services`'s
+  `build.gradle.kts` for the pattern.
 
 ## Modules
 
 | Module | Contents |
 |---|---|
-| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, the `ServiceTransport` SPI, `RemoteServiceException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, the `ServiceTransport` SPI, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `modular-processor` | The `@AddedIn`/`@DeprecatedSince` annotation processor: generates `{Interface}Skeleton` classes and validates `@ServiceVersion` implementations against them. Depends only on `modular-core` — no Spring. |
 | `modular-spring-boot-starter` | `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, autoconfiguration. |
-| `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo. |
-| `examples/example-services` | Their `@ServiceVersion` implementations, including a second `AuditService` version purely to demonstrate multi-version wiring. |
+| `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn("2")` method. |
+| `examples/example-services` | Their `@ServiceVersion` implementations, including a second `AuditService` version to demonstrate multi-version wiring and the generated-skeleton mechanism. |
 | `examples/example-app` | One Spring Boot application tying it together, runnable as the monolith or as either half of a split deployment. |
 
 ## Quickstart
@@ -164,6 +226,27 @@ curl http://localhost:8080/api/audit                # -> ["greeted:Carol"], unaf
 
 To run only version 2 embedded here and treat version 1 as remote instead, no code changes are
 needed — just config: `--modular.services.audit-service.versions.1.mode=internal-rest --modular.services.audit-service.versions.1.url=...`.
+
+### A method that only exists from version 2 onward
+
+`AuditService.getRecentEvents(int limit)` is `@AddedIn("2")`. Version "1"'s implementation
+(`AuditServiceImpl`) never overrides it; version "2"'s (`AuditServiceImplV2`) does:
+
+```bash
+java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --server.port=8080
+```
+
+```bash
+curl http://localhost:8080/api/audit/v2/hello
+curl http://localhost:8080/api/audit/v2/world
+curl http://localhost:8080/api/audit/v2/recent/2   # -> ["v2:hello","v2:world"] -- version 2 really implements it
+curl -i http://localhost:8080/api/audit/recent/2    # -> 500 -- default (version "1") never overrode it
+```
+
+The 500 comes from `ServiceVersionUnsupportedException`, thrown by the method
+`modular-processor` generated on `AuditServiceSkeleton`, naming exactly which version is required
+— visible in the server log even though the HTTP response body itself is Spring Boot's generic
+error JSON.
 
 ## Not in v1
 

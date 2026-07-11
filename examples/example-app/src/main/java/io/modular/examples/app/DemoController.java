@@ -51,4 +51,21 @@ class DemoController {
         auditServiceV2.recordEvent(event);
         return auditServiceV2.getEvents();
     }
+
+    /** Works: version "2" actually implements {@code getRecentEvents} (it's {@code @AddedIn("2")}). */
+    @GetMapping("/audit/v2/recent/{limit}")
+    List<String> recentV2(@PathVariable("limit") int limit) {
+        return auditServiceV2.getRecentEvents(limit);
+    }
+
+    /**
+     * Throws: the default version ("1") extends the generated {@code AuditServiceSkeleton} but
+     * never overrides {@code getRecentEvents}, so this falls through to the generated stub's
+     * {@code ServiceVersionUnsupportedException} — a 500, with the exception's message naming
+     * exactly which version is required.
+     */
+    @GetMapping("/audit/recent/{limit}")
+    List<String> recentDefault(@PathVariable("limit") int limit) {
+        return auditService.getRecentEvents(limit);
+    }
 }
