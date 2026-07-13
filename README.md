@@ -1,4 +1,4 @@
-# modular-spring
+# Horde
 
 A Spring Boot add-on for building "modular services": define a service once as a Java interface
 plus a `@ServiceVersion`-annotated implementation, and let deployment config — not code — decide
@@ -13,7 +13,7 @@ deployment to move in lockstep.
 
 The term "modulith" usually means a code-organization discipline: one deployable, forever,
 internally organized into well-bounded modules (this is what Spring Modulith itself gives you).
-That's not what this project does. modular-spring makes two specific, load-bearing claims that a
+That's not what this project does. Horde makes two specific, load-bearing claims that a
 code-organization discipline alone doesn't:
 
 1. **API versioning lives in the binary, not the network.** `@ServiceVersion` plus
@@ -30,7 +30,7 @@ code-organization discipline alone doesn't:
 
 That combination — monolith development ergonomics plus microservice deployment flexibility,
 without a rewrite or a redeploy to move between them — is the actual goal. It's honestly not
-fully there yet: modular-spring itself still tracks nothing about which instances are alive or
+fully there yet: Horde itself still tracks nothing about which instances are alive or
 where (see "Not in v1" below) — `--modular.serve` and `--modular.remote-url-template` let the
 binary lean on an existing orchestrator's own discovery (k8s DNS, Consul DNS, ...) rather than
 requiring hand-configured hosts, but there's still no health-aware routing, retries, or auth on
@@ -109,7 +109,7 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   registry keyed by bean name — never by type alone, since multiple versions of the same interface
   may be embedded in the same process. Arguments and the return value are a JSON array / JSON
   value, matched positionally against the method's declared parameter types.
-- Transport is pluggable behind the `ServiceTransport` SPI (`io.modular.core`). `internal-rest` is
+- Transport is pluggable behind the `ServiceTransport` SPI (`com.demilich.horde.core`). `internal-rest` is
   the only implementation today; a `grpc` transport can be added later without any change to
   `@ModularService` or generated proxies.
 - A caller of an **embedded** service sees whatever exception the real implementation throws; a
@@ -126,7 +126,7 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
 - The runtime wiring itself is just `BeanDefinitionRegistry` manipulation, `java.lang.reflect.Proxy`,
   and Spring's own `@Primary`/qualifier autowiring machinery — no bytecode generation there. See
   the Javadoc on
-  [`ModularServiceRegistrar`](modular-spring/src/main/java/io/modular/spring/ModularServiceRegistrar.java)
+  [`ModularServiceRegistrar`](modular-spring/src/main/java/com/demilich/horde/spring/ModularServiceRegistrar.java)
   for the exact bean-wiring mechanics. `@AddedIn`/`@DeprecatedSince` are the one place this
   project *does* use real annotation processing — see below.
 
@@ -279,7 +279,7 @@ equivalent to terminal 2 above, just via the template instead of an explicit `.u
 --modular.serve=greeting-service --modular.remote-url-template=http://localhost:8082
 ```
 
-This is deliberately *not* service discovery — modular-spring never tracks "who is currently
+This is deliberately *not* service discovery — Horde never tracks "who is currently
 running where." It just makes the binary a well-behaved, single-purpose replica so whatever's
 already scheduling and load-balancing containers can do that job, instead of this framework
 reinventing it. See "Why this isn't just a 'modulith'" above.
@@ -362,7 +362,7 @@ Audit trail: [greeted:plain Spring]
 
 For the HTTP-serving end (embedded Tomcat + `DispatcherServlet`, one process dispatching to
 another over `/_modular/**`, entirely Boot-free), see `modular-spring`'s
-[`ModularDispatchPlainSpringTest`](modular-spring/src/test/java/io/modular/spring/ModularDispatchPlainSpringTest.java).
+[`ModularDispatchPlainSpringTest`](modular-spring/src/test/java/com/demilich/horde/spring/ModularDispatchPlainSpringTest.java).
 
 ## Not in v1
 

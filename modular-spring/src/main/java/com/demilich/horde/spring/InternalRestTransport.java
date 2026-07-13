@@ -1,0 +1,97 @@
+package com.demilich.horde.spring;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.demilich.horde.core.RemoteServiceException;
+import com.demilich.horde.core.ServiceInvocation;
+import com.demilich.horde.core.ServiceTransport;
+import org.springframework.http.MediaType;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+
+/**
+ * Client-side {@link ServiceTransport}: dispatches a {@code @ModularService} call as
+ * {@code POST {baseUrl}{pathPrefix}/{service}/{version}/{method}} with a JSON array of
+ * arguments, matching {@link ModularDispatcherController} on the receiving end.
+ */
+class InternalRestTransport implements ServiceTransport {
+
+    private final RestClient restClient;
+    private final ObjectMapper objectMapper;
+    private final ModularProperties properties;
+
+    InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties) {
+        this.restClient = restClient;
+        this.objectMapper = objectMapper;
+        this.properties = properties;
+    }
+
+    @Override
+    public Object invoke(ServiceInvocation invocation) {
+        String url = properties.service(invocation.serviceName()).resolveUrl(invocation.serviceVersion());
+        if (url == null || url.isBlank()) {
+            url = resolveFromTemplate(invocation.serviceName());
+        }
+        if (url == null || url.isBlank()) {
+            throw new RemoteServiceException("No url configured for modular service '" + invocation.serviceName()
+                    + "' version '" + invocation.serviceVersion() + "' (set modular.services." + invocation.serviceName()
+                    + ".url, modular.services." + invocation.serviceName() + ".versions." + invocation.serviceVersion()
+                    + ".url for a per-version override, or modular.remote-url-template for a shared convention)");
+        }
+
+        String uri = url + properties.getServerPathPrefix() + "/" + invocation.serviceName() + "/"
+                + invocation.serviceVersion() + "/" + invocation.methodName();
+
+        ArrayNode body = objectMapper.createArrayNode();
+        for (Object arg : invocation.args()) {
+            body.add(objectMapper.valueToTree(arg));
+        }
+
+        String responseBody;
+        try {
+            responseBody = restClient.post()
+                    .uri(uri)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientResponseException e) {
+            RemoteServiceException fallback = new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
+                    + invocation.methodName() + " -> " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
+            throw RemoteExceptionReconstructor.reconstruct(
+                    e.getResponseBodyAsString(), invocation.method().getDeclaringClass().getClassLoader(), objectMapper, fallback);
+        } catch (RestClientException e) {
+            throw new RemoteServiceException(
+                    "Modular service call failed: " + invocation.serviceName() + "#" + invocation.methodName(), e);
+        }
+
+        Class<?> returnType = invocation.method().getReturnType();
+        if (returnType == void.class || returnType == Void.class || responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode tree = objectMapper.readTree(responseBody);
+            return objectMapper.convertValue(tree, objectMapper.getTypeFactory().constructType(invocation.method().getGenericReturnType()));
+        } catch (Exception e) {
+            throw new RemoteServiceException("Failed to deserialize response from modular service '"
+                    + invocation.serviceName() + "#" + invocation.methodName() + "'", e);
+        }
+    }
+
+    /**
+     * Fallback used when a service has no explicit {@code url} configured: substitutes
+     * {@code {service}} in {@code modular.remote-url-template} with the service's name, e.g.
+     * {@code http://{service}.default.svc.cluster.local:8080} -> {@code http://audit-service.default.svc.cluster.local:8080}.
+     * Package-private (rather than {@code private}) so it's directly, deterministically testable
+     * without needing a real HTTP call.
+     */
+    String resolveFromTemplate(String serviceName) {
+        String template = properties.getRemoteUrlTemplate();
+        if (template == null || template.isBlank()) {
+            return null;
+        }
+        return template.replace("{service}", serviceName);
+    }
+}

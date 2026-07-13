@@ -1,4 +1,4 @@
-rootProject.name = "modular-spring"
+rootProject.name = "horde"
 
 include(
     "modular-core",

@@ -9,5 +9,5 @@ dependencies {
 }
 
 springBoot {
-    mainClass.set("io.modular.examples.app.ExampleApp")
+    mainClass.set("com.demilich.horde.examples.app.ExampleApp")
 }

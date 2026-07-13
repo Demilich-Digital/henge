@@ -4,7 +4,7 @@ plugins {
 }
 
 allprojects {
-    group = "io.modular"
+    group = "com.demilich.horde"
     version = "0.1.0-SNAPSHOT"
 
     repositories {

@@ -9,5 +9,5 @@ dependencies {
 }
 
 application {
-    mainClass.set("io.modular.examples.plainspring.ExamplePlainSpringApp")
+    mainClass.set("com.demilich.horde.examples.plainspring.ExamplePlainSpringApp")
 }
