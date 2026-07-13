@@ -141,10 +141,10 @@ implementation to implement it too, even though it's meaningless there. `@AddedI
 ```java
 public interface AuditService {
     void recordEvent(String event);
-    List<String> getEvents();
+    ImmutableList<String> getEvents();
 
     @AddedIn("2")
-    List<String> getRecentEvents(int limit);
+    ImmutableList<String> getRecentEvents(int limit);
 }
 ```
 
@@ -166,7 +166,7 @@ public class AuditServiceImpl extends AuditServiceSkeleton {
 @ServiceVersion(value = AuditService.class, version = "2")
 public class AuditServiceImplV2 extends AuditServiceSkeleton {
     @Override
-    public List<String> getRecentEvents(int limit) { ... } // version "2" actually supports it
+    public ImmutableList<String> getRecentEvents(int limit) { ... } // version "2" actually supports it
 }
 ```
 
@@ -185,6 +185,56 @@ Two things worth knowing:
   `testAnnotationProcessor`) configuration explicitly — Gradle does not propagate annotation
   processors transitively. See `examples/example-contracts` and `examples/example-services`'s
   `build.gradle.kts` for the pattern.
+
+## Compile-time boundary guarantees: the state-ownership doctrine
+
+Location transparency is only real if an embedded call and an internal-rest call to the same
+method behave identically. Two ways they silently don't, unless something stops them:
+
+- **Checked exceptions.** Embedded dispatch propagates whatever the real implementation throws;
+  internal-rest reconstructs failures as `RuntimeException` only (see
+  `RemoteExceptionReconstructor`'s Javadoc). A checked exception on a `@ModularService` method
+  would behave differently depending on which mode is configured for it — so `modular-processor`
+  rejects checked exceptions in `@ModularService` method `throws` clauses at compile time. Wrap
+  them in an unchecked exception instead.
+- **Mutable/aliased state.** Embedded calls pass arguments and return values by reference inside
+  one shared bean universe; internal-rest passes them by value, as JSON. A plain mutable class
+  (or a JPA entity — attached, lazy-loadable embedded, detached and half-populated over the wire)
+  can be mutated by whichever side holds a reference, invisibly to the other side, only in embedded
+  mode. So the processor enforces a positive rule instead of chasing individual bad shapes: every
+  parameter and return type reachable from a `@ModularService` method must be **provably
+  immutable** — recursively, through record components and collection type arguments. Allowed:
+  - `record`s and `enum`s (recursed into, for records)
+  - primitives, `String`, and well-known immutable JDK value types (`java.time.*`, `UUID`,
+    `BigDecimal`, `BigInteger`)
+  - `ImmutableList<T>` / `ImmutableSet<T>` / `ImmutableMap<K, V>` (`com.demilich.horde.core`) or
+    `Optional<T>` of an allowed type — plain `java.util.List`/`Set`/`Map` are **not** allowed:
+    Jackson deserializes them to a mutable `ArrayList`/`HashMap` by default, which reopens exactly
+    the aliasing gap this rule exists to close
+  - Guava's `ImmutableList`/`ImmutableSet`/`ImmutableMap`, recognized by fully-qualified name with
+    no actual Guava dependency added to this project — if you already depend on Guava, you don't
+    need a second immutable-collection type just to satisfy this rule
+  - sealed interfaces where every permitted subtype is itself an allowed type (a compile-time
+    tagged union)
+
+  A JPA entity can never satisfy this — no-arg constructor, mutable fields, lazy proxying — so it's
+  rejected as a side effect of the positive rule, with a message calling out the `@Entity`
+  annotation specifically rather than the generic "not an allowed type" message.
+
+  `ImmutableList`/`ImmutableSet`/`ImmutableMap` are genuinely immutable (backed by
+  `List.copyOf`/`Set.copyOf`/`Map.copyOf`, mutator methods throw `UnsupportedOperationException`),
+  and distinctly named so the processor can recognize the *type*, not just runtime behavior a
+  caller happened to rely on. `modular-spring`'s shared transport `ObjectMapper` knows how to
+  deserialize them (`HordeCollectionsModule`) — `modular-core` itself stays Jackson-free.
+
+**Enforcing the boundary at the build level, not just the type level:** nothing in the language
+stops a consumer from depending on a service's implementation class directly instead of its
+interface — that compiles fine embedded, then breaks the moment the service is split into its own
+process. `examples/example-app` demonstrates the fix: its `build.gradle.kts` declares
+`implementation(example-contracts)` + `runtimeOnly(example-services)`, so impl classes are on the
+runtime classpath but never the *compile* classpath — `DemoController` physically cannot resolve a
+reference to `AuditServiceImpl`, only to `AuditService`. This is the recommended consumption
+pattern for any module that calls into a `@ModularService`.
 
 ## Modules
 

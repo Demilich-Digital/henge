@@ -1,5 +1,6 @@
 package com.demilich.horde.spring.fixture.echo;
 
+import com.demilich.horde.core.ImmutableList;
 import com.demilich.horde.core.ServiceVersion;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -17,6 +18,11 @@ public class EchoServiceImpl implements EchoService {
     @Override
     public void explode(String reason) {
         throw new EchoFailureException(reason);
+    }
+
+    @Override
+    public ImmutableList<String> upperCaseAll(ImmutableList<String> values) {
+        return ImmutableList.copyOf(values.stream().map(String::toUpperCase).toList());
     }
 
     public int getCallCount() {

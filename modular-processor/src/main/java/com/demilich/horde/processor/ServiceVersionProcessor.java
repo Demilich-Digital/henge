@@ -24,12 +24,15 @@ import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Modifier;
+import javax.lang.model.element.RecordComponentElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 
@@ -46,15 +49,62 @@ import javax.tools.JavaFileObject;
  *   <li>For every {@code @ServiceVersion} implementation, validates that every interface method
  *       whose version range includes the implementation's declared version is genuinely
  *       overridden, not silently left to the generated throwing stub.</li>
+ *   <li>For every {@code @ModularService} interface, rejects checked exceptions in method
+ *       {@code throws} clauses and rejects parameter/return types that aren't guaranteed-value
+ *       boundary types (records, enums, primitives, well-known immutable value types, or
+ *       ImmutableList/ImmutableSet/ImmutableMap/Optional thereof) — see {@link #validateNoCheckedExceptions} and
+ *       {@link #validateBoundaryTypes}.</li>
  * </ul>
  */
 @SupportedAnnotationTypes({"com.demilich.horde.core.ModularService", "com.demilich.horde.core.ServiceVersion"})
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class ServiceVersionProcessor extends AbstractProcessor {
 
+    /**
+     * Immutable value types allowed as leaves at a {@code @ModularService} boundary, beyond
+     * primitives/records/enums — chosen because they serialize losslessly and can't be mutated
+     * after construction, so embedded and internal-rest dispatch can never observe them
+     * differently.
+     */
+    private static final Set<String> ALLOWED_LEAF_TYPES = Set.of(
+            Boolean.class.getName(), Byte.class.getName(), Short.class.getName(), Character.class.getName(),
+            Integer.class.getName(), Long.class.getName(), Float.class.getName(), Double.class.getName(),
+            String.class.getName(),
+            "java.util.UUID",
+            "java.math.BigDecimal", "java.math.BigInteger",
+            "java.time.Instant", "java.time.LocalDate", "java.time.LocalTime", "java.time.LocalDateTime",
+            "java.time.ZonedDateTime", "java.time.OffsetDateTime", "java.time.OffsetTime",
+            "java.time.Duration", "java.time.Period",
+            "java.time.Year", "java.time.YearMonth", "java.time.MonthDay",
+            "java.time.ZoneId", "java.time.ZoneOffset", "java.time.DayOfWeek", "java.time.Month");
+
+    /**
+     * {@code java.util.List}/{@code Set}/{@code Map} are deliberately NOT in this allowlist:
+     * Jackson deserializes them to a mutable {@code ArrayList}/{@code HashMap} by default, and
+     * nothing stops a caller from mutating one it holds after an embedded call returns it by
+     * reference -- exactly the aliasing divergence between embedded and internal-rest dispatch
+     * this whole check exists to close. {@link com.demilich.horde.core.ImmutableList} /
+     * {@link com.demilich.horde.core.ImmutableSet} / {@link com.demilich.horde.core.ImmutableMap}
+     * are the accepted collection boundary types instead. Guava's {@code ImmutableList} /
+     * {@code ImmutableSet} / {@code ImmutableMap} are accepted too -- matched by FQN string, like
+     * the {@code @Entity} check, so the processor doesn't need a Guava dependency to recognize
+     * them; a consumer that already depends on Guava doesn't have to introduce a second immutable
+     * collection type just to satisfy this rule.
+     */
+    private static final String IMMUTABLE_LIST = "com.demilich.horde.core.ImmutableList";
+    private static final String IMMUTABLE_SET = "com.demilich.horde.core.ImmutableSet";
+    private static final String IMMUTABLE_MAP = "com.demilich.horde.core.ImmutableMap";
+    private static final String GUAVA_IMMUTABLE_LIST = "com.google.common.collect.ImmutableList";
+    private static final String GUAVA_IMMUTABLE_SET = "com.google.common.collect.ImmutableSet";
+    private static final String GUAVA_IMMUTABLE_MAP = "com.google.common.collect.ImmutableMap";
+
+    private static final Set<String> SINGLE_ARG_CONTAINERS =
+            Set.of("java.util.Optional", IMMUTABLE_LIST, IMMUTABLE_SET, GUAVA_IMMUTABLE_LIST, GUAVA_IMMUTABLE_SET);
+
     private Messager messager;
     private Filer filer;
     private Elements elementUtils;
+    private Types typeUtils;
     private final Set<String> generatedSkeletons = new HashSet<>();
     private final List<String> pendingValidations = new ArrayList<>();
 
@@ -64,13 +114,17 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         this.messager = processingEnv.getMessager();
         this.filer = processingEnv.getFiler();
         this.elementUtils = processingEnv.getElementUtils();
+        this.typeUtils = processingEnv.getTypeUtils();
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         for (Element element : roundEnv.getElementsAnnotatedWith(ModularService.class)) {
             if (element.getKind() == ElementKind.INTERFACE) {
-                generateSkeletonIfNeeded((TypeElement) element);
+                TypeElement interfaceElement = (TypeElement) element;
+                generateSkeletonIfNeeded(interfaceElement);
+                validateNoCheckedExceptions(interfaceElement);
+                validateBoundaryTypes(interfaceElement);
             }
         }
         for (Element element : roundEnv.getElementsAnnotatedWith(ServiceVersion.class)) {
@@ -178,6 +232,134 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         } else {
             return "version < " + deprecatedSince.value();
         }
+    }
+
+    /**
+     * Embedded dispatch propagates a thrown exception as-is; internal-rest dispatch reconstructs
+     * failures as {@code RuntimeException} only (see {@code RemoteExceptionReconstructor} in
+     * modular-spring) — a checked exception on a {@code @ModularService} method would therefore
+     * behave differently depending on deployment topology, silently. Reject it at compile time
+     * instead.
+     */
+    private void validateNoCheckedExceptions(TypeElement interfaceElement) {
+        TypeMirror runtimeExceptionType = elementUtils.getTypeElement(RuntimeException.class.getName()).asType();
+        TypeMirror errorType = elementUtils.getTypeElement(Error.class.getName()).asType();
+
+        for (ExecutableElement method : ElementFilter.methodsIn(interfaceElement.getEnclosedElements())) {
+            for (TypeMirror thrown : method.getThrownTypes()) {
+                if (typeUtils.isSubtype(thrown, runtimeExceptionType) || typeUtils.isSubtype(thrown, errorType)) {
+                    continue;
+                }
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "Method '" + method.getSimpleName() + "' on " + interfaceElement.getQualifiedName()
+                                + " declares checked exception " + thrown + " in its throws clause. "
+                                + "@ModularService methods must not declare checked exceptions: embedded "
+                                + "dispatch would propagate it as-is, but internal-rest dispatch reconstructs "
+                                + "failures as RuntimeException only, so this is a silent semantic divergence "
+                                + "between the two dispatch modes. Wrap it in an unchecked exception instead.",
+                        method);
+            }
+        }
+    }
+
+    /**
+     * Enforces the state-ownership doctrine at the type level: every parameter and return type
+     * reachable from a {@code @ModularService} method must be a record, enum, primitive, or a
+     * well-known immutable value type, or an ImmutableList/ImmutableSet/ImmutableMap/Optional
+     * thereof, recursively through
+     * record components. This is strictly stronger than rejecting {@code @Entity} types alone —
+     * a JPA entity can never satisfy it (mutable fields, no-arg constructor, proxying) — and it
+     * makes the by-value semantics that {@code modular.strict} mode only checks at runtime true
+     * by construction at compile time.
+     */
+    private void validateBoundaryTypes(TypeElement interfaceElement) {
+        for (ExecutableElement method : ElementFilter.methodsIn(interfaceElement.getEnclosedElements())) {
+            checkBoundaryType(method.getReturnType(), method, "return type", new HashSet<>());
+            for (VariableElement param : method.getParameters()) {
+                checkBoundaryType(param.asType(), method, "parameter '" + param.getSimpleName() + "'", new HashSet<>());
+            }
+        }
+    }
+
+    private void checkBoundaryType(TypeMirror type, ExecutableElement method, String position, Set<String> visiting) {
+        switch (type.getKind()) {
+            case VOID, BOOLEAN, BYTE, SHORT, INT, LONG, CHAR, FLOAT, DOUBLE -> {
+                // primitives are always safe: no aliasing, no serialization ambiguity
+            }
+            case ARRAY -> reportBoundaryError(method, position, type,
+                    "arrays are mutable and alias across the embedded/internal-rest boundary; use List<T> instead");
+            case DECLARED -> checkDeclaredBoundaryType((DeclaredType) type, method, position, visiting);
+            case TYPEVAR, WILDCARD -> {
+                // the concrete type isn't known from the interface alone; left unchecked
+            }
+            default -> {
+                // NONE, NULL, etc. -- not a real signature type
+            }
+        }
+    }
+
+    private void checkDeclaredBoundaryType(DeclaredType type, ExecutableElement method, String position, Set<String> visiting) {
+        TypeElement typeElement = (TypeElement) type.asElement();
+        String qualifiedName = typeElement.getQualifiedName().toString();
+
+        if (ALLOWED_LEAF_TYPES.contains(qualifiedName) || typeElement.getKind() == ElementKind.ENUM) {
+            return;
+        }
+
+        List<? extends TypeMirror> typeArgs = type.getTypeArguments();
+        if (SINGLE_ARG_CONTAINERS.contains(qualifiedName) && typeArgs.size() == 1) {
+            checkBoundaryType(typeArgs.get(0), method, position + "'s type argument", visiting);
+            return;
+        }
+        if ((IMMUTABLE_MAP.equals(qualifiedName) || GUAVA_IMMUTABLE_MAP.equals(qualifiedName)) && typeArgs.size() == 2) {
+            checkBoundaryType(typeArgs.get(0), method, position + "'s key type", visiting);
+            checkBoundaryType(typeArgs.get(1), method, position + "'s value type", visiting);
+            return;
+        }
+
+        if (!visiting.add(qualifiedName)) {
+            return; // already validating this type along this path -- cycle, not a violation
+        }
+        try {
+            if (typeElement.getKind() == ElementKind.RECORD) {
+                for (RecordComponentElement component : typeElement.getRecordComponents()) {
+                    checkBoundaryType(component.asType(), method, position + "'s component '" + component.getSimpleName() + "'", visiting);
+                }
+                return;
+            }
+            if (typeElement.getKind() == ElementKind.INTERFACE && typeElement.getModifiers().contains(Modifier.SEALED)) {
+                List<? extends TypeMirror> permitted = typeElement.getPermittedSubclasses();
+                if (!permitted.isEmpty()) {
+                    for (TypeMirror subtype : permitted) {
+                        checkBoundaryType(subtype, method, position, visiting);
+                    }
+                    return;
+                }
+            }
+            reportBoundaryError(method, position, type, describeRejectionReason(typeElement));
+        } finally {
+            visiting.remove(qualifiedName);
+        }
+    }
+
+    private static String describeRejectionReason(TypeElement typeElement) {
+        boolean isEntity = typeElement.getAnnotationMirrors().stream()
+                .anyMatch(m -> m.getAnnotationType().toString().equals("jakarta.persistence.Entity"));
+        if (isEntity) {
+            return "it's a JPA entity; boundary types must be immutable DTOs (records), never entities";
+        }
+        return "it's not a record, enum, or a recognized immutable value type";
+    }
+
+    private void reportBoundaryError(ExecutableElement method, String position, TypeMirror type, String reason) {
+        messager.printMessage(Diagnostic.Kind.ERROR,
+                position + " " + type + " of method '" + method.getSimpleName() + "' on " + method.getEnclosingElement()
+                        + " is not a valid @ModularService boundary type (" + reason + "). Boundary types must be "
+                        + "records, enums, primitives, String, well-known immutable value types (java.time.*, UUID, "
+                        + "BigDecimal, BigInteger), or ImmutableList/ImmutableSet/ImmutableMap/Optional thereof, "
+                        + "recursively -- see the "
+                        + "state-ownership doctrine in the README.",
+                method);
     }
 
     private void validateImplementation(TypeElement implElement) {

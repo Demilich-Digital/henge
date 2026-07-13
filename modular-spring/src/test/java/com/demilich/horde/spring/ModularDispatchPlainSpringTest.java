@@ -3,6 +3,7 @@ package com.demilich.horde.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.demilich.horde.core.ImmutableList;
 import com.demilich.horde.core.RemoteServiceException;
 import com.demilich.horde.spring.fixture.echo.EchoFailureException;
 import com.demilich.horde.spring.fixture.echo.EchoService;
@@ -68,6 +69,10 @@ class ModularDispatchPlainSpringTest {
 
                 EchoServiceImpl serverImpl = serverContext.getBean(EchoServiceImpl.class);
                 assertThat(serverImpl.getCallCount()).isEqualTo(1);
+
+                // ImmutableList round-trips as an argument and a return value over real HTTP,
+                // proving HordeCollectionsModule is wired into both ends of the transport.
+                assertThat(proxied.upperCaseAll(ImmutableList.of("a", "b"))).containsExactly("A", "B");
             } finally {
                 clientContext.close();
             }

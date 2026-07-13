@@ -20,7 +20,7 @@ final class ModularTransportSupport {
     }
 
     static ObjectMapper objectMapper() {
-        return new ObjectMapper();
+        return new ObjectMapper().registerModule(new HordeCollectionsModule());
     }
 
     /**

@@ -1,9 +1,9 @@
 package com.demilich.horde.examples.services;
 
+import com.demilich.horde.core.ImmutableList;
 import com.demilich.horde.core.ServiceVersion;
 import com.demilich.horde.examples.contracts.AuditService;
 import com.demilich.horde.examples.contracts.AuditServiceSkeleton;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -24,7 +24,7 @@ public class AuditServiceImpl extends AuditServiceSkeleton {
     }
 
     @Override
-    public List<String> getEvents() {
-        return Collections.unmodifiableList(events);
+    public ImmutableList<String> getEvents() {
+        return ImmutableList.copyOf(events);
     }
 }
