@@ -32,7 +32,7 @@ class InternalRestTransport implements ServiceTransport {
     public Object invoke(ServiceInvocation invocation) {
         String url = properties.service(invocation.serviceName()).resolveUrl(invocation.serviceVersion());
         if (url == null || url.isBlank()) {
-            url = resolveFromTemplate(invocation.serviceName());
+            url = resolveFromTemplate(invocation.serviceName(), invocation.serviceVersion());
         }
         if (url == null || url.isBlank()) {
             throw new RemoteServiceException("No url configured for modular service '" + invocation.serviceName()
@@ -63,8 +63,15 @@ class InternalRestTransport implements ServiceTransport {
             throw RemoteExceptionReconstructor.reconstruct(
                     e.getResponseBodyAsString(), invocation.method().getDeclaringClass().getClassLoader(), objectMapper, fallback);
         } catch (RestClientException e) {
-            throw new RemoteServiceException(
-                    "Modular service call failed: " + invocation.serviceName() + "#" + invocation.methodName(), e);
+            // The immediate exception's own message is often a generic wrapper (e.g. "Error while
+            // extracting response..."); the actually-useful detail -- "connect timed out",
+            // "Read timed out" -- is on the root cause.
+            Throwable root = e;
+            while (root.getCause() != null) {
+                root = root.getCause();
+            }
+            throw new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
+                    + invocation.methodName() + " (" + root.getMessage() + ")", e);
         }
 
         Class<?> returnType = invocation.method().getReturnType();
@@ -82,16 +89,19 @@ class InternalRestTransport implements ServiceTransport {
 
     /**
      * Fallback used when a service has no explicit {@code url} configured: substitutes
-     * {@code {service}} in {@code modular.remote-url-template} with the service's name, e.g.
-     * {@code http://{service}.default.svc.cluster.local:8080} -> {@code http://audit-service.default.svc.cluster.local:8080}.
-     * Package-private (rather than {@code private}) so it's directly, deterministically testable
-     * without needing a real HTTP call.
+     * {@code {service}} and {@code {version}} in {@code modular.remote-url-template} with the
+     * service's name and version, e.g. {@code http://{service}.default.svc.cluster.local:8080} ->
+     * {@code http://audit-service.default.svc.cluster.local:8080}, or
+     * {@code http://{service}-v{version}.default.svc.cluster.local:8080} for a per-version split.
+     * {@code {service}}-only templates keep working unchanged, since {@code {version}} substitution
+     * is a no-op when the placeholder isn't present. Package-private (rather than {@code private})
+     * so it's directly, deterministically testable without needing a real HTTP call.
      */
-    String resolveFromTemplate(String serviceName) {
+    String resolveFromTemplate(String serviceName, String serviceVersion) {
         String template = properties.getRemoteUrlTemplate();
         if (template == null || template.isBlank()) {
             return null;
         }
-        return template.replace("{service}", serviceName);
+        return template.replace("{service}", serviceName).replace("{version}", serviceVersion);
     }
 }

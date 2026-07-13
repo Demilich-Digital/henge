@@ -261,8 +261,13 @@ one declares itself to *be*, not a growing list of everything it isn't.
   configured otherwise" behavior is exactly as before.
 - **`--modular.remote-url-template=http://{service}.default.svc.cluster.local:8080`** fills in a
   `url` for anything that ends up `internal-rest` without one, substituting `{service}` with the
-  service's name — matching whatever DNS convention an orchestrator already hands you for free (a
-  Kubernetes `Service`, an ECS Cloud Map namespace, Consul DNS, ...).
+  service's name and `{version}` with the resolved version — matching whatever DNS convention an
+  orchestrator already hands you for free (a Kubernetes `Service`, an ECS Cloud Map namespace,
+  Consul DNS, ...). `{version}` substitution is a no-op when the placeholder isn't present, so
+  existing `{service}`-only templates keep working unchanged; a per-version split (see "Two
+  versions of a service side by side" above) needs a template like
+  `http://{service}-v{version}.default.svc.cluster.local:8080` to route each version to its own
+  endpoint.
 
 Precedence, per service: an explicit `modular.services.<name>.url` always wins (the escape hatch
 for anything that doesn't fit the convention) → else derived from `--modular.remote-url-template`
@@ -283,6 +288,25 @@ This is deliberately *not* service discovery — Horde never tracks "who is curr
 running where." It just makes the binary a well-behaved, single-purpose replica so whatever's
 already scheduling and load-balancing containers can do that job, instead of this framework
 reinventing it. See "Why this isn't just a 'modulith'" above.
+
+**Connect/read timeouts:** the `internal-rest` transport defaults to a 2s connect timeout and a
+10s read timeout — a single hung remote service can't pin a caller thread forever. Override with
+`modular.transport.connect-timeout` / `modular.transport.read-timeout` (milliseconds). A timed-out
+call fails as a `RemoteServiceException` naming the timeout, within the configured bound.
+
+**Environment variable configuration:** `modular.services.audit-service.mode` and friends are
+plain dotted-kebab keys, read directly from Spring's `Environment` (see "Using this without Spring
+Boot" below) — no Boot-specific relaxed-binding `Binder` involved. This works from a plain OS
+environment variable regardless: Spring Framework's own `SystemEnvironmentPropertySource` already
+translates `MODULAR_SERVICES_AUDIT_SERVICE_MODE` (and the equivalent per-version form,
+`MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_2_URL`) into the dotted key at lookup time, and Horde's
+own version-discovery scan checks for both forms directly — so a container orchestrator that only
+offers env vars (no YAML/properties file, no CLI flags) can declare a version's mode/url/existence
+purely via `MODULAR_SERVICES_<NAME>_VERSIONS_<VERSION>_*` env vars, with no local impl and no
+mention in `--modular.serve` needed. If you'd rather set nested config as one blob instead of many
+separate env vars, `SPRING_APPLICATION_JSON` (a single JSON-blob env var Boot unpacks into regular
+dotted properties) is the Boot-idiomatic alternative — e.g.
+`SPRING_APPLICATION_JSON='{"modular":{"services":{"audit-service":{"versions":{"2":{"mode":"internal-rest","url":"http://audit-v2:8080"}}}}}}'`.
 
 ### Two versions of a service side by side
 

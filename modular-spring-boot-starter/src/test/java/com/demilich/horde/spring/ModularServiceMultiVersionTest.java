@@ -2,6 +2,7 @@ package com.demilich.horde.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.demilich.horde.spring.fixture.duplicateinterfacename.DuplicateInterfaceNameTestApp;
 import com.demilich.horde.spring.fixture.duplicateversion.DuplicateVersionTestApp;
 import com.demilich.horde.spring.fixture.multiversion.CounterService;
 import com.demilich.horde.spring.fixture.multiversion.CounterServiceV1;
@@ -116,6 +117,23 @@ class ModularServiceMultiVersionTest {
                     .hasMessageContaining("version '1'")
                     .hasMessageContaining("DuplicateServiceImplA")
                     .hasMessageContaining("DuplicateServiceImplB");
+        });
+    }
+
+    @Test
+    void duplicateInterfaceSimpleNameFailsFast() {
+        new ApplicationContextRunner().withUserConfiguration(DuplicateInterfaceNameTestApp.class).run(ctx -> {
+            assertThat(ctx).hasFailed();
+            Throwable root = ctx.getStartupFailure();
+            while (root.getCause() != null) {
+                root = root.getCause();
+            }
+            assertThat(root).isInstanceOf(IllegalStateException.class);
+            assertThat(root)
+                    .hasMessageContaining("widget-service")
+                    .hasMessageContaining("pkga.WidgetService")
+                    .hasMessageContaining("pkgb.WidgetService")
+                    .hasMessageContaining("@ModularService(name = ...)");
         });
     }
 }

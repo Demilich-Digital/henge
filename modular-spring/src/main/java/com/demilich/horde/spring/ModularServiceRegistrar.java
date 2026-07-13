@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.beans.factory.support.AutowireCandidateQualifier;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
@@ -60,17 +61,34 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
     @Override
     public void registerBeanDefinitions(AnnotationMetadata importingClassMetadata, BeanDefinitionRegistry registry) {
+        // The bean factory's own classloader, not this class's -- under Spring Boot DevTools'
+        // restart classloader (or any other classloader indirection), a candidate class found by
+        // scanning the application's classpath may not be loadable via the classloader that
+        // happened to load this framework class.
+        ClassLoader classLoader = (registry instanceof ConfigurableBeanFactory beanFactory)
+                ? beanFactory.getBeanClassLoader()
+                : ModularServiceRegistrar.class.getClassLoader();
+
         Set<String> basePackages = resolveBasePackages(importingClassMetadata);
-        Set<Class<?>> serviceInterfaces = discoverServiceInterfaces(basePackages);
-        Map<Class<?>, Map<String, Class<?>>> localImpls = discoverServiceVersionImpls(basePackages, serviceInterfaces);
+        Set<Class<?>> serviceInterfaces = discoverServiceInterfaces(basePackages, classLoader);
+        Map<Class<?>, Map<String, Class<?>>> localImpls = discoverServiceVersionImpls(basePackages, serviceInterfaces, classLoader);
         ModularProperties properties = new ModularProperties(environment);
         ServeSpec serveSpec = ServeSpec.parse(properties.getServe());
 
         List<ModularServiceDescriptor> embedded = new ArrayList<>();
+        Map<String, Class<?>> namesToInterfaces = new LinkedHashMap<>();
 
         for (Class<?> serviceInterface : serviceInterfaces) {
             ModularService annotation = serviceInterface.getAnnotation(ModularService.class);
             String name = defaultName(serviceInterface, annotation);
+
+            Class<?> existingOwner = namesToInterfaces.putIfAbsent(name, serviceInterface);
+            if (existingOwner != null) {
+                throw new IllegalStateException("Two @ModularService interfaces resolve to the same service name '"
+                        + name + "': " + existingOwner.getName() + " and " + serviceInterface.getName()
+                        + " -- disambiguate with @ModularService(name = ...) on one of them.");
+            }
+
             String defaultVersion = annotation.defaultVersion();
 
             Map<String, Class<?>> implsByVersion = localImpls.getOrDefault(serviceInterface, Map.of());
@@ -95,7 +113,11 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 }
 
                 Class<?> implClass = implsByVersion.get(version);
-                String beanName = ClassUtils.getShortNameAsProperty(serviceInterface) + "-" + version;
+                // Derived from the resolved service name (not the interface's raw simple name) so
+                // that two interfaces with the same simple name in different packages -- already
+                // rejected above unless disambiguated via @ModularService(name = ...) -- get
+                // distinct bean names too, once disambiguated.
+                String beanName = name + "-" + version;
                 boolean isDefault = version.equals(defaultVersion);
 
                 RootBeanDefinition definition;
@@ -135,30 +157,24 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         definition.addQualifier(qualifier);
     }
 
-    private Set<Class<?>> discoverServiceInterfaces(Set<String> basePackages) {
+    private Set<Class<?>> discoverServiceInterfaces(Set<String> basePackages, ClassLoader classLoader) {
         Set<Class<?>> found = new LinkedHashSet<>();
         ServiceInterfaceScanner scanner = new ServiceInterfaceScanner();
         for (String basePackage : basePackages) {
             for (BeanDefinition candidate : scanner.findCandidateComponents(basePackage)) {
-                Class<?> type = resolveClass(candidate.getBeanClassName());
-                if (type != null) {
-                    found.add(type);
-                }
+                found.add(resolveClass(candidate.getBeanClassName(), classLoader));
             }
         }
         return found;
     }
 
     private Map<Class<?>, Map<String, Class<?>>> discoverServiceVersionImpls(
-            Set<String> basePackages, Set<Class<?>> serviceInterfaces) {
+            Set<String> basePackages, Set<Class<?>> serviceInterfaces, ClassLoader classLoader) {
         Map<Class<?>, Map<String, Class<?>>> result = new LinkedHashMap<>();
         ServiceVersionScanner scanner = new ServiceVersionScanner();
         for (String basePackage : basePackages) {
             for (BeanDefinition candidate : scanner.findCandidateComponents(basePackage)) {
-                Class<?> implClass = resolveClass(candidate.getBeanClassName());
-                if (implClass == null) {
-                    continue;
-                }
+                Class<?> implClass = resolveClass(candidate.getBeanClassName(), classLoader);
                 ServiceVersion annotation = implClass.getAnnotation(ServiceVersion.class);
                 Class<?> serviceInterface = annotation.value();
                 String version = annotation.version();
@@ -227,14 +243,21 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         return kebab.toString();
     }
 
-    private static Class<?> resolveClass(String className) {
-        if (className == null) {
-            return null;
-        }
+    /**
+     * These classes were just found by classpath scanning -- failing to load them is never a
+     * benign condition, so this fails fast with a descriptive message instead of silently
+     * dropping the candidate (which previously made an unloadable service vanish without a trace,
+     * worst case under Spring Boot DevTools' restart classloader where an entire batch could
+     * vanish at once). Package-private (rather than {@code private}) so it's directly testable.
+     */
+    static Class<?> resolveClass(String className, ClassLoader classLoader) {
         try {
-            return ClassUtils.forName(className, ModularServiceRegistrar.class.getClassLoader());
+            return ClassUtils.forName(className, classLoader);
         } catch (ClassNotFoundException | LinkageError e) {
-            return null;
+            throw new IllegalStateException("Modular service discovery found '" + className + "' by classpath scanning "
+                    + "but failed to load it (" + e.getClass().getSimpleName() + ": " + e.getMessage() + "). This should "
+                    + "never happen for a class the scanner itself just found; check for a classloader mismatch (e.g. "
+                    + "Spring Boot DevTools' restart classloader) or a missing/incompatible dependency.", e);
         }
     }
 

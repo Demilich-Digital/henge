@@ -1,6 +1,5 @@
 package com.demilich.horde.spring;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -18,6 +17,10 @@ import org.springframework.context.annotation.Import;
  * {@code modular.server.enabled}. See {@code modular-spring}'s {@link ModularConfiguration} for
  * the plain-Spring path, where "should this process serve requests" is a code-level `@Import`
  * choice instead of a property.
+ *
+ * <p>The dispatcher's {@code ObjectMapper} is built via {@link ModularTransportSupport} rather than
+ * injected as an unqualified bean, for the same reason as {@code modular-spring}'s
+ * {@link ModularDispatcherConfiguration} — see its Javadoc.
  */
 @AutoConfiguration
 @Import(ModularTransportConfiguration.class)
@@ -31,8 +34,7 @@ public class ModularAutoConfiguration {
 
     @Bean
     @ConditionalOnProperty(prefix = "modular.server", name = "enabled", havingValue = "true", matchIfMissing = true)
-    ModularDispatcherController modularDispatcherController(
-            ApplicationContext applicationContext, ModularServiceRegistry registry, ObjectMapper objectMapper) {
-        return new ModularDispatcherController(applicationContext, registry, objectMapper);
+    ModularDispatcherController modularDispatcherController(ApplicationContext applicationContext, ModularServiceRegistry registry) {
+        return new ModularDispatcherController(applicationContext, registry, ModularTransportSupport.objectMapper());
     }
 }

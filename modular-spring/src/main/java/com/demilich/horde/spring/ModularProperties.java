@@ -3,6 +3,7 @@ package com.demilich.horde.spring;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.EnumerablePropertySource;
@@ -35,6 +36,16 @@ public class ModularProperties {
     /** {@code modular.remote-url-template}; {@code null} if unset. */
     public String getRemoteUrlTemplate() {
         return environment.getProperty("modular.remote-url-template");
+    }
+
+    /** {@code modular.transport.connect-timeout}, milliseconds, default {@code 2000}. */
+    public long getConnectTimeoutMillis() {
+        return environment.getProperty("modular.transport.connect-timeout", Long.class, 2000L);
+    }
+
+    /** {@code modular.transport.read-timeout}, milliseconds, default {@code 10000}. */
+    public long getReadTimeoutMillis() {
+        return environment.getProperty("modular.transport.read-timeout", Long.class, 10000L);
     }
 
     /**
@@ -91,28 +102,50 @@ public class ModularProperties {
          * discover "which keys exist under this prefix" without Boot's relaxed-binding
          * {@code Binder}. Requires a {@link ConfigurableEnvironment} (always the actual runtime
          * type in a real {@code ApplicationContext}); returns empty otherwise.
+         *
+         * <p>Checks each enumerated property name against both the literal dotted-kebab prefix
+         * (what config files/command-line args use) and its env-var-style equivalent
+         * (uppercased, {@code .}/{@code -} both mapped to {@code _}) — an OS environment variable
+         * property source enumerates its keys in raw {@code MODULAR_SERVICES_...} form, never
+         * translated to the dotted form (that translation only happens lazily, per-key, inside
+         * {@link Environment#getProperty(String)} — see {@code SystemEnvironmentPropertySource}),
+         * so a literal-only scan would silently miss a version declared purely via an env var.
          */
         public Set<String> explicitVersions() {
             Set<String> versions = new LinkedHashSet<>();
             if (!(environment instanceof ConfigurableEnvironment configurable)) {
                 return versions;
             }
-            String prefix = "modular.services." + name + ".versions.";
+            String dottedPrefix = "modular.services." + name + ".versions.";
+            String envStylePrefix = toEnvVarStyle(dottedPrefix);
             for (PropertySource<?> source : configurable.getPropertySources()) {
                 if (source instanceof EnumerablePropertySource<?> enumerable) {
                     for (String propertyName : enumerable.getPropertyNames()) {
-                        if (propertyName.startsWith(prefix)) {
-                            String rest = propertyName.substring(prefix.length());
-                            int dot = rest.indexOf('.');
-                            String version = dot < 0 ? rest : rest.substring(0, dot);
-                            if (!version.isEmpty()) {
-                                versions.add(version);
-                            }
+                        String version = extractVersion(propertyName, dottedPrefix, '.');
+                        if (version == null) {
+                            version = extractVersion(propertyName, envStylePrefix, '_');
+                        }
+                        if (version != null) {
+                            versions.add(version);
                         }
                     }
                 }
             }
             return versions;
+        }
+
+        private static String extractVersion(String propertyName, String prefix, char separator) {
+            if (!propertyName.startsWith(prefix)) {
+                return null;
+            }
+            String rest = propertyName.substring(prefix.length());
+            int sep = rest.indexOf(separator);
+            String version = sep < 0 ? rest : rest.substring(0, sep);
+            return version.isEmpty() ? null : version;
+        }
+
+        private static String toEnvVarStyle(String dotted) {
+            return dotted.toUpperCase(Locale.ROOT).replace('.', '_').replace('-', '_');
         }
     }
 }

@@ -1,12 +1,10 @@
 package com.demilich.horde.spring;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.demilich.horde.core.ServiceTransport;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.core.env.Environment;
-import org.springframework.web.client.RestClient;
 
 /**
  * Plain-Spring core wiring: everything needed to <em>call</em> modular services (embedded or
@@ -19,6 +17,12 @@ import org.springframework.web.client.RestClient;
  * {@link ModularServiceRegistry} bean — always pair this with {@link EnableModularServices} on
  * your own {@code @Configuration} class, which registers the real one. Omitting it fails clearly
  * at startup ("no bean of type ModularServiceRegistry") rather than silently doing nothing.
+ *
+ * <p>The transport's {@code ObjectMapper}/{@code RestClient} are deliberately <em>not</em>
+ * {@code @Bean}s (see {@link ModularTransportSupport}) — publishing an unqualified
+ * {@code ObjectMapper} bean here could make Boot's {@code JacksonAutoConfiguration} back off from
+ * the application's own {@code spring.jackson.*} configuration, and would risk ambiguity against a
+ * user-defined {@code ObjectMapper}/{@code RestClient} bean.
  */
 @Configuration
 public class ModularTransportConfiguration {
@@ -34,17 +38,8 @@ public class ModularTransportConfiguration {
     }
 
     @Bean
-    public RestClient modularRestClient() {
-        return RestClient.builder().build();
-    }
-
-    @Bean
-    public ObjectMapper modularObjectMapper() {
-        return new ObjectMapper();
-    }
-
-    @Bean
-    public ServiceTransport internalRestTransport(RestClient modularRestClient, ObjectMapper modularObjectMapper, ModularProperties modularProperties) {
-        return new InternalRestTransport(modularRestClient, modularObjectMapper, modularProperties);
+    public ServiceTransport internalRestTransport(ModularProperties modularProperties) {
+        return new InternalRestTransport(
+                ModularTransportSupport.restClient(modularProperties), ModularTransportSupport.objectMapper(), modularProperties);
     }
 }
