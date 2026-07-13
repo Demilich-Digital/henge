@@ -30,8 +30,7 @@ class InternalRestTransport implements ServiceTransport {
 
     @Override
     public Object invoke(ServiceInvocation invocation) {
-        ModularProperties.ServiceConfig config = properties.getServices().get(invocation.serviceName());
-        String url = (config != null) ? config.resolveUrl(invocation.serviceVersion()) : null;
+        String url = properties.service(invocation.serviceName()).resolveUrl(invocation.serviceVersion());
         if (url == null || url.isBlank()) {
             url = resolveFromTemplate(invocation.serviceName());
         }
@@ -42,7 +41,7 @@ class InternalRestTransport implements ServiceTransport {
                     + ".url for a per-version override, or modular.remote-url-template for a shared convention)");
         }
 
-        String uri = url + properties.getServer().getPathPrefix() + "/" + invocation.serviceName() + "/"
+        String uri = url + properties.getServerPathPrefix() + "/" + invocation.serviceName() + "/"
                 + invocation.serviceVersion() + "/" + invocation.methodName();
 
         ArrayNode body = objectMapper.createArrayNode();
@@ -59,8 +58,10 @@ class InternalRestTransport implements ServiceTransport {
                     .retrieve()
                     .body(String.class);
         } catch (RestClientResponseException e) {
-            throw new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
+            RemoteServiceException fallback = new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
                     + invocation.methodName() + " -> " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
+            throw RemoteExceptionReconstructor.reconstruct(
+                    e.getResponseBodyAsString(), invocation.method().getDeclaringClass().getClassLoader(), objectMapper, fallback);
         } catch (RestClientException e) {
             throw new RemoteServiceException(
                     "Modular service call failed: " + invocation.serviceName() + "#" + invocation.methodName(), e);

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -16,8 +17,9 @@ class InternalRestTransportTest {
 
     @Test
     void substitutesServiceNameIntoRemoteUrlTemplate() {
-        ModularProperties properties = new ModularProperties();
-        properties.setRemoteUrlTemplate("http://{service}.default.svc.cluster.local:8080");
+        MockEnvironment environment = new MockEnvironment()
+                .withProperty("modular.remote-url-template", "http://{service}.default.svc.cluster.local:8080");
+        ModularProperties properties = new ModularProperties(environment);
         InternalRestTransport transport =
                 new InternalRestTransport(RestClient.builder().build(), new ObjectMapper(), properties);
 
@@ -27,8 +29,9 @@ class InternalRestTransportTest {
 
     @Test
     void returnsNullWhenNoTemplateConfigured() {
+        ModularProperties properties = new ModularProperties(new MockEnvironment());
         InternalRestTransport transport =
-                new InternalRestTransport(RestClient.builder().build(), new ObjectMapper(), new ModularProperties());
+                new InternalRestTransport(RestClient.builder().build(), new ObjectMapper(), properties);
 
         assertThat(transport.resolveFromTemplate("audit-service")).isNull();
     }

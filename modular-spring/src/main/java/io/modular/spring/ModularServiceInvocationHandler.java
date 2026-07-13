@@ -36,7 +36,12 @@ class ModularServiceInvocationHandler implements InvocationHandler {
 
         try {
             return transport.invoke(invocation);
-        } catch (RemoteServiceException e) {
+        } catch (RuntimeException e) {
+            // Passes through unchanged -- not just RemoteServiceException itself, but also
+            // whatever original exception type RemoteExceptionReconstructor managed to
+            // reconstruct from the remote failure. Only checked exceptions from a transport
+            // still get wrapped below, since those can't be reconstructed reliably anyway (see
+            // RemoteExceptionReconstructor's Javadoc).
             throw e;
         } catch (Exception e) {
             throw new RemoteServiceException(

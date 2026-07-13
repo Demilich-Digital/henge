@@ -14,8 +14,6 @@ import org.springframework.beans.factory.support.AutowireCandidateQualifier;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.beans.factory.support.RootBeanDefinition;
-import org.springframework.boot.context.properties.bind.Bindable;
-import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.EnvironmentAware;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.context.annotation.ImportBeanDefinitionRegistrar;
@@ -65,8 +63,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         Set<String> basePackages = resolveBasePackages(importingClassMetadata);
         Set<Class<?>> serviceInterfaces = discoverServiceInterfaces(basePackages);
         Map<Class<?>, Map<String, Class<?>>> localImpls = discoverServiceVersionImpls(basePackages, serviceInterfaces);
-        Binder binder = Binder.get(environment);
-        ServeSpec serveSpec = ServeSpec.parse(binder.bind("modular.serve", Bindable.listOf(String.class)).orElse(List.of()));
+        ModularProperties properties = new ModularProperties(environment);
+        ServeSpec serveSpec = ServeSpec.parse(properties.getServe());
 
         List<ModularServiceDescriptor> embedded = new ArrayList<>();
 
@@ -76,11 +74,10 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             String defaultVersion = annotation.defaultVersion();
 
             Map<String, Class<?>> implsByVersion = localImpls.getOrDefault(serviceInterface, Map.of());
-            ModularProperties.ServiceConfig config = binder.bind("modular.services." + name, Bindable.of(ModularProperties.ServiceConfig.class))
-                    .orElseGet(ModularProperties.ServiceConfig::new);
+            ModularProperties.ServiceConfig config = properties.service(name);
 
             Set<String> versions = new LinkedHashSet<>(implsByVersion.keySet());
-            versions.addAll(config.getVersions().keySet());
+            versions.addAll(config.explicitVersions());
             versions.addAll(serveSpec.versionsFor(name));
             versions.add(defaultVersion);
 

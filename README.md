@@ -112,10 +112,21 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
 - Transport is pluggable behind the `ServiceTransport` SPI (`io.modular.core`). `internal-rest` is
   the only implementation today; a `grpc` transport can be added later without any change to
   `@ModularService` or generated proxies.
+- A caller of an **embedded** service sees whatever exception the real implementation throws; a
+  naive **internal-rest** transport would only ever be able to throw a generic exception instead,
+  which defeats the point of location transparency the moment something goes wrong. So when the
+  remote implementation's own method throws, `internal-rest` reconstructs that original exception
+  client-side — on a best-effort basis, for `RuntimeException` subtypes with a `(String)`
+  constructor (the common case for hand-written business exceptions) — with today's
+  `RemoteServiceException` (the network-level diagnostic: which service/method, what HTTP status)
+  chained in as its cause. Anything that can't be reconstructed (an unknown type, a checked
+  exception, no compatible constructor) falls back to `RemoteServiceException` alone, exactly as
+  before. See `RemoteExceptionReconstructor`'s Javadoc for why checked exceptions are out of scope
+  — it comes down to a real limitation of JDK dynamic proxies, not an oversight.
 - The runtime wiring itself is just `BeanDefinitionRegistry` manipulation, `java.lang.reflect.Proxy`,
   and Spring's own `@Primary`/qualifier autowiring machinery — no bytecode generation there. See
   the Javadoc on
-  [`ModularServiceRegistrar`](modular-spring-boot-starter/src/main/java/io/modular/spring/ModularServiceRegistrar.java)
+  [`ModularServiceRegistrar`](modular-spring/src/main/java/io/modular/spring/ModularServiceRegistrar.java)
   for the exact bean-wiring mechanics. `@AddedIn`/`@DeprecatedSince` are the one place this
   project *does* use real annotation processing — see below.
 
@@ -181,10 +192,12 @@ Two things worth knowing:
 |---|---|
 | `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, the `ServiceTransport` SPI, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
 | `modular-processor` | The `@AddedIn`/`@DeprecatedSince` annotation processor: generates `{Interface}Skeleton` classes and validates `@ServiceVersion` implementations against them. Depends only on `modular-core` — no Spring. |
-| `modular-spring-boot-starter` | `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, autoconfiguration. |
+| `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
+| `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically and adds the `modular.server.enabled` property gate — the only things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
 | `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn("2")` method. |
-| `examples/example-services` | Their `@ServiceVersion` implementations, including a second `AuditService` version to demonstrate multi-version wiring and the generated-skeleton mechanism. |
+| `examples/example-services` | Their `@ServiceVersion` implementations, including a second `AuditService` version to demonstrate multi-version wiring and the generated-skeleton mechanism. No Spring dependency at all. |
 | `examples/example-app` | One Spring Boot application tying it together, runnable as the monolith or as either half of a split deployment. |
+| `examples/example-plain-spring` | The same idea with zero Spring Boot: a plain `AnnotationConfigApplicationContext` + `@EnableModularServices`, proving the core wiring mechanism works standalone. See "Using this without Spring Boot" below. |
 
 ## Quickstart
 
@@ -313,6 +326,43 @@ The 500 comes from `ServiceVersionUnsupportedException`, thrown by the method
 `modular-processor` generated on `AuditServiceSkeleton`, naming exactly which version is required
 — visible in the server log even though the HTTP response body itself is Spring Boot's generic
 error JSON.
+
+## Using this without Spring Boot
+
+`modular-spring-boot-starter` is a convenience layer, not a requirement — the actual mechanism
+(discovery, bean-definition wiring, the internal-rest transport, the dispatcher controller) lives
+in `modular-spring`, which only depends on plain Spring Framework (`spring-context`, `spring-web`).
+A plain-Spring consumer does two things Boot users get for free:
+
+- **`@Import` the configuration explicitly.** `modular-spring-boot-starter`'s autoconfiguration
+  unconditionally wires `ModularTransportConfiguration` (the `RestClient`/`ServiceTransport`/
+  `ModularProperties` beans needed to *call* other services) and, unless `modular.server.enabled=false`,
+  `ModularDispatcherConfiguration` (the controller needed to *serve* embedded ones). Without Boot,
+  import them yourself — `ModularConfiguration` imports both at once, or import
+  `ModularTransportConfiguration` alone if this process never serves any requests. "Should this
+  process serve requests" becomes a code-level choice (which class you import) instead of a
+  runtime property.
+- **CLI-flag property parsing isn't automatic.** Boot turns `--modular.serve=...` into environment
+  properties for free; plain Spring doesn't. Add a
+  [`SimpleCommandLinePropertySource`](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/core/env/SimpleCommandLinePropertySource.html)
+  to the context's environment yourself if you want the same `--key=value` CLI convention.
+
+`examples/example-plain-spring` demonstrates the minimal end of this — pure DI/location-transparency,
+no HTTP — with `@EnableModularServices` plus an `AnnotationConfigApplicationContext`, no
+`SpringApplication` anywhere:
+
+```bash
+./gradlew :examples:example-plain-spring:run
+```
+
+```
+Hello, plain Spring!
+Audit trail: [greeted:plain Spring]
+```
+
+For the HTTP-serving end (embedded Tomcat + `DispatcherServlet`, one process dispatching to
+another over `/_modular/**`, entirely Boot-free), see `modular-spring`'s
+[`ModularDispatchPlainSpringTest`](modular-spring/src/test/java/io/modular/spring/ModularDispatchPlainSpringTest.java).
 
 ## Not in v1
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.context.ApplicationContext;
 import org.springframework.http.HttpStatus;
@@ -62,8 +63,9 @@ class ModularDispatcherController {
         try {
             result = targetMethod.invoke(bean, args);
         } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
             throw new ModularDispatchException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    describeFailure(service, method, e.getCause()));
+                    describeFailure(service, method, cause), cause.getClass().getName(), cause.getMessage());
         } catch (IllegalAccessException e) {
             throw new ModularDispatchException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "Failed to invoke " + service + "#" + method);
@@ -106,6 +108,14 @@ class ModularDispatcherController {
 
     @ExceptionHandler(ModularDispatchException.class)
     public ResponseEntity<Map<String, String>> handleDispatchException(ModularDispatchException e) {
-        return ResponseEntity.status(e.getStatus()).body(Map.of("error", e.getMessage()));
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("error", e.getMessage());
+        // Only present when the failure was the target method's own business exception (see
+        // RemoteExceptionReconstructor) -- absent for dispatch-level failures like 404/400.
+        if (e.getRemoteExceptionType() != null) {
+            body.put("exceptionType", e.getRemoteExceptionType());
+            body.put("exceptionMessage", e.getRemoteExceptionMessage());
+        }
+        return ResponseEntity.status(e.getStatus()).body(body);
     }
 }

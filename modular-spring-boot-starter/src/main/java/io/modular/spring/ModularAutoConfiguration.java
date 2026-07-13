@@ -1,40 +1,32 @@
 package io.modular.spring;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.modular.core.ServiceTransport;
 import java.util.List;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
-import org.springframework.web.client.RestClient;
+import org.springframework.context.annotation.Import;
 
 /**
- * Wires the modular services runtime. Interface discovery itself only happens when the
- * application also carries {@link EnableModularServices} — without it, this still configures
- * the transport/dispatcher machinery, but {@link ModularServiceRegistry} stays empty.
+ * Boot-specific classpath auto-detection layer on top of the plain-Spring
+ * {@link ModularTransportConfiguration}: unconditionally imports the transport wiring (RestClient,
+ * {@code ServiceTransport}, {@link ModularProperties}), then adds Boot-only conveniences that
+ * don't have a plain-Spring equivalent — an empty {@link ModularServiceRegistry} fallback when
+ * {@link EnableModularServices} wasn't used, and gating the dispatcher controller behind
+ * {@code modular.server.enabled}. See {@code modular-spring}'s {@link ModularConfiguration} for
+ * the plain-Spring path, where "should this process serve requests" is a code-level `@Import`
+ * choice instead of a property.
  */
 @AutoConfiguration
-@EnableConfigurationProperties(ModularProperties.class)
+@Import(ModularTransportConfiguration.class)
 public class ModularAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
     ModularServiceRegistry modularServiceRegistry() {
         return new ModularServiceRegistry(List.of());
-    }
-
-    @Bean
-    @ConditionalOnMissingBean
-    RestClient modularRestClient(RestClient.Builder builder) {
-        return builder.build();
-    }
-
-    @Bean
-    ServiceTransport internalRestTransport(RestClient modularRestClient, ObjectMapper objectMapper, ModularProperties properties) {
-        return new InternalRestTransport(modularRestClient, objectMapper, properties);
     }
 
     @Bean
