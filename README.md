@@ -1,10 +1,15 @@
 # Henge
 
-A Spring Boot add-on for building "modular services": define a service once as a Java interface
-plus a `@ServiceVersion`-annotated implementation, and let deployment config — not code — decide
-whether each service (and each *version* of it) runs in-process or is dispatched to over HTTP to
-another process. One fat jar is both the full local-dev monolith and every individual microservice
-it can be split into, switched purely via `--modular.services.<name>.mode=...` CLI flags or config.
+Run this jar with no flags, and it's a monolith. Run the *exact same jar*, twice, each with one
+flag, and it's two independently deployable microservices talking to each other over HTTP —
+nothing recompiled, nothing rewritten, same `.jar` both times. Henge is what makes that true:
+whether a service call happens in-process or over the network is a deployment-time decision, not a
+design-time one, and API versioning lives in the compiled binary instead of at the network
+boundary.
+
+A Spring Boot add-on for building these services: define one once as a Java interface plus a
+`@ServiceVersion`-annotated implementation, and deployment config — not code — decides whether it
+runs in-process or gets dispatched over HTTP, per `--modular.services.<name>.mode=...` flag.
 Multiple implementations of the same interface can run side by side — each dependency pins which
 version it wants, or gets the default automatically, so a version change never requires the whole
 deployment to move in lockstep.
@@ -478,3 +483,33 @@ Deliberately out of scope for now, to keep the core mechanism small and correct:
 - Async/streaming methods — calls are synchronous/blocking only.
 - Overloaded methods on a `@ModularService` interface (RPC dispatch is by method name; use
   `@ServiceMethod(name = ...)` to disambiguate if you need two methods with the same name).
+
+## Roadmap
+
+What's actually planned next, roughly in priority order (as opposed to "Not in v1" above, which is
+scope deliberately excluded rather than deferred):
+
+- **Topology visibility.** The framework's entire value proposition is "config decides the
+  topology" — right now the resolved result is invisible. Log a `service@version → mode → url`
+  table at startup, and expose the same table from the Boot starter via an actuator endpoint.
+- **Tracing/metrics propagation on the transport.** The hand-built `RestClient` bypasses Boot's
+  observation instrumentation today, so traces stop dead exactly at the process boundary that
+  matters most. Build it from Boot's auto-configured `RestClient.Builder` when available instead.
+- **Shared-singleton detection.** Two services that both inject the same stateful singleton (a
+  cache, a mutable holder bean) share one instance in the monolith and get silently independent
+  copies the moment they're split — nothing surfaces this today. A startup-time bean-graph walk,
+  heuristic and suppressible, would at least turn it into a loud warning instead of a silent
+  production surprise.
+- **Strict/isolated embedded mode — the flagship feature.** `modular.strict=true` would round-trip
+  embedded calls through the same serialization internal-rest uses, so mutation bugs and
+  non-serializable types reproduce on a laptop instead of after a production split. A further
+  `isolated` tier would go all the way: each service gets its own child Spring context in dev, so
+  shared in-memory state genuinely stops being shared, deterministically, with a debugger attached
+  — the real answer to the shared-singleton problem above, not just a warning about it.
+- **Publishing + CI**, and a **test slice** (`@ModularServiceTest`-style) that boots one service's
+  module with its dependencies as strict-mode proxies once the isolation work above exists to build
+  it on.
+
+## License
+
+[MIT](LICENSE)
