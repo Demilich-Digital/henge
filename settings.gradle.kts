@@ -1,4 +1,4 @@
-rootProject.name = "horde"
+rootProject.name = "henge"
 
 include(
     "modular-core",

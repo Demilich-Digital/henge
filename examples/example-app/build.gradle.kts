@@ -13,5 +13,5 @@ dependencies {
 }
 
 springBoot {
-    mainClass.set("com.demilich.horde.examples.app.ExampleApp")
+    mainClass.set("digital.demilich.henge.examples.app.ExampleApp")
 }

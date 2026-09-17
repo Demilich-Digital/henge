@@ -1,4 +1,4 @@
-# Horde
+# Henge
 
 A Spring Boot add-on for building "modular services": define a service once as a Java interface
 plus a `@ServiceVersion`-annotated implementation, and let deployment config — not code — decide
@@ -13,7 +13,7 @@ deployment to move in lockstep.
 
 The term "modulith" usually means a code-organization discipline: one deployable, forever,
 internally organized into well-bounded modules (this is what Spring Modulith itself gives you).
-That's not what this project does. Horde makes two specific, load-bearing claims that a
+That's not what this project does. Henge makes two specific, load-bearing claims that a
 code-organization discipline alone doesn't:
 
 1. **API versioning lives in the binary, not the network.** `@ServiceVersion` plus
@@ -30,7 +30,7 @@ code-organization discipline alone doesn't:
 
 That combination — monolith development ergonomics plus microservice deployment flexibility,
 without a rewrite or a redeploy to move between them — is the actual goal. It's honestly not
-fully there yet: Horde itself still tracks nothing about which instances are alive or
+fully there yet: Henge itself still tracks nothing about which instances are alive or
 where (see "Not in v1" below) — `--modular.serve` and `--modular.remote-url-template` let the
 binary lean on an existing orchestrator's own discovery (k8s DNS, Consul DNS, ...) rather than
 requiring hand-configured hosts, but there's still no health-aware routing, retries, or auth on
@@ -129,7 +129,7 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   rejected — this only catches an actively wrong fingerprint. Off-switch:
   `modular.transport.verify-contract=false`, independently on either side, for a deliberate
   mixed-build window.
-- Transport is pluggable behind the `ServiceTransport` SPI (`com.demilich.horde.core`). `internal-rest` is
+- Transport is pluggable behind the `ServiceTransport` SPI (`digital.demilich.henge.core`). `internal-rest` is
   the only implementation today; a `grpc` transport can be added later without any change to
   `@ModularService` or generated proxies.
 - A caller of an **embedded** service sees whatever exception the real implementation throws; a
@@ -146,7 +146,7 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
 - The runtime wiring itself is just `BeanDefinitionRegistry` manipulation, `java.lang.reflect.Proxy`,
   and Spring's own `@Primary`/qualifier autowiring machinery — no bytecode generation there. See
   the Javadoc on
-  [`ModularServiceRegistrar`](modular-spring/src/main/java/com/demilich/horde/spring/ModularServiceRegistrar.java)
+  [`ModularServiceRegistrar`](modular-spring/src/main/java/digital/demilich/henge/spring/ModularServiceRegistrar.java)
   for the exact bean-wiring mechanics. `@AddedIn`/`@DeprecatedSince` are the one place this
   project *does* use real annotation processing — see below.
 
@@ -227,7 +227,7 @@ method behave identically. Two ways they silently don't, unless something stops 
   - `record`s and `enum`s (recursed into, for records)
   - primitives, `String`, and well-known immutable JDK value types (`java.time.*`, `UUID`,
     `BigDecimal`, `BigInteger`)
-  - `ImmutableList<T>` / `ImmutableSet<T>` / `ImmutableMap<K, V>` (`com.demilich.horde.core`) or
+  - `ImmutableList<T>` / `ImmutableSet<T>` / `ImmutableMap<K, V>` (`digital.demilich.henge.core`) or
     `Optional<T>` of an allowed type — plain `java.util.List`/`Set`/`Map` are **not** allowed:
     Jackson deserializes them to a mutable `ArrayList`/`HashMap` by default, which reopens exactly
     the aliasing gap this rule exists to close
@@ -245,7 +245,7 @@ method behave identically. Two ways they silently don't, unless something stops 
   `List.copyOf`/`Set.copyOf`/`Map.copyOf`, mutator methods throw `UnsupportedOperationException`),
   and distinctly named so the processor can recognize the *type*, not just runtime behavior a
   caller happened to rely on. `modular-spring`'s shared transport `ObjectMapper` knows how to
-  deserialize them (`HordeCollectionsModule`) — `modular-core` itself stays Jackson-free.
+  deserialize them (`HengeCollectionsModule`) — `modular-core` itself stays Jackson-free.
 
 **Enforcing the boundary at the build level, not just the type level:** nothing in the language
 stops a consumer from depending on a service's implementation class directly instead of its
@@ -354,7 +354,7 @@ equivalent to terminal 2 above, just via the template instead of an explicit `.u
 --modular.serve=greeting-service --modular.remote-url-template=http://localhost:8082
 ```
 
-This is deliberately *not* service discovery — Horde never tracks "who is currently
+This is deliberately *not* service discovery — Henge never tracks "who is currently
 running where." It just makes the binary a well-behaved, single-purpose replica so whatever's
 already scheduling and load-balancing containers can do that job, instead of this framework
 reinventing it. See "Why this isn't just a 'modulith'" above.
@@ -369,7 +369,7 @@ plain dotted-kebab keys, read directly from Spring's `Environment` (see "Using t
 Boot" below) — no Boot-specific relaxed-binding `Binder` involved. This works from a plain OS
 environment variable regardless: Spring Framework's own `SystemEnvironmentPropertySource` already
 translates `MODULAR_SERVICES_AUDIT_SERVICE_MODE` (and the equivalent per-version form,
-`MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_2_URL`) into the dotted key at lookup time, and Horde's
+`MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_2_URL`) into the dotted key at lookup time, and Henge's
 own version-discovery scan checks for both forms directly — so a container orchestrator that only
 offers env vars (no YAML/properties file, no CLI flags) can declare a version's mode/url/existence
 purely via `MODULAR_SERVICES_<NAME>_VERSIONS_<VERSION>_*` env vars, with no local impl and no
@@ -456,7 +456,7 @@ Audit trail: [greeted:plain Spring]
 
 For the HTTP-serving end (embedded Tomcat + `DispatcherServlet`, one process dispatching to
 another over `/_modular/**`, entirely Boot-free), see `modular-spring`'s
-[`ModularDispatchPlainSpringTest`](modular-spring/src/test/java/com/demilich/horde/spring/ModularDispatchPlainSpringTest.java).
+[`ModularDispatchPlainSpringTest`](modular-spring/src/test/java/digital/demilich/henge/spring/ModularDispatchPlainSpringTest.java).
 
 ## Not in v1
 

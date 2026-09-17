@@ -47,6 +47,34 @@ still works.
 
 ---
 
+## Phase 0.5 — Rebrand `com.demilich.horde` → `digital.demilich.henge` — ✅ DONE (2026-09-17)
+
+"Horde" was a working name; "Henge" replaces it as the long-term brand — a henge is built from
+individual megaliths (monoliths, plural) arranged into one structure, which is a more accurate
+metaphor for this project's actual thesis than "horde" (a battle term) ever was, and directly
+answers the README's own "why this isn't just a modulith" framing without touching the trademarked
+word itself. `digital.demilich.henge` groupId chosen over `com.demilich.henge` because
+`demilich.digital` is a domain the author already owns, clearing that namespace outright.
+
+Same scope as Phase 0, mechanically: Gradle `group` `com.demilich.horde` → `digital.demilich.henge`,
+`rootProject.name` `"horde"` → `"henge"`, package roots (`com.demilich.horde.*` →
+`digital.demilich.henge.*`) across every module and example, the AutoConfiguration `.imports` file,
+and README brand prose/title. `HordeCollectionsModule` (a brand-derived class name, unlike the
+function-derived annotation names) renamed to `HengeCollectionsModule`. As with Phase 0, module
+directory names (`modular-core` etc.) and annotation names (`@ModularService`, `@ServiceVersion`,
+...) are unchanged by design — same reasoning as before, not revisited.
+
+This document's own historical entries (Phase 0's `com.demilich.horde` mentions, Phase 2's
+`HordeCollectionsModule` mention) are deliberately **left unrenamed** — they describe what was
+literally true in this repo at the time those phases shipped, not the current state. Only the one
+genuinely forward-looking mention (the "Publishing/CI" follow-on, groupId) was updated to
+`digital.demilich.henge`.
+
+**Done when:** `./gradlew build` is green, `grep -ri "horde" --include='*.java' --include='*.kts' --include='*.md' --include='*.imports' .`
+(excluding build dirs) returns nothing outside this document's own historical entries above.
+
+---
+
 ## Phase 1 — Correctness defects (small, independent, do in any order) — ✅ DONE (2026-07-12)
 
 All six items landed together, each with its own tests; full `./gradlew clean build` green
@@ -421,7 +449,7 @@ a bridge is a possible future feature, not implied by the current model).
   strict-mode proxies — with Phase 4 step 2 in place this is just "start one child context, proxy
   the rest," so design it after context-per-service isolation exists rather than as a separate
   mechanism.
-- **Publishing/CI:** `maven-publish` setup under the `com.demilich.horde` group, plus a CI build.
+- **Publishing/CI:** `maven-publish` setup under the `digital.demilich.henge` group, plus a CI build.
   Prerequisite to any external consumption; content-free until then.
 - **Processor-level boundary check** (2.2c) if the `runtimeOnly` pattern proves insufficient in
   practice.

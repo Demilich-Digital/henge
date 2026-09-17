@@ -4,7 +4,7 @@ plugins {
 }
 
 allprojects {
-    group = "com.demilich.horde"
+    group = "digital.demilich.henge"
     version = "0.1.0-SNAPSHOT"
 
     repositories {
