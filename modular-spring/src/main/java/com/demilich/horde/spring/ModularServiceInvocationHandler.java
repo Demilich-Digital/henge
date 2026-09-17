@@ -11,11 +11,13 @@ class ModularServiceInvocationHandler implements InvocationHandler {
 
     private final String serviceName;
     private final String serviceVersion;
+    private final Class<?> serviceInterface;
     private final ServiceTransport transport;
 
-    ModularServiceInvocationHandler(String serviceName, String serviceVersion, ServiceTransport transport) {
+    ModularServiceInvocationHandler(String serviceName, String serviceVersion, Class<?> serviceInterface, ServiceTransport transport) {
         this.serviceName = serviceName;
         this.serviceVersion = serviceVersion;
+        this.serviceInterface = serviceInterface;
         this.transport = transport;
     }
 
@@ -32,7 +34,7 @@ class ModularServiceInvocationHandler implements InvocationHandler {
 
         String methodName = rpcName(method);
         Object[] callArgs = args == null ? new Object[0] : args;
-        ServiceInvocation invocation = new ServiceInvocation(serviceName, serviceVersion, methodName, method, callArgs);
+        ServiceInvocation invocation = new ServiceInvocation(serviceName, serviceVersion, serviceInterface, methodName, method, callArgs);
 
         try {
             return transport.invoke(invocation);

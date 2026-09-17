@@ -108,7 +108,27 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   for every (service, version) this process embeds, validated strictly against a startup-built
   registry keyed by bean name — never by type alone, since multiple versions of the same interface
   may be embedded in the same process. Arguments and the return value are a JSON array / JSON
-  value, matched positionally against the method's declared parameter types.
+  value, matched positionally against the method's declared parameter types. Unauthenticated by
+  default — every embedded `@ModularService` method is reachable by anyone who can reach the
+  process's HTTP port. Set `modular.transport.secret` to close that: when set, `InternalRestTransport`
+  sends it as a `Modular-Internal-Secret` header on every call, and the dispatcher requires it
+  (constant-time compare, `403` otherwise). With no secret configured, the dispatcher logs a
+  startup warning naming the gap. `/_modular` shares `server.port` with whatever public API you
+  build on top — there's no separate listen port, and there isn't meant to be one: `/_modular` was
+  never intended to be internet-facing in the first place, so splitting it onto its own port
+  doesn't buy anything a network boundary (VPC / service mesh) doesn't already give you. If you do
+  expose a public "frontend" API from the same process, put it on a different port/process
+  yourself — that's a decision this framework deliberately stays out of.
+- Positional JSON args plus a matching version string aren't quite enough to guarantee two
+  processes agree on a service's shape: a rolling deploy can briefly run two different *builds* of
+  the "same" interface (e.g. two reordered `String` parameters), which would otherwise mis-bind
+  silently. `InternalRestTransport` sends a `Modular-Contract-Fingerprint` header — a SHA-256 of
+  every method's name, generic parameter types, and generic return type, sorted and hashed
+  identically on both ends — and the dispatcher rejects a mismatch with `409` naming both
+  fingerprints. A request with no fingerprint header at all (an older client) is accepted, not
+  rejected — this only catches an actively wrong fingerprint. Off-switch:
+  `modular.transport.verify-contract=false`, independently on either side, for a deliberate
+  mixed-build window.
 - Transport is pluggable behind the `ServiceTransport` SPI (`com.demilich.horde.core`). `internal-rest` is
   the only implementation today; a `grpc` transport can be added later without any change to
   `@ModularService` or generated proxies.
@@ -448,8 +468,12 @@ Deliberately out of scope for now, to keep the core mechanism small and correct:
   nothing about which instances are actually alive or where — no health-aware routing, no dynamic
   membership.
 - A `grpc` `ServiceTransport` implementation (the SPI is ready for it).
-- Auth / mTLS between internal services — `/_modular/**` endpoints are unauthenticated and are
-  expected to sit behind a network boundary (VPC / service mesh), not the public internet.
+- mTLS between internal services — `modular.transport.secret` (see "How it works") is the one
+  protection built so far; `/_modular/**` is still expected to sit behind a network boundary (VPC
+  / service mesh), not the public internet. (A separate listen port for `/_modular` was considered
+  and deliberately rejected, not deferred — see "How it works": `/_modular` was never meant to be
+  internet-facing, so splitting it onto its own port doesn't solve a problem this framework
+  actually has.)
 - Retries, load balancing, circuit breaking for `internal-rest`.
 - Async/streaming methods — calls are synchronous/blocking only.
 - Overloaded methods on a `@ModularService` interface (RPC dispatch is by method name; use

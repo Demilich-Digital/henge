@@ -49,6 +49,26 @@ public class ModularProperties {
     }
 
     /**
+     * {@code modular.transport.secret}; {@code null} if unset. When set, {@link InternalRestTransport}
+     * sends it on every dispatch call and {@link ModularDispatcherController} requires it (constant-time
+     * compare, 403 otherwise) -- see the README's security section.
+     */
+    public String getTransportSecret() {
+        return environment.getProperty("modular.transport.secret");
+    }
+
+    /**
+     * {@code modular.transport.verify-contract}, default {@code true}. When {@code false} on the
+     * client, {@code InternalRestTransport} skips computing/sending the contract fingerprint
+     * header; when {@code false} on the dispatcher, a fingerprint header is ignored even if
+     * present. Deliberately independent per side, so one process mid-rollout can opt out without
+     * requiring the other to.
+     */
+    public boolean isVerifyContractEnabled() {
+        return environment.getProperty("modular.transport.verify-contract", Boolean.class, true);
+    }
+
+    /**
      * {@code modular.serve}, comma-separated. Split manually rather than relying on the
      * conversion service's String-to-List behavior — simpler and predictable regardless of which
      * {@code Environment} implementation this ends up wrapping.

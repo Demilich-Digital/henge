@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.demilich.horde.core.RemoteServiceException;
 import com.demilich.horde.core.ServiceInvocation;
 import com.demilich.horde.core.ServiceTransport;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -21,6 +23,11 @@ class InternalRestTransport implements ServiceTransport {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final ModularProperties properties;
+
+    // One InternalRestTransport instance is shared across every modular service call in the
+    // process, so the fingerprint per interface is computed once and reused rather than
+    // recomputed (a handful of reflective Method walks) on every single call.
+    private final Map<Class<?>, String> fingerprintCache = new ConcurrentHashMap<>();
 
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties) {
         this.restClient = restClient;
@@ -49,11 +56,24 @@ class InternalRestTransport implements ServiceTransport {
             body.add(objectMapper.valueToTree(arg));
         }
 
+        String secret = properties.getTransportSecret();
+        boolean verifyContract = properties.isVerifyContractEnabled();
+
         String responseBody;
         try {
             responseBody = restClient.post()
                     .uri(uri)
                     .contentType(MediaType.APPLICATION_JSON)
+                    .headers(headers -> {
+                        if (secret != null && !secret.isBlank()) {
+                            headers.set(ModularDispatcherController.SECRET_HEADER, secret);
+                        }
+                        if (verifyContract) {
+                            String fingerprint = fingerprintCache.computeIfAbsent(
+                                    invocation.serviceInterface(), ModularServiceDescriptor::fingerprint);
+                            headers.set(ModularDispatcherController.FINGERPRINT_HEADER, fingerprint);
+                        }
+                    })
                     .body(body)
                     .retrieve()
                     .body(String.class);

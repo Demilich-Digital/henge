@@ -34,7 +34,8 @@ public class ModularAutoConfiguration {
 
     @Bean
     @ConditionalOnProperty(prefix = "modular.server", name = "enabled", havingValue = "true", matchIfMissing = true)
-    ModularDispatcherController modularDispatcherController(ApplicationContext applicationContext, ModularServiceRegistry registry) {
-        return new ModularDispatcherController(applicationContext, registry, ModularTransportSupport.objectMapper());
+    ModularDispatcherController modularDispatcherController(
+            ApplicationContext applicationContext, ModularServiceRegistry registry, ModularProperties modularProperties) {
+        return new ModularDispatcherController(applicationContext, registry, ModularTransportSupport.objectMapper(), modularProperties);
     }
 }

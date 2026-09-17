@@ -38,7 +38,7 @@ class ModularServiceProxyFactoryBean implements FactoryBean<Object>, Application
         return Proxy.newProxyInstance(
                 serviceInterface.getClassLoader(),
                 new Class<?>[] {serviceInterface},
-                new ModularServiceInvocationHandler(serviceName, serviceVersion, transport));
+                new ModularServiceInvocationHandler(serviceName, serviceVersion, serviceInterface, transport));
     }
 
     @Override
