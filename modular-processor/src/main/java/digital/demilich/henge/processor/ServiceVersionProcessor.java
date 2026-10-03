@@ -45,7 +45,8 @@ import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 
 /**
- * Compile-time support for {@link AddedIn} / {@link DeprecatedSince}:
+ * Compile-time support for {@link AddedIn} / {@link DeprecatedSince}, and the compile-time half of
+ * every rule that would otherwise only fail at startup or once a service is split:
  *
  * <ul>
  *   <li>For every {@code @ModularService} interface with at least one {@code @AddedIn}/
@@ -56,17 +57,25 @@ import javax.tools.JavaFileObject;
  *       version.</li>
  *   <li>For every {@code @ServiceVersion} implementation, validates that every interface method
  *       whose version range includes the implementation's declared version is genuinely
- *       overridden, not silently left to the generated throwing stub.</li>
+ *       overridden, not silently left to the generated throwing stub -- and that it is a concrete,
+ *       registrable class without a Spring stereotype, with no other implementation of the same
+ *       version in this compilation. On a field or parameter, that it names the injected
+ *       interface.</li>
  *   <li>For every {@code @ModularService} interface, rejects shapes that can't behave the same
- *       embedded and split: overloaded RPC names, static methods, inverted version ranges, and a
- *       non-interface target. All of these checks, and the ones below, cover inherited
- *       superinterface methods too — exactly the methods the runtime dispatcher exposes.</li>
+ *       embedded and split: overloaded RPC names, static methods, empty or non-positive version
+ *       ranges (or any on a default method), invalid service/RPC names, and a non-interface or
+ *       private target. All of these checks, and the ones below, cover inherited superinterface
+ *       methods too — exactly the methods the runtime dispatcher exposes.</li>
  *   <li>For every {@code @ModularService} interface, rejects checked exceptions in method
  *       {@code throws} clauses and rejects parameter/return types that aren't guaranteed-value
  *       boundary types (records, enums, primitives, well-known immutable value types, or
  *       ImmutableList/ImmutableSet/ImmutableMap/Optional thereof) — see {@link #validateNoCheckedExceptions} and
  *       {@link #validateBoundaryTypes}.</li>
+ *   <li>{@code @ErrorStatus} codes outside {@code 400}–{@code 599}.</li>
  * </ul>
+ *
+ * <p>Validation runs in the final round, once every generated type is resolved; only skeleton
+ * generation happens in the round an interface is found.
  */
 @SupportedAnnotationTypes({
         "digital.demilich.henge.core.ModularService",
