@@ -1,0 +1,61 @@
+{
+  "groups": [
+    {
+      "name": "modular",
+      "description": "Henge: which @ModularService versions this process embeds, and how it reaches the others."
+    },
+    {
+      "name": "modular.services",
+      "description": "Per service, by name: modular.services.<name>.mode (embedded | internal-rest) and .url, overridable per version as modular.services.<name>.versions.<n>.mode / .url. Unrecognized keys or service names fail startup."
+    },
+    {
+      "name": "modular.server",
+      "description": "The /_modular dispatch endpoint this process serves."
+    },
+    {
+      "name": "modular.transport",
+      "description": "The internal-rest client and its shared secret."
+    }
+  ],
+  "properties": [
+    {
+      "name": "modular.serve",
+      "type": "java.util.List<java.lang.String>",
+      "description": "name[@version] entries naming what this process hosts; every other discovered service defaults to internal-rest. Names that match no @ModularService fail startup."
+    },
+    {
+      "name": "modular.remote-url-template",
+      "type": "java.lang.String",
+      "description": "URL for any internal-rest service without an explicit url, with {service} and {version} substituted, e.g. http://{service}.default.svc.cluster.local:8080. Other placeholders fail startup."
+    },
+    {
+      "name": "modular.server.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether this process serves /_modular at all (a non-web application never does)."
+    },
+    {
+      "name": "modular.server.path-prefix",
+      "type": "java.lang.String",
+      "defaultValue": "/_modular",
+      "description": "Path prefix of the dispatch endpoint, for both the server and the client side. Must start with '/' and not end with one."
+    },
+    {
+      "name": "modular.transport.secret",
+      "type": "java.lang.String",
+      "description": "Optional shared secret, sent as the Modular-Internal-Secret header and required by the dispatcher; with Spring Security it becomes an authentication. Unset is supported: the network is the boundary."
+    },
+    {
+      "name": "modular.transport.connect-timeout",
+      "type": "java.time.Duration",
+      "defaultValue": "2s",
+      "description": "Connect timeout of internal-rest calls. A bare number is milliseconds; 0 means no timeout."
+    },
+    {
+      "name": "modular.transport.read-timeout",
+      "type": "java.time.Duration",
+      "defaultValue": "10s",
+      "description": "Read timeout of internal-rest calls. A bare number is milliseconds; 0 means no timeout."
+    }
+  ]
+}
