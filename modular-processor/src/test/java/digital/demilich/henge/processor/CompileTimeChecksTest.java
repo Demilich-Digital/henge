@@ -251,6 +251,20 @@ class CompileTimeChecksTest {
     }
 
     @Test
+    void aPrivateServiceInterfaceIsRejectedClearly() {
+        var direct = compile(src("privsvc", "Outer",
+                "public class Outer { @ModularService private interface Svc { String a(); @AddedIn(2) String b(); } }"));
+        assertThat(direct.success()).isFalse();
+        assertThat(direct.hasErrorContaining("must be accessible from its package")).isTrue();
+        assertThat(direct.hasErrorContaining("has private access")).isFalse();
+
+        var enclosed = compile(src("privouter", "Outer",
+                "public class Outer { private static class Inner { @ModularService interface Svc { String a(); } } }"));
+        assertThat(enclosed.success()).isFalse();
+        assertThat(enclosed.hasErrorContaining("must be accessible from its package")).isTrue();
+    }
+
+    @Test
     void modularServiceOnAClassIsRejected() {
         var result = compile(src("cls", "Svc", "@ModularService public class Svc { public String a() { return null; } }"));
 

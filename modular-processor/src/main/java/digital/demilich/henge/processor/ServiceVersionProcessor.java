@@ -146,7 +146,16 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         for (Element element : roundEnv.getElementsAnnotatedWith(ModularService.class)) {
             if (element.getKind() == ElementKind.INTERFACE) {
                 TypeElement interfaceElement = (TypeElement) element;
-                generateSkeletonIfNeeded(interfaceElement);
+                if (isPrivatelyNested(interfaceElement)) {
+                    // A generated skeleton, in the same package, couldn't even name it.
+                    messager.printMessage(Diagnostic.Kind.ERROR,
+                            interfaceElement.getQualifiedName() + " is private (or nested in a private type); a @ModularService "
+                                    + "interface must be accessible from its package so implementations and its generated "
+                                    + "skeleton can implement it.",
+                            interfaceElement);
+                } else {
+                    generateSkeletonIfNeeded(interfaceElement);
+                }
                 validateMethodShapes(interfaceElement);
                 validateNames(interfaceElement);
                 validateVersionRanges(interfaceElement);
@@ -198,6 +207,15 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 if (implElement != null) {
                     validateImplementation(implElement, implsByVersion);
                 }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isPrivatelyNested(TypeElement type) {
+        for (Element e = type; e instanceof TypeElement; e = e.getEnclosingElement()) {
+            if (e.getModifiers().contains(Modifier.PRIVATE)) {
+                return true;
             }
         }
         return false;
