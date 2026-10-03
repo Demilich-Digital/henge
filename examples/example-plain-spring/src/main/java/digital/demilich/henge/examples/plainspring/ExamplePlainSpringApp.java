@@ -4,7 +4,6 @@ import digital.demilich.henge.examples.contracts.AuditService;
 import digital.demilich.henge.examples.contracts.GreetingService;
 import digital.demilich.henge.spring.EnableModularServices;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 
 /**
@@ -29,7 +28,6 @@ public class ExamplePlainSpringApp {
     }
 
     @Configuration
-    @ComponentScan(basePackages = "digital.demilich.henge.examples")
     @EnableModularServices(basePackages = "digital.demilich.henge.examples")
     static class AppConfig {
     }

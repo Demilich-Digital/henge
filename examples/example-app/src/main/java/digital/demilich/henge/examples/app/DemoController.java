@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>{@code auditServiceV2} demonstrates pinning a dependency to a specific, non-default version
  * via {@code @ServiceVersion} — {@code auditService} (no qualifier) always resolves to
- * {@code AuditService}'s default version ("1"), regardless of what else is deployed alongside it.
+ * {@code AuditService}'s default version (1), regardless of what else is deployed alongside it.
  */
 @RestController
 @RequestMapping("/api")
@@ -52,14 +52,14 @@ class DemoController {
         return auditServiceV2.getEvents();
     }
 
-    /** Works: version "2" actually implements {@code getRecentEvents} (it's {@code @AddedIn(2)}). */
+    /** Works: version 2 actually implements {@code getRecentEvents} (it's {@code @AddedIn(2)}). */
     @GetMapping("/audit/v2/recent/{limit}")
     List<String> recentV2(@PathVariable("limit") int limit) {
         return auditServiceV2.getRecentEvents(limit);
     }
 
     /**
-     * Throws: the default version ("1") extends the generated {@code AuditServiceSkeleton} but
+     * Throws: the default version (1) extends the generated {@code AuditServiceSkeleton} but
      * never overrides {@code getRecentEvents}, so this falls through to the generated stub's
      * {@code ServiceVersionUnsupportedException} — a 500, with the exception's message naming
      * exactly which version is required.

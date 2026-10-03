@@ -449,8 +449,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
      * thereof, recursively through
      * record components. This is strictly stronger than rejecting {@code @Entity} types alone —
      * a JPA entity can never satisfy it (mutable fields, no-arg constructor, proxying) — and it
-     * makes the by-value semantics that {@code modular.strict} mode only checks at runtime true
-     * by construction at compile time.
+     * makes the by-value semantics a runtime check could only approximate true by construction
+     * at compile time.
      */
     private void validateBoundaryTypes(TypeElement interfaceElement) {
         for (ExecutableElement method : serviceMethods(interfaceElement)) {
