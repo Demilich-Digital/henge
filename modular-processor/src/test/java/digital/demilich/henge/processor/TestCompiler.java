@@ -6,7 +6,9 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import javax.annotation.processing.Processor;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -44,6 +46,15 @@ final class TestCompiler {
      * separately built contracts module.
      */
     static Result compileAgainst(Result dependency, JavaFileObject... sources) {
+        return compile(dependency, List.of(), sources);
+    }
+
+    /** Runs {@code otherProcessors} alongside {@link ServiceVersionProcessor}, as another library's would be. */
+    static Result compileWithProcessors(List<Processor> otherProcessors, JavaFileObject... sources) {
+        return compile(null, otherProcessors, sources);
+    }
+
+    private static Result compile(Result dependency, List<Processor> otherProcessors, JavaFileObject... sources) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, StandardCharsets.UTF_8);
@@ -64,7 +75,9 @@ final class TestCompiler {
         List<String> options = List.of("-classpath", classpath);
         JavaCompiler.CompilationTask task =
                 compiler.getTask(null, fileManager, diagnostics, options, null, List.of(sources));
-        task.setProcessors(List.of(new ServiceVersionProcessor()));
+        List<Processor> processors = new ArrayList<>(otherProcessors);
+        processors.add(new ServiceVersionProcessor());
+        task.setProcessors(processors);
 
         boolean success = task.call();
         return new Result(success, diagnostics.getDiagnostics(), outputDir);

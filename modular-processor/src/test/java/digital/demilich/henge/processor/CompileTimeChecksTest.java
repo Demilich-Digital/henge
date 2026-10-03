@@ -2,7 +2,16 @@ package digital.demilich.henge.processor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.io.Writer;
+import java.util.List;
+import java.util.Set;
+import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.RoundEnvironment;
+import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
+import javax.lang.model.element.TypeElement;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.Test;
 
@@ -500,6 +509,41 @@ class CompileTimeChecksTest {
         var lower = compile(src("wildlow", "Svc", "@ModularService public interface Svc { void put(ImmutableList<? super String> l); }"));
         assertThat(lower.success()).isFalse();
         assertThat(lower.hasErrorContaining("no usable upper bound")).isTrue();
+    }
+
+    /** Generates {@code fixture.gen.Generated} -- a mutable class -- in its first round, as another library's processor might. */
+    @SupportedAnnotationTypes("*")
+    static final class GeneratingProcessor extends AbstractProcessor {
+
+        private boolean generated;
+
+        @Override
+        public SourceVersion getSupportedSourceVersion() {
+            return SourceVersion.latestSupported();
+        }
+
+        @Override
+        public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+            if (!generated) {
+                generated = true;
+                try (Writer writer = processingEnv.getFiler().createSourceFile("fixture.gen.Generated").openWriter()) {
+                    writer.write("package fixture.gen; public class Generated { public String value; }");
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+            return false;
+        }
+    }
+
+    @Test
+    void aBoundaryTypeGeneratedInALaterRoundIsStillValidated() {
+        var result = TestCompiler.compileWithProcessors(List.of(new GeneratingProcessor()),
+                src("gen", "Svc", "@ModularService public interface Svc { void put(fixture.gen.Generated g); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("fixture.gen.Generated")).isTrue();
+        assertThat(result.hasErrorContaining("not a valid @ModularService boundary type")).isTrue();
     }
 
     @Test
