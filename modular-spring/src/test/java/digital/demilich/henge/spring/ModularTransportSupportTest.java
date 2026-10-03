@@ -149,6 +149,29 @@ class ModularTransportSupportTest {
                 .containsEntry(amount, 1);
     }
 
+    record Basket(com.google.common.collect.ImmutableList<Point> points) {
+    }
+
+    @Test
+    void guavaImmutableCollectionsRoundTrip() throws Exception {
+        // The processor accepts these at the boundary, so the transport has to read them back too.
+        assertThat(roundTrip(com.google.common.collect.ImmutableList.of(new Point(1, 2)),
+                new TypeReference<com.google.common.collect.ImmutableList<Point>>() {}))
+                .isInstanceOf(com.google.common.collect.ImmutableList.class)
+                .containsExactly(new Point(1, 2));
+        assertThat(roundTrip(com.google.common.collect.ImmutableSet.of("a", "b"),
+                new TypeReference<com.google.common.collect.ImmutableSet<String>>() {}))
+                .isInstanceOf(com.google.common.collect.ImmutableSet.class)
+                .containsExactlyInAnyOrder("a", "b");
+        UUID key = UUID.randomUUID();
+        assertThat(roundTrip(com.google.common.collect.ImmutableMap.of(key, new Point(3, 4)),
+                new TypeReference<com.google.common.collect.ImmutableMap<UUID, Point>>() {}))
+                .isInstanceOf(com.google.common.collect.ImmutableMap.class)
+                .containsEntry(key, new Point(3, 4));
+        Basket basket = new Basket(com.google.common.collect.ImmutableList.of(new Point(5, 6)));
+        assertThat(roundTrip(basket, new TypeReference<Basket>() {})).isEqualTo(basket);
+    }
+
     @Test
     void genericRecordsRoundTripWithTheirTypeArguments() throws Exception {
         Box<Point> box = new Box<>(new Point(1, 2), ImmutableList.of(new Point(3, 4)));
