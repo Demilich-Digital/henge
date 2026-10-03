@@ -34,6 +34,26 @@ class ModularAutoConfigurationTest {
     }
 
     @Test
+    void aYamlListServeIsHonoured() {
+        // modular.serve[0] is what Boot makes of a YAML list; an unknown name has to fail startup, not be ignored.
+        runner.withUserConfiguration(EchoTestApp.class)
+                .withPropertyValues("modular.serve[0]=no-such-service")
+                .run(ctx -> assertThat(ctx).hasFailed()
+                        .getFailure().hasStackTraceContaining("modular.serve names [no-such-service]"));
+    }
+
+    @Test
+    void aHigherPrecedenceYamlListServeBeatsALowerPrecedenceScalar() {
+        // Boot's attached "configurationProperties" view sees both forms; the test property values
+        // outrank system properties, so the list is what has to win.
+        runner.withUserConfiguration(EchoTestApp.class)
+                .withSystemProperties("modular.serve=echo-service")
+                .withPropertyValues("modular.serve[0]=no-such-service")
+                .run(ctx -> assertThat(ctx).hasFailed()
+                        .getFailure().hasStackTraceContaining("modular.serve names [no-such-service]"));
+    }
+
+    @Test
     void withoutEnableModularServicesTheRegistryIsAnEmptyFallback() {
         runner.run(ctx -> {
             assertThat(ctx).hasSingleBean(ModularServiceRegistry.class);

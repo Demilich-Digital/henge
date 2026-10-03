@@ -487,7 +487,7 @@ Everything is read from Spring's `Environment`, so CLI flags, `application.yml`,
 | `modular.services.<name>.mode` | `embedded` | `embedded` or `internal-rest`, for every version of the service unless overridden below. |
 | `modular.services.<name>.url` | — | Base URL of the process hosting the service; used when the mode is `internal-rest`. |
 | `modular.services.<name>.versions.<n>.mode` / `.url` | inherit the service-level value | Per-version override; `<n>` is an integer. |
-| `modular.serve` | unset | Comma-separated `name[@version]` list of what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
+| `modular.serve` | unset | `name[@version]` entries, comma-separated or as a YAML list, naming what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
 | `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`) used for any `internal-rest` service without an explicit `url`. |
 | `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all. |
 | `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. |

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
@@ -58,5 +59,33 @@ class ModularPropertiesTest {
         assertThatThrownBy(() -> properties.service("audit-service").explicitVersions())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("versions must be integers");
+    }
+
+    @Test
+    void serveAcceptsAListAsWellAsACommaSeparatedValue() {
+        StandardEnvironment list = new StandardEnvironment();
+        list.getPropertySources().addFirst(new MapPropertySource("yaml",
+                Map.of("modular.serve[0]", "audit-service", "modular.serve[1]", "greeting-service@2")));
+        assertThat(new ModularProperties(list).getServe()).containsExactly("audit-service", "greeting-service@2");
+
+        StandardEnvironment scalar = new StandardEnvironment();
+        scalar.getPropertySources().addFirst(new MapPropertySource("cli", Map.of("modular.serve", "audit-service, greeting-service")));
+        assertThat(new ModularProperties(scalar).getServe()).containsExactly("audit-service", "greeting-service");
+    }
+
+    @Test
+    void theHigherPrecedenceFormOfServeWinsOutright() {
+        Map<String, Object> listForm = Map.of("modular.serve[0]", "audit-service");
+        Map<String, Object> scalarForm = Map.of("modular.serve", "greeting-service");
+
+        StandardEnvironment scalarFirst = new StandardEnvironment();
+        scalarFirst.getPropertySources().addFirst(new MapPropertySource("yaml", listForm));
+        scalarFirst.getPropertySources().addFirst(new MapPropertySource("cli", scalarForm));
+        assertThat(new ModularProperties(scalarFirst).getServe()).containsExactly("greeting-service");
+
+        StandardEnvironment listFirst = new StandardEnvironment();
+        listFirst.getPropertySources().addFirst(new MapPropertySource("defaults", scalarForm));
+        listFirst.getPropertySources().addFirst(new MapPropertySource("yaml", listForm));
+        assertThat(new ModularProperties(listFirst).getServe()).containsExactly("audit-service");
     }
 }

@@ -17,6 +17,13 @@ import org.springframework.core.env.PropertySource;
  */
 public class ModularProperties {
 
+    /**
+     * Spring Boot's {@code ConfigurationPropertySources.ATTACHED_PROPERTY_SOURCE_NAME}: a view over
+     * every other source, placed first, so it says nothing about which of them a value came from.
+     * Named here rather than referenced, to keep this module Boot-free.
+     */
+    private static final String BOOT_ATTACHED_SOURCE = "configurationProperties";
+
     private final Environment environment;
 
     public ModularProperties(Environment environment) {
@@ -53,22 +60,53 @@ public class ModularProperties {
     }
 
     /**
-     * {@code modular.serve}, comma-separated. Split manually rather than relying on the
-     * conversion service's String-to-List behavior — simpler and predictable regardless of which
-     * {@code Environment} implementation this ends up wrapping.
+     * {@code modular.serve}: either one comma-separated value ({@code --modular.serve=a,b}, or the
+     * {@code MODULAR_SERVE} environment variable) or a list ({@code modular.serve[0]}, ... -- what a
+     * YAML list becomes). When both forms are set, the one from the higher-precedence property source
+     * wins outright, as a later value replaces an earlier one anywhere else in Spring's configuration,
+     * instead of the two being merged. Split manually rather than relying on the conversion service's
+     * String-to-List behavior -- simpler and predictable regardless of which {@code Environment}
+     * implementation this ends up wrapping.
      */
     public List<String> getServe() {
-        String raw = environment.getProperty("modular.serve");
-        if (raw == null || raw.isBlank()) {
-            return List.of();
-        }
         List<String> entries = new ArrayList<>();
+        if (serveIsAList()) {
+            for (int i = 0; environment.getProperty("modular.serve[" + i + "]") != null; i++) {
+                addCommaSeparated(entries, environment.getProperty("modular.serve[" + i + "]"));
+            }
+        } else {
+            addCommaSeparated(entries, environment.getProperty("modular.serve"));
+        }
+        return entries;
+    }
+
+    /** Whether the highest-precedence source that sets {@code modular.serve} at all uses the list form. */
+    private boolean serveIsAList() {
+        if (environment instanceof ConfigurableEnvironment configurable) {
+            for (PropertySource<?> source : configurable.getPropertySources()) {
+                if (BOOT_ATTACHED_SOURCE.equals(source.getName())) {
+                    continue;
+                }
+                if (source.containsProperty("modular.serve")) {
+                    return false;
+                }
+                if (source.containsProperty("modular.serve[0]")) {
+                    return true;
+                }
+            }
+        }
+        return environment.getProperty("modular.serve") == null && environment.getProperty("modular.serve[0]") != null;
+    }
+
+    private static void addCommaSeparated(List<String> entries, String raw) {
+        if (raw == null) {
+            return;
+        }
         for (String entry : raw.split(",")) {
             if (!entry.isBlank()) {
                 entries.add(entry.trim());
             }
         }
-        return entries;
     }
 
     public ServiceConfig service(String name) {
