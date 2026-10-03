@@ -1,7 +1,8 @@
 package digital.demilich.henge.spring;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.core.exc.StreamReadException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import digital.demilich.henge.core.ErrorStatus;
 import java.io.IOException;
@@ -86,7 +87,7 @@ class ModularDispatcherController {
         // Looked up by bean name, not just type: multiple versions of the same interface may be
         // embedded in this process simultaneously, which would make a type-only lookup ambiguous.
         Object bean = applicationContext.getBean(descriptor.beanName(), descriptor.interfaceType());
-        Object[] args = bindArguments(targetMethod, readBody(requestBody));
+        Object[] args = readArguments(targetMethod, requestBody);
 
         Object result;
         try {
@@ -103,10 +104,10 @@ class ModularDispatcherController {
         if (targetMethod.getReturnType() == void.class) {
             return ResponseEntity.noContent().build();
         }
-        // Returned as a JsonNode (rather than the raw object) so Jackson's message converter is
-        // always the one that handles writing it — a raw String return value would otherwise be
-        // routed through StringHttpMessageConverter as unquoted plain text instead of JSON.
-        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(objectMapper.valueToTree(result));
+        // Written here by the transport mapper, typed by the declared return type, and sent as
+        // bytes: no message converter (or the application's ObjectMapper) gets a say, and there's no
+        // JsonNode in between -- see readArguments.
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(writeResult(targetMethod, result));
     }
 
     /** No-op when no secret is configured (the supported, network-isolated default). */
@@ -116,41 +117,71 @@ class ModularDispatcherController {
         }
     }
 
-    private JsonNode readBody(InputStream requestBody) {
-        try {
-            return objectMapper.readTree(requestBody);
-        } catch (JsonProcessingException e) {
+    /**
+     * Binds the body -- a JSON array, one element per parameter -- straight from the parser to each
+     * parameter's declared type. Deliberately not through a {@code JsonNode} tree: a tree holds JSON
+     * decimals as doubles, which silently loses a {@code BigDecimal}'s precision and scale. An empty
+     * body or a JSON {@code null} means no arguments.
+     */
+    private Object[] readArguments(Method method, InputStream requestBody) {
+        Object[] args = new Object[method.getParameterCount()];
+        try (JsonParser parser = objectMapper.createParser(requestBody)) {
+            JsonToken first = parser.nextToken();
+            int provided = 0;
+            if (first == JsonToken.START_ARRAY) {
+                for (JsonToken token = parser.nextToken(); token != JsonToken.END_ARRAY; token = parser.nextToken()) {
+                    if (provided < args.length) {
+                        args[provided] = readArgument(parser, method, provided);
+                    } else {
+                        parser.skipChildren();
+                    }
+                    provided++;
+                }
+            } else if (first != null && first != JsonToken.VALUE_NULL) {
+                parser.skipChildren(); // reads through it, so a malformed body is still reported as invalid JSON
+                requireEndOfInput(parser);
+                throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
+                        "Request body must be a JSON array of arguments for " + method.getName());
+            }
+            requireEndOfInput(parser);
+            if (provided != args.length) {
+                throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
+                        "Expected " + args.length + " argument(s) for " + method.getName() + " but received " + provided);
+            }
+            return args;
+        } catch (StreamReadException e) {
             throw new ModularDispatchException(HttpStatus.BAD_REQUEST, "Request body is not valid JSON");
         } catch (IOException e) {
             throw new ModularDispatchException(HttpStatus.BAD_REQUEST, "Failed to read request body");
         }
     }
 
-    private Object[] bindArguments(Method method, JsonNode body) {
-        Class<?>[] paramTypes = method.getParameterTypes();
-        boolean noBody = body == null || body.isNull() || body.isMissingNode();
-        if (!noBody && !body.isArray()) {
-            throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
-                    "Request body must be a JSON array of arguments for " + method.getName());
+    private Object readArgument(JsonParser parser, Method method, int index) throws StreamReadException {
+        try {
+            return objectMapper.readValue(parser, objectMapper.getTypeFactory().constructType(method.getGenericParameterTypes()[index]));
+        } catch (StreamReadException e) {
+            throw e; // malformed JSON, not a binding problem
+        } catch (IOException | RuntimeException e) {
+            // Not just Jackson's own binding errors: a custom deserializer can throw anything, e.g.
+            // ImmutableList rejecting a null element.
+            throw new ModularDispatchException(HttpStatus.BAD_REQUEST, "Failed to bind argument " + index + " of " + method.getName());
         }
-        int provided = noBody ? 0 : body.size();
-        if (provided != paramTypes.length) {
-            throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
-                    "Expected " + paramTypes.length + " argument(s) for " + method.getName() + " but received " + provided);
+    }
+
+    private static void requireEndOfInput(JsonParser parser) throws IOException {
+        if (parser.nextToken() != null) {
+            throw new ModularDispatchException(HttpStatus.BAD_REQUEST, "Request body is not valid JSON");
         }
-        Object[] args = new Object[paramTypes.length];
-        for (int i = 0; i < paramTypes.length; i++) {
-            try {
-                args[i] = objectMapper.convertValue(body.get(i),
-                        objectMapper.getTypeFactory().constructType(method.getGenericParameterTypes()[i]));
-            } catch (RuntimeException e) {
-                // Not just IllegalArgumentException (Jackson's wrapper for malformed JSON): a custom
-                // deserializer can throw anything, e.g. ImmutableList rejecting a null element.
-                throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
-                        "Failed to bind argument " + i + " of " + method.getName());
-            }
+    }
+
+    private byte[] writeResult(Method method, Object result) {
+        try {
+            return objectMapper.writerFor(objectMapper.getTypeFactory().constructType(method.getGenericReturnType()))
+                    .writeValueAsBytes(result);
+        } catch (IOException e) {
+            throw new ModularDispatchException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to serialize the result of " + method.getName());
         }
-        return args;
     }
 
     /**

@@ -13,4 +13,7 @@ public interface EchoService {
 
     /** Exercises {@link ImmutableList} argument/return round-tripping through real HTTP dispatch. */
     ImmutableList<String> upperCaseAll(ImmutableList<String> values);
+
+    /** Returns its argument: an argument and a return value that must both arrive exactly as sent. */
+    Measurement measure(Measurement measurement);
 }

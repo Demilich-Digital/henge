@@ -1,11 +1,13 @@
 package digital.demilich.henge.spring;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.lang.reflect.Type;
 import org.springframework.beans.factory.BeanClassLoaderAware;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
@@ -64,14 +66,11 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         String uri = url + properties.getServerPathPrefix() + "/" + invocation.serviceName() + "/"
                 + invocation.serviceVersion() + "/" + invocation.methodName();
 
-        ArrayNode body = objectMapper.createArrayNode();
-        for (Object arg : invocation.args()) {
-            body.add(objectMapper.valueToTree(arg));
-        }
+        byte[] body = writeArguments(invocation);
 
         String secret = properties.getTransportSecret();
 
-        String responseBody;
+        byte[] responseBody;
         try {
             responseBody = restClient.post()
                     .uri(uri)
@@ -83,7 +82,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
                     })
                     .body(body)
                     .retrieve()
-                    .body(String.class);
+                    .body(byte[].class);
         } catch (RestClientResponseException e) {
             RemoteServiceException fallback = new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
                     + invocation.methodName() + " -> " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
@@ -102,16 +101,39 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         }
 
         Class<?> returnType = invocation.method().getReturnType();
-        if (returnType == void.class || returnType == Void.class || responseBody == null || responseBody.isBlank()) {
+        if (returnType == void.class || returnType == Void.class || responseBody == null || responseBody.length == 0) {
             return null;
         }
+        // Read straight into the declared return type, not via a JsonNode tree, which would hold a
+        // JSON decimal as a double and lose a BigDecimal's precision and scale.
         try {
-            JsonNode tree = objectMapper.readTree(responseBody);
-            return objectMapper.convertValue(tree, objectMapper.getTypeFactory().constructType(invocation.method().getGenericReturnType()));
+            return objectMapper.readValue(responseBody, objectMapper.getTypeFactory().constructType(invocation.method().getGenericReturnType()));
         } catch (Exception e) {
             throw new RemoteServiceException("Failed to deserialize response from modular service '"
                     + invocation.serviceName() + "#" + invocation.methodName() + "'", e);
         }
+    }
+
+    /**
+     * The arguments as a JSON array, each written by the transport mapper as its declared parameter
+     * type -- and sent as bytes, so RestClient's own message converters (and their ObjectMapper)
+     * never touch them.
+     */
+    private byte[] writeArguments(ServiceInvocation invocation) {
+        Type[] parameterTypes = invocation.method().getGenericParameterTypes();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (JsonGenerator generator = objectMapper.createGenerator(out)) {
+            generator.writeStartArray();
+            for (int i = 0; i < parameterTypes.length; i++) {
+                objectMapper.writerFor(objectMapper.getTypeFactory().constructType(parameterTypes[i]))
+                        .writeValue(generator, invocation.args()[i]);
+            }
+            generator.writeEndArray();
+        } catch (IOException e) {
+            throw new RemoteServiceException("Failed to serialize arguments for modular service '"
+                    + invocation.serviceName() + "#" + invocation.methodName() + "'", e);
+        }
+        return out.toByteArray();
     }
 
     /**

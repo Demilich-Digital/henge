@@ -43,10 +43,10 @@ class ModularTransportSupportTest {
     record Event(String name, Instant at, Optional<LocalDate> due, ImmutableList<Point> points) {
     }
 
+    /** The wire path: written as the declared type, read straight back into it, no tree in between. */
     private <T> T roundTrip(T value, TypeReference<T> type) throws Exception {
-        String json = mapper.writeValueAsString(mapper.valueToTree(value));
         JavaType javaType = mapper.getTypeFactory().constructType(type);
-        return mapper.convertValue(mapper.readTree(json), javaType);
+        return mapper.readValue(mapper.writerFor(javaType).writeValueAsBytes(value), javaType);
     }
 
     @Test
@@ -85,6 +85,15 @@ class ModularTransportSupportTest {
         assertThat(roundTrip(new BigDecimal("1.50"), new TypeReference<BigDecimal>() {})).isEqualByComparingTo("1.50");
         assertThat(roundTrip(BigInteger.TEN.pow(30), new TypeReference<BigInteger>() {})).isEqualTo(BigInteger.TEN.pow(30));
         assertThat(roundTrip(Color.RED, new TypeReference<Color>() {})).isEqualTo(Color.RED);
+    }
+
+    @Test
+    void decimalsRoundTripExactly() throws Exception {
+        BigDecimal precise = new BigDecimal("12345678901234567.8901");
+        assertThat(roundTrip(precise, new TypeReference<BigDecimal>() {})).isEqualTo(precise);
+        // isEqualTo, not isEqualByComparingTo: the scale has to survive too.
+        assertThat(roundTrip(new BigDecimal("1.50"), new TypeReference<BigDecimal>() {})).isEqualTo(new BigDecimal("1.50"));
+        assertThat(roundTrip(-0.0, new TypeReference<Double>() {})).isEqualTo(-0.0);
     }
 
     @Test

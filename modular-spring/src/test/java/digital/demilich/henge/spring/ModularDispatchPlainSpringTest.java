@@ -9,8 +9,10 @@ import digital.demilich.henge.spring.fixture.echo.EchoFailureException;
 import digital.demilich.henge.spring.fixture.echo.EchoNotFoundException;
 import digital.demilich.henge.spring.fixture.echo.EchoService;
 import digital.demilich.henge.spring.fixture.echo.EchoServiceImpl;
+import digital.demilich.henge.spring.fixture.echo.Measurement;
 import digital.demilich.henge.spring.fixture.echo.EchoTestConfig;
 import java.lang.reflect.Proxy;
+import java.math.BigDecimal;
 import java.util.Map;
 import org.apache.catalina.Context;
 import org.apache.catalina.Wrapper;
@@ -54,6 +56,13 @@ class ModularDispatchPlainSpringTest {
                 // ImmutableList round-trips as an argument and a return value over real HTTP,
                 // proving HengeCollectionsModule is wired into both ends of the transport.
                 assertThat(proxied.upperCaseAll(ImmutableList.of("a", "b"))).containsExactly("A", "B");
+
+                // Decimals are bound from the JSON text, never via a tree's double: a BigDecimal keeps
+                // its precision and scale, and -0.0 stays -0.0, in both directions.
+                Measurement exact = new Measurement(new BigDecimal("12345678901234567.8901"), -0.0);
+                assertThat(proxied.measure(exact)).isEqualTo(exact);
+                Measurement scaled = new Measurement(new BigDecimal("1.50"), 0.1);
+                assertThat(proxied.measure(scaled)).isEqualTo(scaled);
             } finally {
                 clientContext.close();
             }

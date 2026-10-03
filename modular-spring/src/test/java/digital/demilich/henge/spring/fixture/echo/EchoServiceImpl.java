@@ -29,6 +29,11 @@ public class EchoServiceImpl implements EchoService {
         return ImmutableList.copyOf(values.stream().map(String::toUpperCase).toList());
     }
 
+    @Override
+    public Measurement measure(Measurement measurement) {
+        return measurement;
+    }
+
     public int getCallCount() {
         return callCount.get();
     }
