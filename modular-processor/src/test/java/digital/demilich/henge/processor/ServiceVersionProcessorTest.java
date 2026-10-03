@@ -344,6 +344,7 @@ class ServiceVersionProcessorTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.hasErrorContaining("arrays are mutable")).isTrue();
+        assertThat(result.hasErrorContaining("use ImmutableList<T> instead")).isTrue();
     }
 
     @Test

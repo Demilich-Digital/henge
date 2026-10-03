@@ -562,7 +562,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 // primitives are always safe: no aliasing, no serialization ambiguity
             }
             case ARRAY -> reportBoundaryError(method, position, type,
-                    "arrays are mutable and alias across the embedded/internal-rest boundary; use List<T> instead");
+                    "arrays are mutable and alias across the embedded/internal-rest boundary; use ImmutableList<T> instead");
             case DECLARED -> checkDeclaredBoundaryType((DeclaredType) type, method, position, visiting);
             case TYPEVAR -> reportBoundaryError(method, position, type,
                     "a type variable has no concrete type at runtime, so it would be bound as an untyped JSON map");
