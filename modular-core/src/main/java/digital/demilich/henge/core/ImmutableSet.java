@@ -43,6 +43,15 @@ public final class ImmutableSet<T> extends AbstractSet<T> {
         return delegate.size();
     }
 
+    /**
+     * Delegated rather than inherited: {@code AbstractCollection.contains} scans every element.
+     * {@code null} is never an element, and the delegate would throw on it rather than answer.
+     */
+    @Override
+    public boolean contains(Object element) {
+        return element != null && delegate.contains(element);
+    }
+
     @Override
     @Deprecated
     public final boolean add(T element) {

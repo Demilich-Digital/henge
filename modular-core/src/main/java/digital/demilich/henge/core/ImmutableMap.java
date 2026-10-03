@@ -33,6 +33,20 @@ public final class ImmutableMap<K, V> extends AbstractMap<K, V> {
         return delegate.entrySet();
     }
 
+    /**
+     * Delegated rather than inherited: {@code AbstractMap} answers these by scanning every entry.
+     * {@code null} is never a key, and the delegate would throw on it rather than answer.
+     */
+    @Override
+    public V get(Object key) {
+        return key == null ? null : delegate.get(key);
+    }
+
+    @Override
+    public boolean containsKey(Object key) {
+        return key != null && delegate.containsKey(key);
+    }
+
     @Override
     @Deprecated
     public final V put(K key, V value) {

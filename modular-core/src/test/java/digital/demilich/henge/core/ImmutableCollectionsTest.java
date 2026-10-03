@@ -63,4 +63,26 @@ class ImmutableCollectionsTest {
 
         assertThat(copy).containsOnlyKeys("a");
     }
+
+    @Test
+    void immutableSetLookupsAnswerLikeAnyOtherSet() {
+        ImmutableSet<String> set = ImmutableSet.of("a", "b");
+
+        assertThat(set.contains("a")).isTrue();
+        assertThat(set.contains("z")).isFalse();
+        assertThat(set.contains(null)).isFalse();
+        assertThat(set.containsAll(List.of("a", "b"))).isTrue();
+    }
+
+    @Test
+    void immutableMapLookupsAnswerLikeAnyOtherMap() {
+        ImmutableMap<String, Integer> map = ImmutableMap.copyOf(Map.of("a", 1));
+
+        assertThat(map.get("a")).isEqualTo(1);
+        assertThat(map.get("z")).isNull();
+        assertThat(map.get(null)).isNull();
+        assertThat(map.containsKey("a")).isTrue();
+        assertThat(map.containsKey(null)).isFalse();
+        assertThat(map.getOrDefault("z", 9)).isEqualTo(9);
+    }
 }
