@@ -136,6 +136,18 @@ class ModularServiceRegistrarPlainSpringTest {
     }
 
     @Test
+    void anImplementationWhoseInterfaceIsNotScannedNamesThePackageToAdd() {
+        assertThatThrownBy(() -> new AnnotationConfigApplicationContext(ImplOnlyConfig.class).close())
+                .hasStackTraceContaining("that interface's package isn't scanned")
+                .hasStackTraceContaining("\"digital.demilich.henge.spring.outofscope.api\"");
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.outofscope.impl")
+    static class ImplOnlyConfig {
+    }
+
+    @Test
     void overlappingBasePackagesDoNotReportADuplicateImplementation() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(OverlappingPackagesConfig.class)) {
             assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);

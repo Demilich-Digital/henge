@@ -210,6 +210,11 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 Class<?> serviceInterface = annotation.value();
                 int version = annotation.version();
 
+                if (!serviceInterfaces.contains(serviceInterface) && serviceInterface.isAnnotationPresent(ModularService.class)) {
+                    throw new IllegalStateException(implClass.getName() + " implements @ModularService " + serviceInterface.getName()
+                            + ", but that interface's package isn't scanned -- add \"" + serviceInterface.getPackageName()
+                            + "\" to @EnableModularServices' basePackages (scanning: " + basePackages + ").");
+                }
                 if (!serviceInterfaces.contains(serviceInterface)) {
                     throw new IllegalStateException(implClass.getName() + " is annotated @ServiceVersion("
                             + serviceInterface.getName() + ".class, " + version + ") but " + serviceInterface.getName()
