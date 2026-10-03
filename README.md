@@ -132,10 +132,15 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   and a CSRF token on every POST, so remote dispatch fails with `401` before reaching `/_modular`.
   How `/_modular/**` should be protected is your application's call, so Henge changes nothing by
   default. Either permit `POST {modular.server.path-prefix}/**` (and exempt it from CSRF) in your own
-  `SecurityFilterChain`, or set `modular.server.permit-spring-security=true` and the Boot starter tells
-  Spring Security to skip exactly that path — via a `WebSecurityCustomizer`, so the rest of your
-  security configuration is untouched. This is the same trust model as running without
-  `modular.transport.secret`: the network is the boundary.
+  `SecurityFilterChain`, or set `modular.server.permit-spring-security=true` and the Boot starter adds
+  a dedicated `SecurityFilterChain` for exactly that request pattern: `permitAll` (the optional
+  `modular.transport.secret`, checked by the dispatcher, is the only gate — otherwise the network is),
+  stateless, CSRF off (it defends cookie/session authentication this endpoint never has). It is
+  ordered ahead of your chains and added *next to* whatever you have, including Boot's default chain,
+  never instead of it — nothing else you serve is affected. To apply your own policy to the path
+  instead (JWT, mTLS, ...), define a bean named `modularSecurityFilterChain` and Henge's backs off.
+  This is the same trust model as running without `modular.transport.secret`: the network is the
+  boundary.
 - Transport is pluggable behind the `ServiceTransport` SPI (`digital.demilich.henge.core`). `internal-rest` is
   the only implementation today; a `grpc` transport can be added later without any change to
   `@ModularService` or generated proxies.

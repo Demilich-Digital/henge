@@ -7,6 +7,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class ProtectedController {
 
+    @GetMapping("/open")
+    public String open() {
+        return "anyone";
+    }
+
     @GetMapping("/protected")
     public String hello() {
         return "secret stuff";
