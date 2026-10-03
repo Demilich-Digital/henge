@@ -38,7 +38,7 @@ without a rewrite or a redeploy to move between them — is the actual goal. It'
 fully there yet: Henge itself still tracks nothing about which instances are alive or
 where (see "Not in v1" below) — `--modular.serve` and `--modular.remote-url-template` let the
 binary lean on an existing orchestrator's own discovery (k8s DNS, Consul DNS, ...) rather than
-requiring hand-configured hosts, but there's still no health-aware routing, retries, or auth on
+requiring hand-configured hosts, but there's still no health-aware routing or retries on
 the internal transport. The versioning-in-the-binary and deploy-time-topology mechanics are
 solid; the operational maturity for scaling like a "real" microservice fleet isn't built yet.
 
@@ -113,12 +113,16 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   for every (service, version) this process embeds, validated strictly against a startup-built
   registry keyed by bean name — never by type alone, since multiple versions of the same interface
   may be embedded in the same process. Arguments and the return value are a JSON array / JSON
-  value, matched positionally against the method's declared parameter types. Unauthenticated by
-  default — every embedded `@ModularService` method is reachable by anyone who can reach the
-  process's HTTP port. Set `modular.transport.secret` to close that: when set, `InternalRestTransport`
-  sends it as a `Modular-Internal-Secret` header on every call, and the dispatcher requires it
-  (constant-time compare, `403` otherwise). With no secret configured, the dispatcher logs a
-  startup warning naming the gap. `/_modular` shares `server.port` with whatever public API you
+  value, matched positionally against the method's declared parameter types. The
+  security model is network isolation: `/_modular` is meant to sit on a private network (VPC,
+  service mesh, cluster-internal DNS), and running with no secret is a fully supported
+  configuration — the expected one there, since every embedded `@ModularService` method is
+  reachable by whoever can reach the process's HTTP port, which on a private network is only your
+  own services. Set `modular.transport.secret` for defense in depth where that isn't enough:
+  `InternalRestTransport` then sends it as a `Modular-Internal-Secret` header on every call, and
+  the dispatcher requires it (constant-time compare, checked before the request body is parsed,
+  `403` otherwise). With no secret the dispatcher logs one INFO line saying so, not a warning.
+  `/_modular` shares `server.port` with whatever public API you
   build on top — there's no separate listen port, and there isn't meant to be one: `/_modular` was
   never intended to be internet-facing in the first place, so splitting it onto its own port
   doesn't buy anything a network boundary (VPC / service mesh) doesn't already give you. If you do
@@ -475,9 +479,9 @@ Deliberately out of scope for now, to keep the core mechanism small and correct:
   nothing about which instances are actually alive or where — no health-aware routing, no dynamic
   membership.
 - A `grpc` `ServiceTransport` implementation (the SPI is ready for it).
-- mTLS between internal services — `modular.transport.secret` (see "How it works") is the one
-  protection built so far; `/_modular/**` is still expected to sit behind a network boundary (VPC
-  / service mesh), not the public internet. (A separate listen port for `/_modular` was considered
+- mTLS between internal services — `/_modular/**` is expected to sit behind a network boundary
+  (VPC / service mesh), not the public internet; the optional `modular.transport.secret` (see
+  "How it works") is the only in-process protection built so far. (A separate listen port for `/_modular` was considered
   and deliberately rejected, not deferred — see "How it works": `/_modular` was never meant to be
   internet-facing, so splitting it onto its own port doesn't solve a problem this framework
   actually has.)

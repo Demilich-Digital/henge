@@ -32,11 +32,10 @@ import org.springframework.web.bind.annotation.RestController;
  * against {@link ModularServiceRegistry} — no reflection target outside that pre-built,
  * startup-time table is ever reachable.
  *
- * <p>Unauthenticated and on by default otherwise — when {@code modular.transport.secret} is
- * unset, every embedded {@code @ModularService} method is reachable by anyone who can reach this
- * process's HTTP port, which logs a startup warning. See the README's security section; a
- * separate listen port for {@code /_modular} (analogous to {@code management.server.port}) is
- * tracked as a follow-on, not yet built.
+ * <p>Authentication is optional: the security model is network isolation (see the README), so with
+ * {@code modular.transport.secret} unset every embedded {@code @ModularService} method is open to
+ * whoever can reach this process's HTTP port, which is the supported, expected configuration.
+ * When the secret is set, it is required on every call.
  */
 @RestController
 @RequestMapping("${modular.server.path-prefix:/_modular}")
@@ -59,10 +58,8 @@ class ModularDispatcherController {
         String secret = properties.getTransportSecret();
         this.configuredSecret = (secret == null || secret.isBlank()) ? null : secret;
         if (this.configuredSecret == null) {
-            log.warn("The modular dispatcher is enabled with no modular.transport.secret configured -- "
-                    + "every embedded @ModularService method on this process is reachable by anyone who can "
-                    + "reach its HTTP port. Set modular.transport.secret to require a shared secret on every "
-                    + "internal-rest call.");
+            log.info("modular.transport.secret is not set: /_modular accepts calls without authentication and "
+                    + "relies on network-level isolation.");
         }
     }
 
@@ -116,7 +113,7 @@ class ModularDispatcherController {
     }
 
     /**
-     * No-op when no secret is configured (the pre-secret, unauthenticated default). Uses
+     * No-op when no secret is configured (the supported, network-isolated default). Uses
      * {@link MessageDigest#isEqual(byte[], byte[])} for the comparison -- guaranteed by its
      * Javadoc to take time independent of where the arrays first differ, unlike {@link
      * String#equals}, which would let a timing attack narrow down the secret one byte at a time.
