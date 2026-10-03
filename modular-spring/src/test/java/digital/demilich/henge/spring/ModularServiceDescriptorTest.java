@@ -73,7 +73,7 @@ class ModularServiceDescriptorTest {
 
     @Test
     void descriptorOfExposesTheSameFingerprintAsTheStaticMethod() {
-        ModularServiceDescriptor descriptor = ModularServiceDescriptor.of("widget-service", "1", OriginalOrder.class, "widget-service-1");
+        ModularServiceDescriptor descriptor = ModularServiceDescriptor.of("widget-service", 1, OriginalOrder.class, "widget-service-1");
         assertThat(descriptor.contractFingerprint()).isEqualTo(ModularServiceDescriptor.fingerprint(OriginalOrder.class));
     }
 

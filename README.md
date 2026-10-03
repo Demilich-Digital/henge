@@ -47,7 +47,7 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
 - **`@ModularService`** marks an *internal* service boundary interface. It is never used for a
   project's public-facing HTTP API — that stays plain Spring MVC (`@RestController`,
   `@GetMapping`, ...), fully developer-owned, and the framework never touches it.
-- **`@ServiceVersion(value = TheInterface.class, version = "1")`** stands in for `@Service` on an
+- **`@ServiceVersion(value = TheInterface.class, version = 1)`** stands in for `@Service` on an
   implementation — the framework registers the bean itself, so don't also annotate it `@Service`/
   `@Component`. Multiple classes can implement the same interface as long as each declares a
   distinct version; they all coexist as separate beans in the same process.
@@ -57,9 +57,9 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   `@ServiceVersion` annotation on the constructor parameter or field:
 
   ```java
-  @ServiceVersion(value = GreetingService.class, version = "1")
+  @ServiceVersion(value = GreetingService.class, version = 1)
   public class GreetingServiceImpl implements GreetingService {
-      public GreetingServiceImpl(@ServiceVersion(value = AuditService.class, version = "1") AuditService auditService) { ... }
+      public GreetingServiceImpl(@ServiceVersion(value = AuditService.class, version = 1) AuditService auditService) { ... }
   }
   ```
 
@@ -90,7 +90,7 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
 - Callers always just `@Autowired` the interface (optionally qualified with `@ServiceVersion`).
   They never know or care which mode is in effect — that's the location transparency the whole
   framework exists for.
-- **`@AddedIn("2")`** / **`@DeprecatedSince("3")`** on an interface method mark it as only
+- **`@AddedIn(2)`** / **`@DeprecatedSince(3)`** on an interface method mark it as only
   existing from that version onward, or optional from that version onward, respectively — so an
   older (or newer) `@ServiceVersion` implementation isn't forced by the Java compiler to
   implement a method that doesn't apply to it. See "Compile-time method versioning" below.
@@ -168,7 +168,7 @@ public interface AuditService {
     void recordEvent(String event);
     ImmutableList<String> getEvents();
 
-    @AddedIn("2")
+    @AddedIn(2)
     ImmutableList<String> getRecentEvents(int limit);
 }
 ```
@@ -181,14 +181,14 @@ declared version — everything else falls through to the generated stub, with z
 boilerplate:
 
 ```java
-@ServiceVersion(value = AuditService.class, version = "1")
+@ServiceVersion(value = AuditService.class, version = 1)
 public class AuditServiceImpl extends AuditServiceSkeleton {
     // doesn't override getRecentEvents at all -- calling it throws
     // ServiceVersionUnsupportedException: "...AuditServiceImpl#getRecentEvents is not
     // supported by this implementation (requires version >= 2)"
 }
 
-@ServiceVersion(value = AuditService.class, version = "2")
+@ServiceVersion(value = AuditService.class, version = 2)
 public class AuditServiceImplV2 extends AuditServiceSkeleton {
     @Override
     public ImmutableList<String> getRecentEvents(int limit) { ... } // version "2" actually supports it
@@ -201,12 +201,11 @@ genuinely overridden — silently relying on the generated throwing stub for a m
 implementation is actually supposed to support is a compile error, not a runtime surprise.
 
 Two things worth knowing:
-- Every `@ServiceVersion` value must be a valid semantic version — checked by `modular-processor`
-  (`org.semver4j:semver4j`, its one external dependency) at compile time, whether or not the
-  interface it implements uses `@AddedIn`/`@DeprecatedSince` at all. Bare integers like `"1"`/`"2"`
-  are coerced to `1.0.0`/`2.0.0` and compare exactly as before; full `"major.minor.patch"` strings
-  work too. `@AddedIn`/`@DeprecatedSince` values follow the same rule, since they're ordered
-  against it.
+- Versions are plain integers everywhere: `@ServiceVersion(version = 2)`, `@AddedIn(2)`,
+  `@DeprecatedSince(3)`, `@ModularService(defaultVersion = ...)`, and the `versions.<n>` /
+  `name@<n>` keys in config and `--modular.serve`. That's how the processor orders versions to
+  compute ranges, and it means `1` and `01` can never be two different versions. A non-integer
+  version in config or `--modular.serve` fails at startup.
 - Any module that compiles a `@ModularService` interface with versioned methods, or a
   `@ServiceVersion` implementation, needs `modular-processor` on its `annotationProcessor` (or
   `testAnnotationProcessor`) configuration explicitly — Gradle does not propagate annotation
@@ -271,7 +270,7 @@ pattern for any module that calls into a `@ModularService`.
 | `modular-processor` | The `@AddedIn`/`@DeprecatedSince` annotation processor: generates `{Interface}Skeleton` classes and validates `@ServiceVersion` implementations against them. Depends only on `modular-core` — no Spring. |
 | `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
 | `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically and adds the `modular.server.enabled` property gate — the only things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
-| `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn("2")` method. |
+| `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn(2)` method. |
 | `examples/example-services` | Their `@ServiceVersion` implementations, including a second `AuditService` version to demonstrate multi-version wiring and the generated-skeleton mechanism. No Spring dependency at all. |
 | `examples/example-app` | One Spring Boot application tying it together, runnable as the monolith or as either half of a split deployment. |
 | `examples/example-plain-spring` | The same idea with zero Spring Boot: a plain `AnnotationConfigApplicationContext` + `@EnableModularServices`, proving the core wiring mechanism works standalone. See "Using this without Spring Boot" below. |
@@ -409,7 +408,7 @@ needed — just config: `--modular.services.audit-service.versions.1.mode=intern
 
 ### A method that only exists from version 2 onward
 
-`AuditService.getRecentEvents(int limit)` is `@AddedIn("2")`. Version "1"'s implementation
+`AuditService.getRecentEvents(int limit)` is `@AddedIn(2)`. Version "1"'s implementation
 (`AuditServiceImpl`) never overrides it; version "2"'s (`AuditServiceImplV2`) does:
 
 ```bash

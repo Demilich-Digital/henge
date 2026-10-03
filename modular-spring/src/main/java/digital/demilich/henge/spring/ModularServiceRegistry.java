@@ -20,7 +20,7 @@ public class ModularServiceRegistry {
         this.byKey = descriptors.stream().collect(Collectors.toMap(ModularServiceRegistry::key, Function.identity()));
     }
 
-    public Optional<ModularServiceDescriptor> find(String name, String version) {
+    public Optional<ModularServiceDescriptor> find(String name, int version) {
         return Optional.ofNullable(byKey.get(key(name, version)));
     }
 
@@ -28,7 +28,7 @@ public class ModularServiceRegistry {
         return key(descriptor.name(), descriptor.version());
     }
 
-    private static String key(String name, String version) {
+    private static String key(String name, int version) {
         return name + "/" + version;
     }
 }

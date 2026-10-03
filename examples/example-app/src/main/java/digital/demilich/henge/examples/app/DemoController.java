@@ -30,7 +30,7 @@ class DemoController {
     DemoController(
             GreetingService greetingService,
             AuditService auditService,
-            @ServiceVersion(value = AuditService.class, version = "2") AuditService auditServiceV2) {
+            @ServiceVersion(value = AuditService.class, version = 2) AuditService auditServiceV2) {
         this.greetingService = greetingService;
         this.auditService = auditService;
         this.auditServiceV2 = auditServiceV2;
@@ -52,7 +52,7 @@ class DemoController {
         return auditServiceV2.getEvents();
     }
 
-    /** Works: version "2" actually implements {@code getRecentEvents} (it's {@code @AddedIn("2")}). */
+    /** Works: version "2" actually implements {@code getRecentEvents} (it's {@code @AddedIn(2)}). */
     @GetMapping("/audit/v2/recent/{limit}")
     List<String> recentV2(@PathVariable("limit") int limit) {
         return auditServiceV2.getRecentEvents(limit);

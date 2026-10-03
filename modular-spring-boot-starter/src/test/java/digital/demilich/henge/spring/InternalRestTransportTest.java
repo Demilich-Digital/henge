@@ -29,7 +29,7 @@ class InternalRestTransportTest {
         InternalRestTransport transport =
                 new InternalRestTransport(RestClient.builder().build(), ModularTransportSupport.objectMapper(), properties);
 
-        assertThat(transport.resolveFromTemplate("audit-service", "1"))
+        assertThat(transport.resolveFromTemplate("audit-service", 1))
                 .isEqualTo("http://audit-service.default.svc.cluster.local:8080");
     }
 
@@ -41,7 +41,7 @@ class InternalRestTransportTest {
         InternalRestTransport transport =
                 new InternalRestTransport(RestClient.builder().build(), ModularTransportSupport.objectMapper(), properties);
 
-        assertThat(transport.resolveFromTemplate("audit-service", "2"))
+        assertThat(transport.resolveFromTemplate("audit-service", 2))
                 .isEqualTo("http://audit-service-v2.default.svc.cluster.local:8080");
     }
 
@@ -51,7 +51,7 @@ class InternalRestTransportTest {
         InternalRestTransport transport =
                 new InternalRestTransport(RestClient.builder().build(), ModularTransportSupport.objectMapper(), properties);
 
-        assertThat(transport.resolveFromTemplate("audit-service", "1")).isNull();
+        assertThat(transport.resolveFromTemplate("audit-service", 1)).isNull();
     }
 
     @Test
@@ -76,7 +76,7 @@ class InternalRestTransportTest {
 
             Method echoMethod = EchoService.class.getMethod("echo", String.class);
             ServiceInvocation invocation =
-                    new ServiceInvocation("echo-service", "1", EchoService.class, "echo", echoMethod, new Object[] {"hi"});
+                    new ServiceInvocation("echo-service", 1, EchoService.class, "echo", echoMethod, new Object[] {"hi"});
 
             long start = System.nanoTime();
             assertThatThrownBy(() -> transport.invoke(invocation))

@@ -17,11 +17,11 @@ class ModularServiceProxyFactoryBean implements FactoryBean<Object>, Application
 
     private final Class<?> serviceInterface;
     private final String serviceName;
-    private final String serviceVersion;
+    private final int serviceVersion;
 
     private ApplicationContext applicationContext;
 
-    ModularServiceProxyFactoryBean(Class<?> serviceInterface, String serviceName, String serviceVersion) {
+    ModularServiceProxyFactoryBean(Class<?> serviceInterface, String serviceName, int serviceVersion) {
         this.serviceInterface = serviceInterface;
         this.serviceName = serviceName;
         this.serviceVersion = serviceVersion;

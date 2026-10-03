@@ -20,9 +20,9 @@ import java.util.Map;
  * process — and its RPC-method-name -> reflected {@link Method} table.
  */
 public record ModularServiceDescriptor(
-        String name, String version, Class<?> interfaceType, String beanName, Map<String, Method> methods, String contractFingerprint) {
+        String name, int version, Class<?> interfaceType, String beanName, Map<String, Method> methods, String contractFingerprint) {
 
-    static ModularServiceDescriptor of(String name, String version, Class<?> interfaceType, String beanName) {
+    static ModularServiceDescriptor of(String name, int version, Class<?> interfaceType, String beanName) {
         Map<String, Method> methods = new LinkedHashMap<>();
         for (Method method : interfaceType.getMethods()) {
             String rpcName = rpcName(method);

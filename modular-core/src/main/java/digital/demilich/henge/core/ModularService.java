@@ -35,5 +35,5 @@ public @interface ModularService {
      * Also carried in the dispatch path, so a breaking change can be rolled out as a new version
      * without an old client/server pairing silently misrouting or failing to deserialize.
      */
-    String defaultVersion() default "1";
+    int defaultVersion() default 1;
 }

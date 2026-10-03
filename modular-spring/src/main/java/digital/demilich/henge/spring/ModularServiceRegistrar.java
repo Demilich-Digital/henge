@@ -71,7 +71,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
         Set<String> basePackages = resolveBasePackages(importingClassMetadata);
         Set<Class<?>> serviceInterfaces = discoverServiceInterfaces(basePackages, classLoader);
-        Map<Class<?>, Map<String, Class<?>>> localImpls = discoverServiceVersionImpls(basePackages, serviceInterfaces, classLoader);
+        Map<Class<?>, Map<Integer, Class<?>>> localImpls = discoverServiceVersionImpls(basePackages, serviceInterfaces, classLoader);
         ModularProperties properties = new ModularProperties(environment);
         ServeSpec serveSpec = ServeSpec.parse(properties.getServe());
 
@@ -89,17 +89,17 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                         + " -- disambiguate with @ModularService(name = ...) on one of them.");
             }
 
-            String defaultVersion = annotation.defaultVersion();
+            int defaultVersion = annotation.defaultVersion();
 
-            Map<String, Class<?>> implsByVersion = localImpls.getOrDefault(serviceInterface, Map.of());
+            Map<Integer, Class<?>> implsByVersion = localImpls.getOrDefault(serviceInterface, Map.of());
             ModularProperties.ServiceConfig config = properties.service(name);
 
-            Set<String> versions = new LinkedHashSet<>(implsByVersion.keySet());
+            Set<Integer> versions = new LinkedHashSet<>(implsByVersion.keySet());
             versions.addAll(config.explicitVersions());
             versions.addAll(serveSpec.versionsFor(name));
             versions.add(defaultVersion);
 
-            for (String version : versions) {
+            for (int version : versions) {
                 String qualifiedName = name + "@" + version;
                 String explicitMode = config.resolveMode(version);
                 boolean servedHere = serveSpec.isEmpty() || serveSpec.matches(name, version);
@@ -118,14 +118,14 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 // rejected above unless disambiguated via @ModularService(name = ...) -- get
                 // distinct bean names too, once disambiguated.
                 String beanName = name + "-" + version;
-                boolean isDefault = version.equals(defaultVersion);
+                boolean isDefault = version == defaultVersion;
 
                 RootBeanDefinition definition;
                 if (mode == ModularMode.EMBEDDED) {
                     if (implClass == null) {
                         throw new IllegalStateException("Modular service '" + name + "' version '" + version
                                 + "' is configured as embedded (the default) but no @ServiceVersion(" + serviceInterface.getSimpleName()
-                                + ".class, \"" + version + "\") implementation was found on the classpath. Either add one, or set "
+                                + ".class, " + version + ") implementation was found on the classpath. Either add one, or set "
                                 + "modular.services." + name + ".versions." + version + ".mode=internal-rest with a matching "
                                 + ".url pointing at the process that hosts it.");
                     }
@@ -150,7 +150,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                         .getBeanDefinition());
     }
 
-    private static void addServiceVersionQualifier(RootBeanDefinition definition, Class<?> serviceInterface, String version) {
+    private static void addServiceVersionQualifier(RootBeanDefinition definition, Class<?> serviceInterface, int version) {
         AutowireCandidateQualifier qualifier = new AutowireCandidateQualifier(ServiceVersion.class);
         qualifier.setAttribute("value", serviceInterface);
         qualifier.setAttribute("version", version);
@@ -168,20 +168,20 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         return found;
     }
 
-    private Map<Class<?>, Map<String, Class<?>>> discoverServiceVersionImpls(
+    private Map<Class<?>, Map<Integer, Class<?>>> discoverServiceVersionImpls(
             Set<String> basePackages, Set<Class<?>> serviceInterfaces, ClassLoader classLoader) {
-        Map<Class<?>, Map<String, Class<?>>> result = new LinkedHashMap<>();
+        Map<Class<?>, Map<Integer, Class<?>>> result = new LinkedHashMap<>();
         ServiceVersionScanner scanner = new ServiceVersionScanner();
         for (String basePackage : basePackages) {
             for (BeanDefinition candidate : scanner.findCandidateComponents(basePackage)) {
                 Class<?> implClass = resolveClass(candidate.getBeanClassName(), classLoader);
                 ServiceVersion annotation = implClass.getAnnotation(ServiceVersion.class);
                 Class<?> serviceInterface = annotation.value();
-                String version = annotation.version();
+                int version = annotation.version();
 
                 if (!serviceInterfaces.contains(serviceInterface)) {
                     throw new IllegalStateException(implClass.getName() + " is annotated @ServiceVersion("
-                            + serviceInterface.getName() + ".class, \"" + version + "\") but " + serviceInterface.getName()
+                            + serviceInterface.getName() + ".class, " + version + ") but " + serviceInterface.getName()
                             + " is not annotated @ModularService");
                 }
                 if (!serviceInterface.isAssignableFrom(implClass)) {
@@ -189,7 +189,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                             + serviceInterface.getName() + ".class, ...) but does not implement " + serviceInterface.getName());
                 }
 
-                Map<String, Class<?>> byVersion = result.computeIfAbsent(serviceInterface, k -> new LinkedHashMap<>());
+                Map<Integer, Class<?>> byVersion = result.computeIfAbsent(serviceInterface, k -> new LinkedHashMap<>());
                 Class<?> existing = byVersion.putIfAbsent(version, implClass);
                 if (existing != null) {
                     throw new IllegalStateException("Two implementations both claim version '" + version + "' of "

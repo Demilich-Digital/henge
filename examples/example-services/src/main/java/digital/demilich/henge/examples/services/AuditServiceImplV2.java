@@ -12,11 +12,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * A second, independent implementation of {@link AuditService}, coexisting with
  * {@link AuditServiceImpl} (version "1") purely to demonstrate multi-version wiring — nothing
  * else in this example requires it, so it's only ever reached via an explicit
- * {@code @ServiceVersion(value = AuditService.class, version = "2")} qualifier. Unlike version
- * "1", this version actually supports {@code getRecentEvents} (it's {@code @AddedIn("2")}), so it
+ * {@code @ServiceVersion(value = AuditService.class, version = 2)} qualifier. Unlike version
+ * "1", this version actually supports {@code getRecentEvents} (it's {@code @AddedIn(2)}), so it
  * overrides the generated {@link AuditServiceSkeleton} stub for real instead of inheriting it.
  */
-@ServiceVersion(value = AuditService.class, version = "2")
+@ServiceVersion(value = AuditService.class, version = 2)
 public class AuditServiceImplV2 extends AuditServiceSkeleton {
 
     private final List<String> events = new CopyOnWriteArrayList<>();

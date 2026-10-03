@@ -35,7 +35,6 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
-import org.semver4j.Semver;
 
 /**
  * Compile-time support for {@link AddedIn} / {@link DeprecatedSince}:
@@ -47,10 +46,9 @@ import org.semver4j.Semver;
  *       method — an implementation extends the skeleton instead of implementing the interface
  *       directly, and only needs to override the methods actually in range for its declared
  *       version.</li>
- *   <li>For every {@code @ServiceVersion} implementation, validates that its declared version is
- *       a valid semantic version (see {@link #parseVersionOrReportError}), and that every
- *       interface method whose version range includes it is genuinely overridden, not silently
- *       left to the generated throwing stub.</li>
+ *   <li>For every {@code @ServiceVersion} implementation, validates that every interface method
+ *       whose version range includes the implementation's declared version is genuinely
+ *       overridden, not silently left to the generated throwing stub.</li>
  *   <li>For every {@code @ModularService} interface, rejects checked exceptions in method
  *       {@code throws} clauses and rejects parameter/return types that aren't guaranteed-value
  *       boundary types (records, enums, primitives, well-known immutable value types, or
@@ -373,13 +371,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             return;
         }
 
-        // @ServiceVersion's value must always be a valid semantic version, whether or not this
-        // interface uses @AddedIn/@DeprecatedSince -- a consistent, orderable version scheme
-        // everywhere the annotation is used, not just where range checks need it.
-        Semver implVersion = parseVersionOrReportError(annotation.version(), implElement, "@ServiceVersion");
-        if (implVersion == null) {
-            return;
-        }
+        int implVersion = annotation.version();
 
         for (ExecutableElement interfaceMethod : ElementFilter.methodsIn(interfaceElement.getEnclosedElements())) {
             AddedIn addedIn = interfaceMethod.getAnnotation(AddedIn.class);
@@ -388,15 +380,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 continue;
             }
 
-            Semver addedInVersion = addedIn == null ? null : parseVersionOrReportError(addedIn.value(), interfaceMethod, "@AddedIn");
-            Semver deprecatedSinceVersion =
-                    deprecatedSince == null ? null : parseVersionOrReportError(deprecatedSince.value(), interfaceMethod, "@DeprecatedSince");
-            if ((addedIn != null && addedInVersion == null) || (deprecatedSince != null && deprecatedSinceVersion == null)) {
-                continue;
-            }
-
-            boolean inRange = (addedInVersion == null || implVersion.isGreaterThanOrEqualTo(addedInVersion))
-                    && (deprecatedSinceVersion == null || implVersion.isLowerThan(deprecatedSinceVersion));
+            boolean inRange = (addedIn == null || implVersion >= addedIn.value())
+                    && (deprecatedSince == null || implVersion < deprecatedSince.value());
             if (!inRange) {
                 continue;
             }
@@ -404,7 +389,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             if (!isOverriddenDirectly(implElement, interfaceMethod)) {
                 messager.printMessage(Diagnostic.Kind.ERROR,
                         implElement.getQualifiedName() + " declares @ServiceVersion(" + interfaceElement.getSimpleName()
-                                + ".class, \"" + annotation.version() + "\") but does not implement '"
+                                + ".class, " + annotation.version() + ") but does not implement '"
                                 + interfaceMethod.getSimpleName() + "', which is required for that version ("
                                 + describeRequirement(interfaceMethod) + ")",
                         implElement);
@@ -419,25 +404,6 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             }
         }
         return false;
-    }
-
-    private Semver parseVersionOrReportError(String value, Element element, String annotationDescription) {
-        Semver version = Semver.coerce(value);
-        if (version == null) {
-            messager.printMessage(Diagnostic.Kind.ERROR,
-                    annotationDescription + " version '" + value + "' on " + describe(element)
-                            + " could not be parsed as a semantic version -- examples of valid versions: "
-                            + "\"1\", \"1.2\", \"1.2.3\"",
-                    element);
-            return null;
-        }
-        return version;
-    }
-
-    private static String describe(Element element) {
-        return element.getKind() == ElementKind.METHOD
-                ? element.getEnclosingElement() + "#" + element
-                : element.toString();
     }
 
     /**

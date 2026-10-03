@@ -68,7 +68,7 @@ class ModularDispatcherController {
     @PostMapping("/{service}/{version}/{method}")
     public ResponseEntity<?> dispatch(
             @PathVariable("service") String service,
-            @PathVariable("version") String version,
+            @PathVariable("version") int version,
             @PathVariable("method") String method,
             @RequestHeader(value = SECRET_HEADER, required = false) String providedSecret,
             @RequestHeader(value = FINGERPRINT_HEADER, required = false) String clientFingerprint,

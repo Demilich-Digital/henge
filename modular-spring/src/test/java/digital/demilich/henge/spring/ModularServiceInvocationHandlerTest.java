@@ -39,7 +39,7 @@ class ModularServiceInvocationHandlerTest {
         ExtendedService proxy = (ExtendedService) Proxy.newProxyInstance(
                 ExtendedService.class.getClassLoader(),
                 new Class<?>[] {ExtendedService.class},
-                new ModularServiceInvocationHandler("extended-service", "1", ExtendedService.class, capturingTransport));
+                new ModularServiceInvocationHandler("extended-service", 1, ExtendedService.class, capturingTransport));
 
         proxy.base("hi");
 

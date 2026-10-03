@@ -39,13 +39,6 @@ public @interface ServiceVersion {
     /** The {@code @ModularService} interface this version belongs to. */
     Class<?> value();
 
-    /**
-     * The version string, matched exactly against the interface's declared/configured versions.
-     * On an implementation class, this must be a semantic version (bare integers like {@code "1"}
-     * are fine — {@code modular-processor} coerces them to {@code "1.0.0"} — as are full
-     * {@code "major.minor.patch"} strings); {@code modular-processor} rejects anything else at
-     * compile time, since {@code @AddedIn}/{@code @DeprecatedSince} ranges need every version to
-     * be orderable.
-     */
-    String version();
+    /** The version number, matched exactly against the interface's declared/configured versions. */
+    int version();
 }

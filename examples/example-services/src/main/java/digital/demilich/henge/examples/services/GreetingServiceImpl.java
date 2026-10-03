@@ -11,12 +11,12 @@ import digital.demilich.henge.examples.contracts.GreetingService;
  * turns out to be the real local implementation or an HTTP-backed proxy is decided entirely by
  * config, not by anything visible in this class.
  */
-@ServiceVersion(value = GreetingService.class, version = "1")
+@ServiceVersion(value = GreetingService.class, version = 1)
 public class GreetingServiceImpl implements GreetingService {
 
     private final AuditService auditService;
 
-    public GreetingServiceImpl(@ServiceVersion(value = AuditService.class, version = "1") AuditService auditService) {
+    public GreetingServiceImpl(@ServiceVersion(value = AuditService.class, version = 1) AuditService auditService) {
         this.auditService = auditService;
     }
 

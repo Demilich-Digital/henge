@@ -13,7 +13,7 @@ import java.util.stream.Collectors;
  */
 class ServeSpec {
 
-    private record Entry(String name, String version) {
+    private record Entry(String name, Integer version) {
     }
 
     private final Set<Entry> entries;
@@ -35,8 +35,15 @@ class ServeSpec {
                 continue;
             }
             String name = trimmed.substring(0, at).trim();
-            String version = trimmed.substring(at + 1).trim();
-            if (name.isEmpty() || version.isEmpty()) {
+            String versionText = trimmed.substring(at + 1).trim();
+            int version;
+            try {
+                version = Integer.parseInt(versionText);
+            } catch (NumberFormatException e) {
+                throw new IllegalStateException(
+                        "Invalid modular.serve entry '" + token + "' -- expected 'name' or 'name@version' with an integer version");
+            }
+            if (name.isEmpty()) {
                 throw new IllegalStateException(
                         "Invalid modular.serve entry '" + token + "' -- expected 'name' or 'name@version'");
             }
@@ -50,9 +57,9 @@ class ServeSpec {
         return entries.isEmpty();
     }
 
-    boolean matches(String name, String version) {
+    boolean matches(String name, int version) {
         for (Entry entry : entries) {
-            if (entry.name().equals(name) && (entry.version() == null || entry.version().equals(version))) {
+            if (entry.name().equals(name) && (entry.version() == null || entry.version() == version)) {
                 return true;
             }
         }
@@ -65,7 +72,7 @@ class ServeSpec {
      * local impl, no other config mentioning it) still gets processed and fails fast with a clear
      * error rather than silently doing nothing.
      */
-    Set<String> versionsFor(String name) {
+    Set<Integer> versionsFor(String name) {
         return entries.stream()
                 .filter(entry -> entry.name().equals(name) && entry.version() != null)
                 .map(Entry::version)

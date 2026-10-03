@@ -117,11 +117,11 @@ class InternalRestTransport implements ServiceTransport {
      * is a no-op when the placeholder isn't present. Package-private (rather than {@code private})
      * so it's directly, deterministically testable without needing a real HTTP call.
      */
-    String resolveFromTemplate(String serviceName, String serviceVersion) {
+    String resolveFromTemplate(String serviceName, int serviceVersion) {
         String template = properties.getRemoteUrlTemplate();
         if (template == null || template.isBlank()) {
             return null;
         }
-        return template.replace("{service}", serviceName).replace("{version}", serviceVersion);
+        return template.replace("{service}", serviceName).replace("{version}", String.valueOf(serviceVersion));
     }
 }

@@ -102,22 +102,22 @@ public class ModularProperties {
         }
 
         /** Per-version mode, falling back to the service-level value. {@code null} if neither is set. */
-        public String resolveMode(String version) {
+        public String resolveMode(int version) {
             return resolve("mode", version);
         }
 
         /** Per-version url, falling back to the service-level value. {@code null} if neither is set. */
-        public String resolveUrl(String version) {
+        public String resolveUrl(int version) {
             return resolve("url", version);
         }
 
-        private String resolve(String key, String version) {
+        private String resolve(String key, int version) {
             String versioned = environment.getProperty("modular.services." + name + ".versions." + version + "." + key);
             return versioned != null ? versioned : environment.getProperty("modular.services." + name + "." + key);
         }
 
         /**
-         * Version strings with any explicit {@code modular.services.<name>.versions.<version>.*}
+         * Versions with any explicit {@code modular.services.<name>.versions.<version>.*}
          * config, found by scanning enumerable property sources directly — the only way to
          * discover "which keys exist under this prefix" without Boot's relaxed-binding
          * {@code Binder}. Requires a {@link ConfigurableEnvironment} (always the actual runtime
@@ -131,8 +131,8 @@ public class ModularProperties {
          * {@link Environment#getProperty(String)} — see {@code SystemEnvironmentPropertySource}),
          * so a literal-only scan would silently miss a version declared purely via an env var.
          */
-        public Set<String> explicitVersions() {
-            Set<String> versions = new LinkedHashSet<>();
+        public Set<Integer> explicitVersions() {
+            Set<Integer> versions = new LinkedHashSet<>();
             if (!(environment instanceof ConfigurableEnvironment configurable)) {
                 return versions;
             }
@@ -141,7 +141,7 @@ public class ModularProperties {
             for (PropertySource<?> source : configurable.getPropertySources()) {
                 if (source instanceof EnumerablePropertySource<?> enumerable) {
                     for (String propertyName : enumerable.getPropertyNames()) {
-                        String version = extractVersion(propertyName, dottedPrefix, '.');
+                        Integer version = extractVersion(propertyName, dottedPrefix, '.');
                         if (version == null) {
                             version = extractVersion(propertyName, envStylePrefix, '_');
                         }
@@ -154,14 +154,22 @@ public class ModularProperties {
             return versions;
         }
 
-        private static String extractVersion(String propertyName, String prefix, char separator) {
+        private Integer extractVersion(String propertyName, String prefix, char separator) {
             if (!propertyName.startsWith(prefix)) {
                 return null;
             }
             String rest = propertyName.substring(prefix.length());
             int sep = rest.indexOf(separator);
             String version = sep < 0 ? rest : rest.substring(0, sep);
-            return version.isEmpty() ? null : version;
+            if (version.isEmpty()) {
+                return null;
+            }
+            try {
+                return Integer.parseInt(version);
+            } catch (NumberFormatException e) {
+                throw new IllegalStateException("Property '" + propertyName + "' names version '" + version + "' of modular service '"
+                        + name + "', but versions must be integers (e.g. modular.services." + name + ".versions.2.mode)");
+            }
         }
 
         private static String toEnvVarStyle(String dotted) {

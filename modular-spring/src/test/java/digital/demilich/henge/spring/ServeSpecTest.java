@@ -18,17 +18,17 @@ class ServeSpecTest {
         ServeSpec spec = ServeSpec.parse(List.of("audit-service"));
 
         assertThat(spec.isEmpty()).isFalse();
-        assertThat(spec.matches("audit-service", "1")).isTrue();
-        assertThat(spec.matches("audit-service", "2")).isTrue();
-        assertThat(spec.matches("greeting-service", "1")).isFalse();
+        assertThat(spec.matches("audit-service", 1)).isTrue();
+        assertThat(spec.matches("audit-service", 2)).isTrue();
+        assertThat(spec.matches("greeting-service", 1)).isFalse();
     }
 
     @Test
     void qualifiedEntryMatchesOnlyItsExactVersion() {
         ServeSpec spec = ServeSpec.parse(List.of("audit-service@2"));
 
-        assertThat(spec.matches("audit-service", "2")).isTrue();
-        assertThat(spec.matches("audit-service", "1")).isFalse();
+        assertThat(spec.matches("audit-service", 2)).isTrue();
+        assertThat(spec.matches("audit-service", 1)).isFalse();
     }
 
     @Test
@@ -37,16 +37,16 @@ class ServeSpecTest {
         // elements before this ever sees them, so each element here is already one token.
         ServeSpec spec = ServeSpec.parse(List.of("audit-service@1", "greeting-service"));
 
-        assertThat(spec.matches("audit-service", "1")).isTrue();
-        assertThat(spec.matches("audit-service", "2")).isFalse();
-        assertThat(spec.matches("greeting-service", "7")).isTrue();
+        assertThat(spec.matches("audit-service", 1)).isTrue();
+        assertThat(spec.matches("audit-service", 2)).isFalse();
+        assertThat(spec.matches("greeting-service", 7)).isTrue();
     }
 
     @Test
     void versionsForReturnsOnlyExplicitlyQualifiedVersions() {
         ServeSpec spec = ServeSpec.parse(List.of("audit-service@2", "audit-service@3", "greeting-service"));
 
-        assertThat(spec.versionsFor("audit-service")).containsExactlyInAnyOrder("2", "3");
+        assertThat(spec.versionsFor("audit-service")).containsExactlyInAnyOrder(2, 3);
         assertThat(spec.versionsFor("greeting-service")).isEmpty();
         assertThat(spec.versionsFor("unrelated-service")).isEmpty();
     }
@@ -55,7 +55,7 @@ class ServeSpecTest {
     void blankEntriesAreIgnored() {
         ServeSpec spec = ServeSpec.parse(List.of("", "  ", "audit-service"));
 
-        assertThat(spec.matches("audit-service", "1")).isTrue();
+        assertThat(spec.matches("audit-service", 1)).isTrue();
     }
 
     @Test
@@ -63,5 +63,12 @@ class ServeSpecTest {
         assertThatThrownBy(() -> ServeSpec.parse(List.of("audit-service@")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("audit-service@");
+    }
+
+    @Test
+    void nonIntegerVersionFailsFast() {
+        assertThatThrownBy(() -> ServeSpec.parse(List.of("audit-service@1.0.0")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("integer version");
     }
 }

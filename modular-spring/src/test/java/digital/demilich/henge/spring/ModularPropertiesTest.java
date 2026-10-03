@@ -1,6 +1,7 @@
 package digital.demilich.henge.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,7 @@ class ModularPropertiesTest {
         ModularProperties properties = new ModularProperties(
                 environmentWithEnvVar("MODULAR_SERVICES_AUDIT_SERVICE_MODE", "internal-rest"));
 
-        assertThat(properties.service("audit-service").resolveMode("1")).isEqualTo("internal-rest");
+        assertThat(properties.service("audit-service").resolveMode(1)).isEqualTo("internal-rest");
     }
 
     @Test
@@ -38,7 +39,7 @@ class ModularPropertiesTest {
         ModularProperties properties = new ModularProperties(
                 environmentWithEnvVar("MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_2_URL", "http://audit-v2:8080"));
 
-        assertThat(properties.service("audit-service").resolveUrl("2")).isEqualTo("http://audit-v2:8080");
+        assertThat(properties.service("audit-service").resolveUrl(2)).isEqualTo("http://audit-v2:8080");
     }
 
     @Test
@@ -46,6 +47,16 @@ class ModularPropertiesTest {
         ModularProperties properties = new ModularProperties(
                 environmentWithEnvVar("MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_2_MODE", "internal-rest"));
 
-        assertThat(properties.service("audit-service").explicitVersions()).containsExactly("2");
+        assertThat(properties.service("audit-service").explicitVersions()).containsExactly(2);
+    }
+
+    @Test
+    void explicitVersionsRejectsANonIntegerVersionKey() {
+        ModularProperties properties = new ModularProperties(
+                environmentWithEnvVar("MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_BETA_MODE", "internal-rest"));
+
+        assertThatThrownBy(() -> properties.service("audit-service").explicitVersions())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("versions must be integers");
     }
 }

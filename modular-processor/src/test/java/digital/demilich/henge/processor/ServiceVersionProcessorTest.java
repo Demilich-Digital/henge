@@ -13,11 +13,11 @@ class ServiceVersionProcessorTest {
             import digital.demilich.henge.core.ModularService;
             import digital.demilich.henge.core.AddedIn;
 
-            @ModularService(name = "widget-service", defaultVersion = "1")
+            @ModularService(name = "widget-service", defaultVersion = 1)
             public interface WidgetService {
                 String basic();
 
-                @AddedIn("2")
+                @AddedIn(2)
                 digital.demilich.henge.core.ImmutableList<String> advanced(int limit) throws java.io.UncheckedIOException;
             }
             """;
@@ -27,7 +27,7 @@ class ServiceVersionProcessorTest {
 
             import digital.demilich.henge.core.ServiceVersion;
 
-            @ServiceVersion(value = WidgetService.class, version = "1")
+            @ServiceVersion(value = WidgetService.class, version = 1)
             public class WidgetServiceV1 extends WidgetServiceSkeleton {
                 @Override
                 public String basic() {
@@ -41,7 +41,7 @@ class ServiceVersionProcessorTest {
 
             import digital.demilich.henge.core.ServiceVersion;
 
-            @ServiceVersion(value = WidgetService.class, version = "2")
+            @ServiceVersion(value = WidgetService.class, version = 2)
             public class WidgetServiceV2 extends WidgetServiceSkeleton {
                 @Override
                 public String basic() {
@@ -60,7 +60,7 @@ class ServiceVersionProcessorTest {
 
             import digital.demilich.henge.core.ServiceVersion;
 
-            @ServiceVersion(value = WidgetService.class, version = "2")
+            @ServiceVersion(value = WidgetService.class, version = 2)
             public class WidgetServiceV2 extends WidgetServiceSkeleton {
                 @Override
                 public String basic() {
@@ -124,7 +124,7 @@ class ServiceVersionProcessorTest {
 
                 import digital.demilich.henge.core.ModularService;
 
-                @ModularService(name = "flaky-service", defaultVersion = "1")
+                @ModularService(name = "flaky-service", defaultVersion = 1)
                 public interface FlakyService {
                     String read() throws java.io.IOException;
                 }
@@ -146,7 +146,7 @@ class ServiceVersionProcessorTest {
 
                 import digital.demilich.henge.core.ModularService;
 
-                @ModularService(name = "flaky-service", defaultVersion = "1")
+                @ModularService(name = "flaky-service", defaultVersion = 1)
                 public interface FlakyService {
                     String read() throws IllegalStateException;
                 }
@@ -173,7 +173,7 @@ class ServiceVersionProcessorTest {
 
                 import digital.demilich.henge.core.ModularService;
 
-                @ModularService(name = "widget-service", defaultVersion = "1")
+                @ModularService(name = "widget-service", defaultVersion = 1)
                 public interface WidgetService {
                     void save(Widget widget);
                 }
@@ -204,7 +204,7 @@ class ServiceVersionProcessorTest {
 
                 import digital.demilich.henge.core.ModularService;
 
-                @ModularService(name = "widget-service", defaultVersion = "1")
+                @ModularService(name = "widget-service", defaultVersion = 1)
                 public interface WidgetService {
                     void save(Widget widget);
                 }
@@ -261,7 +261,7 @@ class ServiceVersionProcessorTest {
                 import com.google.common.collect.ImmutableList;
                 import com.google.common.collect.ImmutableMap;
 
-                @ModularService(name = "widget-service", defaultVersion = "1")
+                @ModularService(name = "widget-service", defaultVersion = 1)
                 public interface WidgetService {
                     ImmutableList<String> names();
                     void save(ImmutableMap<String, Integer> counts);
@@ -288,7 +288,7 @@ class ServiceVersionProcessorTest {
                 import java.util.Optional;
                 import java.util.UUID;
 
-                @ModularService(name = "widget-service", defaultVersion = "1")
+                @ModularService(name = "widget-service", defaultVersion = 1)
                 public interface WidgetService {
                     record Widget(UUID id, String name, ImmutableList<Tag> tags, Optional<String> note) {}
                     record Tag(String label) {}
@@ -313,7 +313,7 @@ class ServiceVersionProcessorTest {
                 import digital.demilich.henge.core.ModularService;
                 import java.util.List;
 
-                @ModularService(name = "widget-service", defaultVersion = "1")
+                @ModularService(name = "widget-service", defaultVersion = 1)
                 public interface WidgetService {
                     void save(List<String> names);
                 }
@@ -334,7 +334,7 @@ class ServiceVersionProcessorTest {
 
                 import digital.demilich.henge.core.ModularService;
 
-                @ModularService(name = "widget-service", defaultVersion = "1")
+                @ModularService(name = "widget-service", defaultVersion = 1)
                 public interface WidgetService {
                     void save(String[] names);
                 }
@@ -347,107 +347,6 @@ class ServiceVersionProcessorTest {
     }
 
     @Test
-    void nonSemverServiceVersionFailsCompilationEvenWithoutAddedInOrDeprecatedSince() {
-        // @ServiceVersion's value must always be a valid semantic version -- this interface never
-        // uses @AddedIn/@DeprecatedSince at all, but the rule still applies unconditionally.
-        String pkg = "nonsemverversion";
-        String serviceSource = """
-                package fixture.%s;
-
-                import digital.demilich.henge.core.ModularService;
-
-                @ModularService(name = "widget-service", defaultVersion = "1")
-                public interface WidgetService {
-                    String basic();
-                }
-                """.formatted(pkg);
-        String implSource = """
-                package fixture.%s;
-
-                import digital.demilich.henge.core.ServiceVersion;
-
-                @ServiceVersion(value = WidgetService.class, version = "north")
-                public class WidgetServiceImpl implements WidgetService {
-                    @Override
-                    public String basic() {
-                        return "v1";
-                    }
-                }
-                """.formatted(pkg);
-
-        TestCompiler.Result result = TestCompiler.compile(
-                source(pkg, "WidgetService", serviceSource),
-                source(pkg, "WidgetServiceImpl", implSource));
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.hasErrorContaining("@ServiceVersion")).isTrue();
-        assertThat(result.hasErrorContaining("'north'")).isTrue();
-        assertThat(result.hasErrorContaining("could not be parsed as a semantic version")).isTrue();
-    }
-
-    @Test
-    void dottedSemverServiceVersionOrdersCorrectlyAgainstAddedIn() {
-        // "1.10" must sort after "1.9" the way semver orders it (numeric minor comparison), not
-        // the way plain string/integer comparison would get wrong.
-        String pkg = "dottedsemver";
-        String serviceSource = """
-                package fixture.%s;
-
-                import digital.demilich.henge.core.ModularService;
-                import digital.demilich.henge.core.AddedIn;
-
-                @ModularService(name = "widget-service", defaultVersion = "1.0")
-                public interface WidgetService {
-                    String basic();
-
-                    @AddedIn("1.10")
-                    String advanced();
-                }
-                """.formatted(pkg);
-        String belowRangeSource = """
-                package fixture.%s;
-
-                import digital.demilich.henge.core.ServiceVersion;
-
-                @ServiceVersion(value = WidgetService.class, version = "1.9")
-                public class WidgetServiceV19 extends WidgetServiceSkeleton {
-                    @Override
-                    public String basic() {
-                        return "v1.9";
-                    }
-                    // correctly omits advanced() -- 1.9 < 1.10
-                }
-                """.formatted(pkg);
-        String inRangeMissingOverrideSource = """
-                package fixture.%s;
-
-                import digital.demilich.henge.core.ServiceVersion;
-
-                @ServiceVersion(value = WidgetService.class, version = "1.10")
-                public class WidgetServiceV110 extends WidgetServiceSkeleton {
-                    @Override
-                    public String basic() {
-                        return "v1.10";
-                    }
-                    // missing advanced() -- 1.10 >= 1.10, so this should fail to compile
-                }
-                """.formatted(pkg);
-
-        TestCompiler.Result belowRangeResult = TestCompiler.compile(
-                source(pkg, "WidgetService", serviceSource),
-                source(pkg, "WidgetServiceV19", belowRangeSource));
-        assertThat(belowRangeResult.success()).isTrue();
-        assertThat(belowRangeResult.diagnostics()).noneMatch(d -> d.getKind() == Diagnostic.Kind.ERROR);
-
-        String pkg2 = "dottedsemverinrange";
-        TestCompiler.Result inRangeResult = TestCompiler.compile(
-                source(pkg2, "WidgetService", serviceSource.replace(pkg, pkg2)),
-                source(pkg2, "WidgetServiceV110", inRangeMissingOverrideSource.replace(pkg, pkg2)));
-        assertThat(inRangeResult.success()).isFalse();
-        assertThat(inRangeResult.hasErrorContaining("advanced")).isTrue();
-    }
-
-    @Test
     void sealedInterfaceOfRecordsCompilesCleanly() {
         String pkg = "sealedrecord";
         String source = """
@@ -455,7 +354,7 @@ class ServiceVersionProcessorTest {
 
                 import digital.demilich.henge.core.ModularService;
 
-                @ModularService(name = "widget-service", defaultVersion = "1")
+                @ModularService(name = "widget-service", defaultVersion = 1)
                 public interface WidgetService {
                     sealed interface Shape permits Circle, Square {}
                     record Circle(double radius) implements Shape {}

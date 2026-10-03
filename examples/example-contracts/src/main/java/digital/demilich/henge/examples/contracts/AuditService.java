@@ -17,6 +17,6 @@ public interface AuditService {
      * implementation extends that skeleton and simply never overrides it, rather than being
      * forced to implement something that doesn't apply to it.
      */
-    @AddedIn("2")
+    @AddedIn(2)
     ImmutableList<String> getRecentEvents(int limit);
 }

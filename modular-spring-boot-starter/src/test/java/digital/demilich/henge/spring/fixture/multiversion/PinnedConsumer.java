@@ -9,7 +9,7 @@ public class PinnedConsumer {
 
     private final CounterService counterService;
 
-    public PinnedConsumer(@ServiceVersion(value = CounterService.class, version = "2") CounterService counterService) {
+    public PinnedConsumer(@ServiceVersion(value = CounterService.class, version = 2) CounterService counterService) {
         this.counterService = counterService;
     }
 

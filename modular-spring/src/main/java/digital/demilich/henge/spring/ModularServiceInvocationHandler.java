@@ -10,11 +10,11 @@ import java.lang.reflect.Method;
 class ModularServiceInvocationHandler implements InvocationHandler {
 
     private final String serviceName;
-    private final String serviceVersion;
+    private final int serviceVersion;
     private final Class<?> serviceInterface;
     private final ServiceTransport transport;
 
-    ModularServiceInvocationHandler(String serviceName, String serviceVersion, Class<?> serviceInterface, ServiceTransport transport) {
+    ModularServiceInvocationHandler(String serviceName, int serviceVersion, Class<?> serviceInterface, ServiceTransport transport) {
         this.serviceName = serviceName;
         this.serviceVersion = serviceVersion;
         this.serviceInterface = serviceInterface;

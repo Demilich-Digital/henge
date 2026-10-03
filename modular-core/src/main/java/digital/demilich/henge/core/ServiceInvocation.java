@@ -16,7 +16,7 @@ import java.lang.reflect.Method;
  */
 public record ServiceInvocation(
         String serviceName,
-        String serviceVersion,
+        int serviceVersion,
         Class<?> serviceInterface,
         String methodName,
         Method method,
