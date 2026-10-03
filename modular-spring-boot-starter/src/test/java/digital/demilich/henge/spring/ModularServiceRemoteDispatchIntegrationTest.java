@@ -172,7 +172,8 @@ class ModularServiceRemoteDispatchIntegrationTest {
                             .retrieve()
                             .toBodilessEntity())
                     .isInstanceOfSatisfying(RestClientResponseException.class,
-                            e -> assertThat(e.getStatusCode().value()).isEqualTo(404));
+                            // 404, or 401 when Spring Security is on the classpath (Boot's /error forward is secured)
+                            e -> assertThat(e.getStatusCode().value()).isIn(401, 404));
         } finally {
             server.close();
         }
@@ -210,7 +211,8 @@ class ModularServiceRemoteDispatchIntegrationTest {
                             .toBodilessEntity())
                     .as("the default prefix is no longer served")
                     .isInstanceOfSatisfying(RestClientResponseException.class,
-                            e -> assertThat(e.getStatusCode().value()).isEqualTo(404));
+                            // 404, or 401 when Spring Security is on the classpath (Boot's /error forward is secured)
+                            e -> assertThat(e.getStatusCode().value()).isIn(401, 404));
         } finally {
             server.close();
         }

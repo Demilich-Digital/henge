@@ -128,6 +128,14 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   doesn't buy anything a network boundary (VPC / service mesh) doesn't already give you. If you do
   expose a public "frontend" API from the same process, put it on a different port/process
   yourself — that's a decision this framework deliberately stays out of.
+- **Spring Security.** With Spring Security on the classpath, its default chain demands authentication
+  and a CSRF token on every POST, so remote dispatch fails with `401` before reaching `/_modular`.
+  How `/_modular/**` should be protected is your application's call, so Henge changes nothing by
+  default. Either permit `POST {modular.server.path-prefix}/**` (and exempt it from CSRF) in your own
+  `SecurityFilterChain`, or set `modular.server.permit-spring-security=true` and the Boot starter tells
+  Spring Security to skip exactly that path — via a `WebSecurityCustomizer`, so the rest of your
+  security configuration is untouched. This is the same trust model as running without
+  `modular.transport.secret`: the network is the boundary.
 - Transport is pluggable behind the `ServiceTransport` SPI (`digital.demilich.henge.core`). `internal-rest` is
   the only implementation today; a `grpc` transport can be added later without any change to
   `@ModularService` or generated proxies.
