@@ -155,4 +155,64 @@ class ModularServiceRemoteDispatchIntegrationTest {
             server.close();
         }
     }
+
+    @Test
+    void serverEnabledFalseLeavesNoDispatchEndpoint() {
+        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
+                .web(WebApplicationType.SERVLET)
+                .properties("server.port=0", "spring.main.banner-mode=off", "modular.server.enabled=false")
+                .run();
+        try {
+            int serverPort = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
+
+            assertThatThrownBy(() -> RestClient.create().post()
+                            .uri("http://localhost:" + serverPort + "/_modular/echo-service/1/echo")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("[\"hi\"]")
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOfSatisfying(RestClientResponseException.class,
+                            e -> assertThat(e.getStatusCode().value()).isEqualTo(404));
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    void customPathPrefixIsHonoredByBothServerAndClient() {
+        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
+                .web(WebApplicationType.SERVLET)
+                .properties("server.port=0", "spring.main.banner-mode=off", "modular.server.path-prefix=/internal-rpc")
+                .run();
+        try {
+            int serverPort = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
+
+            ConfigurableApplicationContext client = new SpringApplicationBuilder(EchoTestApp.class)
+                    .web(WebApplicationType.NONE)
+                    .properties(
+                            "spring.main.banner-mode=off",
+                            "modular.server.enabled=false",
+                            "modular.server.path-prefix=/internal-rpc",
+                            "modular.services.echo-service.mode=internal-rest",
+                            "modular.services.echo-service.url=http://localhost:" + serverPort)
+                    .run();
+            try {
+                assertThat(client.getBean(EchoService.class).echo("hi")).isEqualTo("echo:hi");
+            } finally {
+                client.close();
+            }
+
+            assertThatThrownBy(() -> RestClient.create().post()
+                            .uri("http://localhost:" + serverPort + "/_modular/echo-service/1/echo")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("[\"hi\"]")
+                            .retrieve()
+                            .toBodilessEntity())
+                    .as("the default prefix is no longer served")
+                    .isInstanceOfSatisfying(RestClientResponseException.class,
+                            e -> assertThat(e.getStatusCode().value()).isEqualTo(404));
+        } finally {
+            server.close();
+        }
+    }
 }

@@ -214,6 +214,28 @@ class ModularDispatchPlainSpringTest {
         }
     }
 
+    /**
+     * The prefix placeholder on {@link ModularDispatcherController}'s mapping resolves in plain
+     * Spring with no {@code PropertySourcesPlaceholderConfigurer} in the context.
+     */
+    @Test
+    void customPathPrefixIsHonoredInPlainSpring() throws Exception {
+        RunningServer server = startServer(Map.of("modular.server.path-prefix", "/rpc"));
+        try {
+            AnnotationConfigApplicationContext clientContext = startClient(Map.of(
+                    "modular.server.path-prefix", "/rpc",
+                    "modular.services.echo-service.mode", "internal-rest",
+                    "modular.services.echo-service.url", "http://localhost:" + server.port()));
+            try {
+                assertThat(clientContext.getBean(EchoService.class).echo("hi")).isEqualTo("echo:hi");
+            } finally {
+                clientContext.close();
+            }
+        } finally {
+            server.stop();
+        }
+    }
+
     @Test
     void secretIsCheckedBeforeTheBodyIsParsed() throws Exception {
         RunningServer server = startServer(Map.of("modular.transport.secret", "s3cr3t"));

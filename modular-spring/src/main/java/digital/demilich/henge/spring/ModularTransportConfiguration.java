@@ -3,7 +3,6 @@ package digital.demilich.henge.spring;
 import digital.demilich.henge.core.ServiceTransport;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.core.env.Environment;
 
 /**
@@ -26,11 +25,6 @@ import org.springframework.core.env.Environment;
  */
 @Configuration
 public class ModularTransportConfiguration {
-
-    @Bean
-    public static PropertySourcesPlaceholderConfigurer modularPropertySourcesPlaceholderConfigurer() {
-        return new PropertySourcesPlaceholderConfigurer();
-    }
 
     @Bean
     public ModularProperties modularProperties(Environment environment) {

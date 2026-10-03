@@ -23,11 +23,6 @@ public class ModularProperties {
         this.environment = environment;
     }
 
-    /** {@code modular.server.enabled}, default {@code true}. */
-    public boolean isServerEnabled() {
-        return environment.getProperty("modular.server.enabled", Boolean.class, true);
-    }
-
     /** {@code modular.server.path-prefix}, default {@code /_modular}. */
     public String getServerPathPrefix() {
         return environment.getProperty("modular.server.path-prefix", "/_modular");
