@@ -141,9 +141,12 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   sound because CSRF defends cookie/session authentication and this endpoint has none. To apply your own
   policy to the path instead (JWT, mTLS, ...), define a bean named `modularSecurityFilterChain` and
   Henge's backs off.
-- Transport is pluggable behind the `ServiceTransport` SPI (`digital.demilich.henge.core`). `internal-rest` is
-  the only implementation today; a `grpc` transport can be added later without any change to
-  `@ModularService` or generated proxies.
+- Remote calls go through a single `ServiceTransport` seam (`digital.demilich.henge.core`) between the
+  generated proxy and the wire. `internal-rest` (HTTP + JSON) is the only transport, and it is not an
+  extension point today: implementing the interface is the small part of adding another (say gRPC). The
+  serving side (`ModularDispatcherController`) and the wiring are REST-specific too —
+  `ModularTransportConfiguration` registers exactly one `ServiceTransport`, and the proxy looks it up by
+  type, so a second bean would be ambiguous. A new transport is a design exercise, not a drop-in.
 - A caller of an **embedded** service sees whatever exception the real implementation throws; a
   naive **internal-rest** transport would only ever be able to throw a generic exception instead,
   which defeats the point of location transparency the moment something goes wrong. So when the
@@ -304,7 +307,7 @@ pattern for any module that calls into a `@ModularService`.
 
 | Module | Contents |
 |---|---|
-| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, the `ServiceTransport` SPI, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, the `ServiceTransport` seam, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
 | `modular-processor` | The `@AddedIn`/`@DeprecatedSince` annotation processor: generates `{Interface}Skeleton` classes and validates `@ServiceVersion` implementations against them. Depends only on `modular-core` — no Spring. |
 | `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
 | `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically and adds the `modular.server.enabled` property gate — the only things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
@@ -473,7 +476,7 @@ in `modular-spring`, which only depends on plain Spring Framework (`spring-conte
 A plain-Spring consumer does two things Boot users get for free:
 
 - **`@Import` the configuration explicitly.** `modular-spring-boot-starter`'s autoconfiguration
-  unconditionally wires `ModularTransportConfiguration` (the `RestClient`/`ServiceTransport`/
+  unconditionally wires `ModularTransportConfiguration` (the `ServiceTransport` and
   `ModularProperties` beans needed to *call* other services) and, unless `modular.server.enabled=false`,
   `ModularDispatcherConfiguration` (the controller needed to *serve* embedded ones). Without Boot,
   import them yourself — `ModularConfiguration` imports both at once, or import
@@ -511,7 +514,8 @@ Deliberately out of scope for now, to keep the core mechanism small and correct:
   orchestrator already provides (k8s DNS, Consul DNS, ...), but modular-spring itself still tracks
   nothing about which instances are actually alive or where — no health-aware routing, no dynamic
   membership.
-- A `grpc` `ServiceTransport` implementation (the SPI is ready for it).
+- Additional transports (e.g. gRPC) — more than a `ServiceTransport` implementation: the serving side and the
+  bean wiring are REST-specific too, so this is a design exercise rather than a drop-in.
 - mTLS between internal services — `/_modular/**` is expected to sit behind a network boundary
   (VPC / service mesh), not the public internet; the optional `modular.transport.secret` (see
   "How it works") is the only in-process protection built so far. (A separate listen port for `/_modular` was considered
