@@ -2,8 +2,11 @@ package digital.demilich.henge.core;
 
 import java.util.AbstractList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.RandomAccess;
+import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * A genuinely immutable, distinctly-named {@code List} — unlike the {@code java.util.List}
@@ -17,7 +20,8 @@ import java.util.RandomAccess;
  * doctrine is meant to close.
  *
  * <p>Backed by {@link List#copyOf}, which performs its own defensive copy and rejects
- * {@code null} elements.
+ * {@code null} elements. Mutators are overridden as deprecated and throwing so IDEs flag them
+ * instead of offering them as working calls.
  */
 public final class ImmutableList<T> extends AbstractList<T> implements RandomAccess {
 
@@ -48,5 +52,83 @@ public final class ImmutableList<T> extends AbstractList<T> implements RandomAcc
     @Override
     public int size() {
         return delegate.size();
+    }
+
+    @Override
+    @Deprecated
+    public final boolean add(T element) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final void add(int index, T element) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final boolean addAll(Collection<? extends T> elements) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final boolean addAll(int index, Collection<? extends T> elements) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final boolean remove(Object element) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final T remove(int index) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final boolean removeAll(Collection<?> elements) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final boolean retainAll(Collection<?> elements) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final boolean removeIf(Predicate<? super T> filter) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final T set(int index, T element) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final void replaceAll(UnaryOperator<T> operator) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final void sort(Comparator<? super T> comparator) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final void clear() {
+        throw new UnsupportedOperationException();
     }
 }
