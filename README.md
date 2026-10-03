@@ -415,7 +415,7 @@ reinventing it. See "Why this isn't just a 'modulith'" above.
 
 **Connect/read timeouts:** the `internal-rest` transport defaults to a 2s connect timeout and a
 10s read timeout — a single hung remote service can't pin a caller thread forever. Override with
-`modular.transport.connect-timeout` / `modular.transport.read-timeout` (milliseconds). A timed-out
+`modular.transport.connect-timeout` / `modular.transport.read-timeout` (milliseconds, or `10s`-style). A timed-out
 call fails as a `RemoteServiceException` naming the timeout, within the configured bound.
 
 **Environment variable configuration:** `modular.services.audit-service.mode` and friends are
@@ -492,8 +492,8 @@ Everything is read from Spring's `Environment`, so CLI flags, `application.yml`,
 | `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all. |
 | `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. |
 | `modular.transport.secret` | unset | Optional shared secret sent as `Modular-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
-| `modular.transport.connect-timeout` | `2000` | Milliseconds. |
-| `modular.transport.read-timeout` | `10000` | Milliseconds. |
+| `modular.transport.connect-timeout` | `2s` | A bare number is milliseconds; `2s`/`500ms` and ISO-8601 (`PT2S`) work too. `0` means no timeout. |
+| `modular.transport.read-timeout` | `10s` | Same format. |
 
 ## Using this without Spring Boot
 

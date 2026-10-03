@@ -3,6 +3,7 @@ package digital.demilich.henge.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.env.MapPropertySource;
@@ -87,5 +88,30 @@ class ModularPropertiesTest {
         listFirst.getPropertySources().addFirst(new MapPropertySource("defaults", scalarForm));
         listFirst.getPropertySources().addFirst(new MapPropertySource("yaml", listForm));
         assertThat(new ModularProperties(listFirst).getServe()).containsExactly("audit-service");
+    }
+
+    private static ModularProperties withReadTimeout(String value) {
+        StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("test", Map.of("modular.transport.read-timeout", value)));
+        return new ModularProperties(environment);
+    }
+
+    @Test
+    void timeoutsAcceptMillisecondsUnitSuffixesAndIso() {
+        assertThat(withReadTimeout("2500").getReadTimeout()).isEqualTo(Duration.ofMillis(2500));
+        assertThat(withReadTimeout("3s").getReadTimeout()).isEqualTo(Duration.ofSeconds(3));
+        assertThat(withReadTimeout("PT1M").getReadTimeout()).isEqualTo(Duration.ofMinutes(1));
+        assertThat(new ModularProperties(new StandardEnvironment()).getReadTimeout()).isEqualTo(Duration.ofSeconds(10));
+        assertThat(new ModularProperties(new StandardEnvironment()).getConnectTimeout()).isEqualTo(Duration.ofSeconds(2));
+    }
+
+    @Test
+    void negativeOrUnparseableTimeoutsFailNamingTheProperty() {
+        assertThatThrownBy(() -> withReadTimeout("-5").getReadTimeout())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("modular.transport.read-timeout=-5 is negative");
+        assertThatThrownBy(() -> withReadTimeout("soon").getReadTimeout())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("modular.transport.read-timeout=soon is not a duration");
     }
 }

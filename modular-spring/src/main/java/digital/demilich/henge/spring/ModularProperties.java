@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -9,6 +10,8 @@ import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
+import org.springframework.format.annotation.DurationFormat;
+import org.springframework.format.datetime.standard.DurationFormatterUtils;
 
 /**
  * Reads {@code modular.*} configuration directly from Spring's {@link Environment} on demand —
@@ -40,14 +43,37 @@ public class ModularProperties {
         return environment.getProperty("modular.remote-url-template");
     }
 
-    /** {@code modular.transport.connect-timeout}, milliseconds, default {@code 2000}. */
-    public long getConnectTimeoutMillis() {
-        return environment.getProperty("modular.transport.connect-timeout", Long.class, 2000L);
+    /** {@code modular.transport.connect-timeout}, default 2 seconds -- see {@link #timeout}. */
+    public Duration getConnectTimeout() {
+        return timeout("modular.transport.connect-timeout", Duration.ofSeconds(2));
     }
 
-    /** {@code modular.transport.read-timeout}, milliseconds, default {@code 10000}. */
-    public long getReadTimeoutMillis() {
-        return environment.getProperty("modular.transport.read-timeout", Long.class, 10000L);
+    /** {@code modular.transport.read-timeout}, default 10 seconds -- see {@link #timeout}. */
+    public Duration getReadTimeout() {
+        return timeout("modular.transport.read-timeout", Duration.ofSeconds(10));
+    }
+
+    /**
+     * A bare number is milliseconds ({@code 2000}); a unit suffix ({@code 2s}, {@code 500ms}) or
+     * ISO-8601 ({@code PT2S}) also works, the forms Boot accepts for its own durations. {@code 0}
+     * means no timeout. Negative or unparseable values fail at startup, naming the property.
+     */
+    private Duration timeout(String key, Duration defaultValue) {
+        String raw = environment.getProperty(key);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        Duration timeout;
+        try {
+            timeout = DurationFormatterUtils.detectAndParse(raw.trim(), DurationFormat.Unit.MILLIS);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(key + "=" + raw + " is not a duration; use milliseconds (2000), a unit "
+                    + "suffix (2s, 500ms) or ISO-8601 (PT2S)", e);
+        }
+        if (timeout.isNegative()) {
+            throw new IllegalStateException(key + "=" + raw + " is negative; use 0 for no timeout");
+        }
+        return timeout;
     }
 
     /**

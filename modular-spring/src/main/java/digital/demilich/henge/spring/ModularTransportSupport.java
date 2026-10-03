@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import java.time.Duration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
@@ -49,12 +48,12 @@ final class ModularTransportSupport {
      * A plain-Spring (no Boot dependency) {@link RestClient} with finite connect/read timeouts —
      * {@code RestClient.builder().build()}'s defaults are infinite, which lets one hung remote
      * service pin a caller thread forever. Timeouts come from {@code modular.transport.connect-timeout}
-     * / {@code modular.transport.read-timeout} ({@link ModularProperties}, milliseconds).
+     * / {@code modular.transport.read-timeout} ({@link ModularProperties}).
      */
     static RestClient restClient(ModularProperties properties) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofMillis(properties.getConnectTimeoutMillis()));
-        factory.setReadTimeout(Duration.ofMillis(properties.getReadTimeoutMillis()));
+        factory.setConnectTimeout(properties.getConnectTimeout());
+        factory.setReadTimeout(properties.getReadTimeout());
         return RestClient.builder().requestFactory(factory).build();
     }
 }
