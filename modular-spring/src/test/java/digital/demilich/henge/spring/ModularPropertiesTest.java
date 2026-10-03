@@ -12,12 +12,12 @@ import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
 /**
- * Verifies {@code modular.*} config is reachable from a real OS-environment-variable property
- * source, which uses {@code MODULAR_SERVICES_AUDIT_SERVICE_MODE}-style keys, not the dotted-kebab
- * form used by config files/command-line args — the concrete requirement behind "the Kubernetes
- * positioning" (see {@code next_phase.md} 1.6). Uses a real {@link SystemEnvironmentPropertySource}
- * (not {@code MockEnvironment}, whose default property source doesn't have this translation
- * behavior at all) so this is testing real Spring Framework behavior, not a mock's approximation.
+ * How {@code modular.*} config is read: {@code modular.serve}'s two forms, timeouts, the path prefix,
+ * unrecognized {@code modular.services} keys -- and that all of it is reachable from a real
+ * OS-environment-variable property source ({@code MODULAR_SERVICES_AUDIT_SERVICE_MODE}-style keys, as
+ * a container orchestrator that only offers env vars would set them). Those tests use a real
+ * {@link SystemEnvironmentPropertySource}, not {@code MockEnvironment}, whose default property source
+ * doesn't have this translation behavior at all, so they exercise real Spring Framework behavior.
  */
 class ModularPropertiesTest {
 

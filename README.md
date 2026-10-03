@@ -153,11 +153,10 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   which defeats the point of location transparency the moment something goes wrong. So when the
   remote implementation's own method throws, `internal-rest` reconstructs that original exception
   client-side — on a best-effort basis, for `RuntimeException` subtypes with a `(String)`
-  constructor (the common case for hand-written business exceptions) — with today's
+  constructor (the common case for hand-written business exceptions) — with a
   `RemoteServiceException` (the network-level diagnostic: which service/method, what HTTP status)
   chained in as its cause. Anything that can't be reconstructed (an unknown type, a checked
-  exception, no compatible constructor) falls back to `RemoteServiceException` alone, exactly as
-  before. See `RemoteExceptionReconstructor`'s Javadoc for why checked exceptions are out of scope
+  exception, no compatible constructor) falls back to that `RemoteServiceException` alone. See `RemoteExceptionReconstructor`'s Javadoc for why checked exceptions are out of scope
   — it comes down to a real limitation of JDK dynamic proxies, not an oversight.
   Reconstruction instantiates whichever `RuntimeException` subtype the remote response names
   (public `(String)` constructor required), looked up through the application's own classloader —
@@ -169,7 +168,9 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   business exception that says nothing about its own status, or an unexpected error — and
   deliberately nothing else. An exception opts into a different status with
   `@ErrorStatus(404)` (`digital.demilich.henge.core`; `4xx`/`5xx` only, inherited by subclasses),
-  e.g. `@ErrorStatus(404) class WidgetNotFoundException extends RuntimeException`. The caller still
+  e.g. `@ErrorStatus(404) class WidgetNotFoundException extends RuntimeException` (the framework's own
+  `ServiceVersionUnsupportedException`, a call outside the implementation's version range, carries
+  `@ErrorStatus(501)`). The caller still
   gets the original exception reconstructed; only the wire status changes, and it has no effect when
   the service is embedded. The dispatcher's own failures use `400` (malformed request/arguments),
   `403` (bad secret) and `404` (unknown service/version/method); those bodies carry no exception
@@ -265,9 +266,10 @@ method behave identically. Two ways they silently don't, unless something stops 
     the aliasing gap this rule exists to close. A map *key* is narrower still: it travels as a JSON
     object key (a string), so it must be `String`, a boxed primitive, an enum or one of the value
     types above — a record, `Optional` or collection key can't be read back, and is rejected
-  - Guava's `ImmutableList`/`ImmutableSet`/`ImmutableMap`, recognized by fully-qualified name with
-    no actual Guava dependency added to this project — if you already depend on Guava, you don't
-    need a second immutable-collection type just to satisfy this rule
+  - Guava's `ImmutableList`/`ImmutableSet`/`ImmutableMap` — if you already depend on Guava, you
+    don't need a second immutable-collection type just to satisfy this rule. The processor
+    recognizes them by name, and the transport deserializes them whenever Guava is on the
+    classpath; Henge never adds Guava to yours
 
   Records may gain components without breaking a rolling deploy: the transport ignores a
   component it doesn't know and reads a missing one as `null`/`0`. Renaming or removing one is a
@@ -285,20 +287,27 @@ method behave identically. Two ways they silently don't, unless something stops 
   `List.copyOf`/`Set.copyOf`/`Map.copyOf`, mutator methods throw `UnsupportedOperationException`),
   and distinctly named so the processor can recognize the *type*, not just runtime behavior a
   caller happened to rely on. `modular-spring`'s shared transport `ObjectMapper` knows how to
-  deserialize them (`HengeCollectionsModule`) — `modular-core` itself stays Jackson-free.
+  deserialize them, and Guava's (`HengeCollectionsModule`) — `modular-core` itself stays Jackson-free.
 
 The same processor also checks the *shape* of a `@ModularService` interface, over its own and its
 superinterfaces' methods alike (those are exactly the methods the dispatcher exposes): no
 overloaded RPC names (rename one, or use `@ServiceMethod(name = ...)`), no static methods, no empty
-or non-positive `@AddedIn`/`@DeprecatedSince` ranges and none on a default method (a method with a body
-is never required to be implemented, so there's nothing to enforce), and `@ModularService` only on interfaces. Names
-end up in the dispatch path and in config keys, so a service name (explicit, or the interface's simple
-name in kebab case: `AuditService` → `audit-service`) must be lowercase kebab case, and an RPC method
-name a Java identifier; the registrar repeats this check at startup for interfaces compiled without the
-processor.
-`@ServiceVersion` must sit on a concrete top-level or static nested class (or record) that
-actually implements a `@ModularService` interface. Each of these would otherwise compile and then
-fail — or silently do nothing — at startup.
+or non-positive `@AddedIn`/`@DeprecatedSince` ranges and none on a default method (a method with a
+body is never required to be implemented, so there's nothing to enforce), a positive
+`defaultVersion`, and `@ModularService` only on a non-private interface. Names end up in the
+dispatch path and in config keys, so a service name (explicit, or the interface's simple name in
+kebab case: `AuditService` → `audit-service`) must be lowercase kebab case, and an RPC method name a
+Java identifier.
+
+`@ServiceVersion` must sit on a concrete top-level or static nested class (or record) that actually
+implements a `@ModularService` interface, with a positive version no other implementation in the
+same compilation claims, and without `@Component`/`@Service` (the framework registers it; a
+stereotype would make a second instance). At an injection site it must name the injected
+interface. `@ErrorStatus` must be a `4xx`/`5xx` code.
+
+Each of these would otherwise compile and then fail — or silently do nothing — at startup or once
+the service is split. Where the mistake can also come from code compiled without the processor
+(names, stereotypes, duplicate versions), the registrar repeats the check at startup.
 
 Generics: a `@ModularService` interface or method can't declare type parameters (nothing at runtime
 knows what `T` is, so it would bind as an untyped JSON map once split), nor inherit methods from a
@@ -320,9 +329,9 @@ pattern for any module that calls into a `@ModularService`.
 | Module | Contents |
 |---|---|
 | `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, the `ServiceTransport` seam, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
-| `modular-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges). Depends only on `modular-core` — no Spring. |
+| `modular-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges and names). Declared to Gradle as an aggregating incremental processor. Depends only on `modular-core` — no Spring. |
 | `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
-| `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, adds the `modular.server.enabled` property gate, and — when Spring Security is present — the dedicated security chain for `/_modular` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
+| `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, registers the dispatcher in servlet web applications behind the `modular.server.enabled` property gate, ships configuration metadata for IDE completion of `modular.*`, and — when Spring Security is present — adds the dedicated security chain for `/_modular` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
 | `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn(2)` method. |
 | `examples/example-services` | Their `@ServiceVersion` implementations, including a second `AuditService` version to demonstrate multi-version wiring and the generated-skeleton mechanism. No Spring dependency at all. |
 | `examples/example-app` | One Spring Boot application tying it together, runnable as the monolith or as either half of a split deployment. |
@@ -386,13 +395,12 @@ one declares itself to *be*, not a growing list of everything it isn't.
 
 - **`--modular.serve=<name>[@<version>][,...]`** sets what's embedded in this process; everything
   else discovered on the classpath defaults to `internal-rest` instead of the usual `embedded`
-  default. Leaving it unset (the default) changes nothing — today's "everything embedded unless
-  configured otherwise" behavior is exactly as before.
+  default. Leaving it unset (the default) keeps everything embedded unless configured otherwise.
 - **`--modular.remote-url-template=http://{service}.default.svc.cluster.local:8080`** fills in a
   `url` for anything that ends up `internal-rest` without one, substituting `{service}` with the
   service's name and `{version}` with the resolved version — matching whatever DNS convention an
   orchestrator already hands you for free (a Kubernetes `Service`, an ECS Cloud Map namespace,
-  Consul DNS, ...). `{version}` substitution is a no-op when the placeholder isn't present, so
+  Consul DNS, ...). Any other placeholder fails at startup. `{version}` substitution is a no-op when the placeholder isn't present, so
   existing `{service}`-only templates keep working unchanged; a per-version split (see "Two
   versions of a service side by side" above) needs a template like
   `http://{service}-v{version}.default.svc.cluster.local:8080` to route each version to its own
@@ -494,7 +502,7 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.services.<name>.url` | — | Base URL of the process hosting the service; used when the mode is `internal-rest`. |
 | `modular.services.<name>.versions.<n>.mode` / `.url` | inherit the service-level value | Per-version override; `<n>` is an integer. |
 | `modular.serve` | unset | `name[@version]` entries, comma-separated or as a YAML list, naming what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
-| `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`) used for any `internal-rest` service without an explicit `url`. |
+| `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`; any other placeholder fails startup) used for any `internal-rest` service without an explicit `url`. |
 | `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all (a non-web application never does). |
 | `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. Must start with `/` and not end with one. |
 | `modular.transport.secret` | unset | Optional shared secret sent as `Modular-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
