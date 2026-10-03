@@ -201,10 +201,12 @@ genuinely overridden — silently relying on the generated throwing stub for a m
 implementation is actually supposed to support is a compile error, not a runtime surprise.
 
 Two things worth knowing:
-- Version strings used with `@AddedIn`/`@DeprecatedSince` (and the `@ServiceVersion` they're
-  checked against) must be parseable as plain integers — that's how the processor orders
-  versions to compute ranges. This is scoped to this feature only; dispatch elsewhere still
-  matches version strings exactly and never needed ordering.
+- Every `@ServiceVersion` value must be a valid semantic version — checked by `modular-processor`
+  (`org.semver4j:semver4j`, its one external dependency) at compile time, whether or not the
+  interface it implements uses `@AddedIn`/`@DeprecatedSince` at all. Bare integers like `"1"`/`"2"`
+  are coerced to `1.0.0`/`2.0.0` and compare exactly as before; full `"major.minor.patch"` strings
+  work too. `@AddedIn`/`@DeprecatedSince` values follow the same rule, since they're ordered
+  against it.
 - Any module that compiles a `@ModularService` interface with versioned methods, or a
   `@ServiceVersion` implementation, needs `modular-processor` on its `annotationProcessor` (or
   `testAnnotationProcessor`) configuration explicitly — Gradle does not propagate annotation

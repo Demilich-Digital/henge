@@ -19,6 +19,11 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 public @interface AddedIn {
 
-    /** The version this method starts existing at. Must be parseable as an integer. */
+    /**
+     * The version this method starts existing at. Must be a semantic version modular-processor
+     * can order against the version declared by {@code @ServiceVersion} implementations of this
+     * interface — bare integers ("1", "2") are coerced to "1.0.0"/"2.0.0" and compare as expected,
+     * full "major.minor.patch" strings work too.
+     */
     String value();
 }
