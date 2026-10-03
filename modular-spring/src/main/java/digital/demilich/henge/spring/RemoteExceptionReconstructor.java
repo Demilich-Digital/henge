@@ -29,9 +29,9 @@ final class RemoteExceptionReconstructor {
     /**
      * @param responseBody the raw HTTP error response body (expected, but not required, to be the
      *     JSON shape {@link ModularDispatcherController#handleDispatchException} produces)
-     * @param classLoader classloader to resolve {@code exceptionType} against -- the calling
-     *     service interface's own, so lookup happens in the same classloading context the JDK
-     *     proxy for it was created in
+     * @param classLoader classloader to resolve {@code exceptionType} against -- the application's
+     *     bean classloader (see {@link InternalRestTransport}), which can see the application's own
+     *     exception types even when the called method is declared on a JDK or parent-loader interface
      * @param fallback returned unchanged whenever reconstruction isn't possible for any reason
      */
     static RuntimeException reconstruct(String responseBody, ClassLoader classLoader, ObjectMapper objectMapper, RemoteServiceException fallback) {
