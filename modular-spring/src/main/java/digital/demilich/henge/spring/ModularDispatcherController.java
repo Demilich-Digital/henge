@@ -209,8 +209,14 @@ class ModularDispatcherController {
                 + (message != null ? ": " + message : "");
     }
 
+    /**
+     * Written by the transport mapper and sent as bytes, like a successful result: left to the
+     * application's message converters, the body could come out as something the client can't parse
+     * (plain Spring tries an XML converter before JSON whenever jackson-dataformat-xml is present),
+     * and the original exception type would silently not be reconstructed.
+     */
     @ExceptionHandler(ModularDispatchException.class)
-    public ResponseEntity<Map<String, String>> handleDispatchException(ModularDispatchException e) {
+    public ResponseEntity<byte[]> handleDispatchException(ModularDispatchException e) throws IOException {
         Map<String, String> body = new LinkedHashMap<>();
         body.put("error", e.getMessage());
         // Only present when the failure was the target method's own business exception (see
@@ -219,6 +225,6 @@ class ModularDispatcherController {
             body.put("exceptionType", e.getRemoteExceptionType());
             body.put("exceptionMessage", e.getRemoteExceptionMessage());
         }
-        return ResponseEntity.status(e.getStatus()).body(body);
+        return ResponseEntity.status(e.getStatus()).contentType(MediaType.APPLICATION_JSON).body(objectMapper.writeValueAsBytes(body));
     }
 }
