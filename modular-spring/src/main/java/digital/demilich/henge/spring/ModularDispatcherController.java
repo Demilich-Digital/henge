@@ -39,7 +39,6 @@ import org.springframework.web.bind.annotation.RestController;
 class ModularDispatcherController {
 
     static final String SECRET_HEADER = "Modular-Internal-Secret";
-    static final String FINGERPRINT_HEADER = "Modular-Contract-Fingerprint";
 
     private static final Log log = LogFactory.getLog(ModularDispatcherController.class);
 
@@ -47,7 +46,6 @@ class ModularDispatcherController {
     private final ModularServiceRegistry registry;
     private final ObjectMapper objectMapper;
     private final String configuredSecret;
-    private final boolean verifyContract;
 
     ModularDispatcherController(
             ApplicationContext applicationContext, ModularServiceRegistry registry, ObjectMapper objectMapper, ModularProperties properties) {
@@ -56,7 +54,6 @@ class ModularDispatcherController {
         this.objectMapper = objectMapper;
         String secret = properties.getTransportSecret();
         this.configuredSecret = (secret == null || secret.isBlank()) ? null : secret;
-        this.verifyContract = properties.isVerifyContractEnabled();
         if (this.configuredSecret == null) {
             log.warn("The modular dispatcher is enabled with no modular.transport.secret configured -- "
                     + "every embedded @ModularService method on this process is reachable by anyone who can "
@@ -71,7 +68,6 @@ class ModularDispatcherController {
             @PathVariable("version") int version,
             @PathVariable("method") String method,
             @RequestHeader(value = SECRET_HEADER, required = false) String providedSecret,
-            @RequestHeader(value = FINGERPRINT_HEADER, required = false) String clientFingerprint,
             @RequestBody(required = false) JsonNode body) {
 
         requireValidSecret(providedSecret);
@@ -79,8 +75,6 @@ class ModularDispatcherController {
         ModularServiceDescriptor descriptor = registry.find(service, version)
                 .orElseThrow(() -> new ModularDispatchException(HttpStatus.NOT_FOUND,
                         "This process does not host modular service '" + service + "' version '" + version + "'"));
-
-        requireMatchingContract(descriptor, clientFingerprint);
 
         Method targetMethod = descriptor.methods().get(method);
         if (targetMethod == null) {
@@ -129,27 +123,6 @@ class ModularDispatcherController {
                         providedSecret.getBytes(StandardCharsets.UTF_8), configuredSecret.getBytes(StandardCharsets.UTF_8));
         if (!valid) {
             throw new ModularDispatchException(HttpStatus.FORBIDDEN, "Missing or invalid " + SECRET_HEADER + " header");
-        }
-    }
-
-    /**
-     * A missing header (an older client, or one with {@code modular.transport.verify-contract=false})
-     * is treated as "unknown, don't block" rather than rejected -- this check exists to catch two
-     * different <em>builds</em> of the same interface disagreeing, not to require every caller to
-     * participate. Symmetric with the client: either side setting {@code verify-contract=false}
-     * disables its own half of the check, so a deliberate mixed-build window doesn't require
-     * coordinating the flag everywhere at once.
-     */
-    private void requireMatchingContract(ModularServiceDescriptor descriptor, String clientFingerprint) {
-        if (!verifyContract || clientFingerprint == null || clientFingerprint.isBlank()) {
-            return;
-        }
-        if (!clientFingerprint.equals(descriptor.contractFingerprint())) {
-            throw new ModularDispatchException(HttpStatus.CONFLICT,
-                    "Contract fingerprint mismatch for modular service '" + descriptor.name() + "' version '" + descriptor.version()
-                            + "': client=" + clientFingerprint + " server=" + descriptor.contractFingerprint() + " -- the two "
-                            + "processes were built from different versions of this interface. Set "
-                            + "modular.transport.verify-contract=false on either side for a deliberate mixed-build window.");
         }
     }
 

@@ -124,16 +124,6 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   doesn't buy anything a network boundary (VPC / service mesh) doesn't already give you. If you do
   expose a public "frontend" API from the same process, put it on a different port/process
   yourself — that's a decision this framework deliberately stays out of.
-- Positional JSON args plus a matching version string aren't quite enough to guarantee two
-  processes agree on a service's shape: a rolling deploy can briefly run two different *builds* of
-  the "same" interface (e.g. two reordered `String` parameters), which would otherwise mis-bind
-  silently. `InternalRestTransport` sends a `Modular-Contract-Fingerprint` header — a SHA-256 of
-  every method's name, generic parameter types, and generic return type, sorted and hashed
-  identically on both ends — and the dispatcher rejects a mismatch with `409` naming both
-  fingerprints. A request with no fingerprint header at all (an older client) is accepted, not
-  rejected — this only catches an actively wrong fingerprint. Off-switch:
-  `modular.transport.verify-contract=false`, independently on either side, for a deliberate
-  mixed-build window.
 - Transport is pluggable behind the `ServiceTransport` SPI (`digital.demilich.henge.core`). `internal-rest` is
   the only implementation today; a `grpc` transport can be added later without any change to
   `@ModularService` or generated proxies.

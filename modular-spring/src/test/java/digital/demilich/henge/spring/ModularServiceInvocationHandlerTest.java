@@ -23,8 +23,7 @@ class ModularServiceInvocationHandlerTest {
      * {@link java.lang.reflect.InvocationHandler#invoke} a {@link java.lang.reflect.Method} whose
      * {@code getDeclaringClass()} is the *parent* interface, not the full service interface the
      * proxy was created for. {@link ModularServiceInvocationHandler} must still report the full
-     * service interface on the {@link ServiceInvocation} it builds -- that's what
-     * {@code InternalRestTransport} fingerprints against, and it must match whatever the
+     * service interface on the {@link ServiceInvocation} it builds -- and it must match whatever the
      * dispatching side registered ({@code ModularServiceRegistrar} always uses the full,
      * registered interface, never a method's individual declaring class).
      */

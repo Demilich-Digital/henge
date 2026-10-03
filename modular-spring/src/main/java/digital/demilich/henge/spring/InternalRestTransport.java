@@ -6,8 +6,6 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -23,11 +21,6 @@ class InternalRestTransport implements ServiceTransport {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final ModularProperties properties;
-
-    // One InternalRestTransport instance is shared across every modular service call in the
-    // process, so the fingerprint per interface is computed once and reused rather than
-    // recomputed (a handful of reflective Method walks) on every single call.
-    private final Map<Class<?>, String> fingerprintCache = new ConcurrentHashMap<>();
 
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties) {
         this.restClient = restClient;
@@ -57,7 +50,6 @@ class InternalRestTransport implements ServiceTransport {
         }
 
         String secret = properties.getTransportSecret();
-        boolean verifyContract = properties.isVerifyContractEnabled();
 
         String responseBody;
         try {
@@ -67,11 +59,6 @@ class InternalRestTransport implements ServiceTransport {
                     .headers(headers -> {
                         if (secret != null && !secret.isBlank()) {
                             headers.set(ModularDispatcherController.SECRET_HEADER, secret);
-                        }
-                        if (verifyContract) {
-                            String fingerprint = fingerprintCache.computeIfAbsent(
-                                    invocation.serviceInterface(), ModularServiceDescriptor::fingerprint);
-                            headers.set(ModularDispatcherController.FINGERPRINT_HEADER, fingerprint);
                         }
                     })
                     .body(body)

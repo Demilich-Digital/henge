@@ -155,40 +155,4 @@ class ModularServiceRemoteDispatchIntegrationTest {
             server.close();
         }
     }
-
-    /**
-     * Same as {@code modular-spring}'s {@code ModularDispatchPlainSpringTest.mismatchedContractFingerprintIsRejected}
-     * -- the in-process client/server here share the exact same {@code EchoService} {@code Class}
-     * object, so simulating two different <em>builds</em> of the interface disagreeing needs a raw
-     * HTTP call that bypasses {@code InternalRestTransport} entirely.
-     */
-    @Test
-    void mismatchedContractFingerprintIsRejected() {
-        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
-                .web(WebApplicationType.SERVLET)
-                .properties("server.port=0", "spring.main.banner-mode=off")
-                .run();
-        try {
-            int serverPort = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
-            RestClient rawClient = RestClient.create();
-
-            assertThatThrownBy(() -> rawClient.post()
-                            .uri("http://localhost:" + serverPort + "/_modular/echo-service/1/echo")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .header(ModularDispatcherController.FINGERPRINT_HEADER, "not-the-real-fingerprint")
-                            .body("[\"hi\"]")
-                            .retrieve()
-                            .toBodilessEntity())
-                    .isInstanceOf(RestClientResponseException.class)
-                    .satisfies(e -> {
-                        RestClientResponseException responseException = (RestClientResponseException) e;
-                        assertThat(responseException.getStatusCode().value()).isEqualTo(409);
-                        assertThat(responseException.getResponseBodyAsString())
-                                .contains("client=not-the-real-fingerprint")
-                                .contains("server=");
-                    });
-        } finally {
-            server.close();
-        }
-    }
 }
