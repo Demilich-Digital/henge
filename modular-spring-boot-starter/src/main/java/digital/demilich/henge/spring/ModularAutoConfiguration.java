@@ -4,6 +4,7 @@ import java.util.List;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -32,8 +33,12 @@ public class ModularAutoConfiguration {
         return new ModularServiceRegistry(List.of());
     }
 
-    /** Backs off when the application already imported {@link ModularDispatcherConfiguration} itself. */
+    /**
+     * Only in a servlet web application -- a process that serves no HTTP has nothing to dispatch to it.
+     * Backs off when the application already imported {@link ModularDispatcherConfiguration} itself.
+     */
     @Bean
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "modular.server", name = "enabled", havingValue = "true", matchIfMissing = true)
     ModularDispatcherController modularDispatcherController(

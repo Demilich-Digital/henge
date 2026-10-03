@@ -495,7 +495,7 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.services.<name>.versions.<n>.mode` / `.url` | inherit the service-level value | Per-version override; `<n>` is an integer. |
 | `modular.serve` | unset | `name[@version]` entries, comma-separated or as a YAML list, naming what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
 | `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`) used for any `internal-rest` service without an explicit `url`. |
-| `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all. |
+| `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all (a non-web application never does). |
 | `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. Must start with `/` and not end with one. |
 | `modular.transport.secret` | unset | Optional shared secret sent as `Modular-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
 | `modular.transport.connect-timeout` | `2s` | A bare number is milliseconds; `2s`/`500ms` and ISO-8601 (`PT2S`) work too. `0` means no timeout. |

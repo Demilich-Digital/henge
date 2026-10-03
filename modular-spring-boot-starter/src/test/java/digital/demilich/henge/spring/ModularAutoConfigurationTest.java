@@ -6,12 +6,21 @@ import digital.demilich.henge.spring.fixture.echo.EchoTestApp;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 
 /** The conditions {@link ModularAutoConfiguration} adds on top of the plain-Spring wiring. */
 class ModularAutoConfigurationTest {
 
-    private final ApplicationContextRunner runner =
-            new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(ModularAutoConfiguration.class));
+    private final WebApplicationContextRunner runner =
+            new WebApplicationContextRunner().withConfiguration(AutoConfigurations.of(ModularAutoConfiguration.class));
+
+    @Test
+    void aNonWebApplicationGetsTheClientSideWiringButNoDispatcher() {
+        new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(ModularAutoConfiguration.class)).run(ctx -> {
+            assertThat(ctx).doesNotHaveBean(ModularDispatcherController.class);
+            assertThat(ctx).hasSingleBean(digital.demilich.henge.core.ServiceTransport.class);
+        });
+    }
 
     @Test
     void dispatcherIsRegisteredByDefault() {
