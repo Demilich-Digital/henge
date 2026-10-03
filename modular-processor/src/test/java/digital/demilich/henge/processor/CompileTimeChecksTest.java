@@ -166,6 +166,38 @@ class CompileTimeChecksTest {
     // ---- what the annotations may be applied to ----
 
     @Test
+    void nonPositiveServiceVersionsAndDefaultVersionsAreRejected() {
+        var implVersion = compile(
+                src("svzero", "Svc", "@ModularService public interface Svc { void a(); }"),
+                src("svzero", "Impl", "@ServiceVersion(value = Svc.class, version = 0) public class Impl implements Svc { public void a() {} }"));
+        assertThat(implVersion.success()).isFalse();
+        assertThat(implVersion.hasErrorContaining("@ServiceVersion(version = 0)")).isTrue();
+
+        var injectionSite = compile(
+                src("svsite", "Svc", "@ModularService public interface Svc { void a(); }"),
+                src("svsite", "Consumer", "public class Consumer { "
+                        + "public Consumer(@ServiceVersion(value = Svc.class, version = -1) Svc svc) {} }"));
+        assertThat(injectionSite.success()).isFalse();
+        assertThat(injectionSite.hasErrorContaining("@ServiceVersion(version = -1)")).isTrue();
+
+        var defaultVersion = compile(src("dvzero", "Svc", "@ModularService(defaultVersion = 0) public interface Svc { void a(); }"));
+        assertThat(defaultVersion.success()).isFalse();
+        assertThat(defaultVersion.hasErrorContaining("defaultVersion = 0")).isTrue();
+    }
+
+    @Test
+    void errorStatusMustBeA4xxOr5xxCode() {
+        assertThat(compile(src("esok", "Missing", "@ErrorStatus(404) public class Missing extends RuntimeException {}")).success())
+                .isTrue();
+
+        for (int bad : new int[] {200, 302, 399, 600}) {
+            var result = compile(src("esbad", "Bad", "@ErrorStatus(" + bad + ") public class Bad extends RuntimeException {}"));
+            assertThat(result.success()).as(String.valueOf(bad)).isFalse();
+            assertThat(result.hasErrorContaining("must be a 4xx or 5xx status code")).as(String.valueOf(bad)).isTrue();
+        }
+    }
+
+    @Test
     void modularServiceOnAClassIsRejected() {
         var result = compile(src("cls", "Svc", "@ModularService public class Svc { public String a() { return null; } }"));
 

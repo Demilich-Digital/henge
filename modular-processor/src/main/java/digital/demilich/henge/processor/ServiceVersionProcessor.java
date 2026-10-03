@@ -2,6 +2,7 @@ package digital.demilich.henge.processor;
 
 import digital.demilich.henge.core.AddedIn;
 import digital.demilich.henge.core.DeprecatedSince;
+import digital.demilich.henge.core.ErrorStatus;
 import digital.demilich.henge.core.ModularService;
 import digital.demilich.henge.core.ServiceMethod;
 import digital.demilich.henge.core.ServiceNames;
@@ -66,7 +67,10 @@ import javax.tools.JavaFileObject;
  *       {@link #validateBoundaryTypes}.</li>
  * </ul>
  */
-@SupportedAnnotationTypes({"digital.demilich.henge.core.ModularService", "digital.demilich.henge.core.ServiceVersion"})
+@SupportedAnnotationTypes({
+        "digital.demilich.henge.core.ModularService",
+        "digital.demilich.henge.core.ServiceVersion",
+        "digital.demilich.henge.core.ErrorStatus"})
 public class ServiceVersionProcessor extends AbstractProcessor {
 
     /**
@@ -155,6 +159,11 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             }
         }
         for (Element element : roundEnv.getElementsAnnotatedWith(ServiceVersion.class)) {
+            int version = element.getAnnotation(ServiceVersion.class).version();
+            if (version < 1) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "@ServiceVersion(version = " + version + ") on " + element + " must be a positive version", element);
+            }
             if (!(element instanceof TypeElement typeElement)) {
                 continue; // an injection-site use (field/parameter), not an implementation
             }
@@ -165,6 +174,16 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 // unreliable here. By processingOver(), every generated source from every
                 // earlier round has been compiled and resolved.
                 pendingValidations.add(((TypeElement) element).getQualifiedName().toString());
+            }
+        }
+
+        for (Element element : roundEnv.getElementsAnnotatedWith(ErrorStatus.class)) {
+            // The dispatcher only logs and ignores a code outside this range at runtime -- by then
+            // the exception has already been answered with 500 instead of what the author meant.
+            int code = element.getAnnotation(ErrorStatus.class).value();
+            if (code < 400 || code > 599) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "@ErrorStatus(" + code + ") on " + element + " must be a 4xx or 5xx status code", element);
             }
         }
 
@@ -386,6 +405,13 @@ public class ServiceVersionProcessor extends AbstractProcessor {
      * a sensible deployment declares.
      */
     private void validateVersionRanges(TypeElement interfaceElement) {
+        int defaultVersion = interfaceElement.getAnnotation(ModularService.class).defaultVersion();
+        if (defaultVersion < 1) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    "@ModularService(defaultVersion = " + defaultVersion + ") on " + interfaceElement.getQualifiedName()
+                            + " must be a positive version",
+                    interfaceElement);
+        }
         for (ExecutableElement method : serviceMethods(interfaceElement)) {
             AddedIn addedIn = method.getAnnotation(AddedIn.class);
             DeprecatedSince deprecatedSince = method.getAnnotation(DeprecatedSince.class);

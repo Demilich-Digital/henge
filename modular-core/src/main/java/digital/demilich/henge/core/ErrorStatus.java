@@ -21,8 +21,9 @@ import java.lang.annotation.Target;
  *
  * <p>Only the status changes: the caller still gets the original exception type reconstructed, as
  * with any other business exception (see the README). Has no effect when the service is embedded,
- * since no HTTP response is involved. Must be a {@code 4xx} or {@code 5xx} code; anything else is
- * logged and ignored, falling back to {@code 500}.
+ * since no HTTP response is involved. Must be a {@code 4xx} or {@code 5xx} code: {@code modular-processor}
+ * rejects anything else at compile time, and the dispatcher logs and ignores it (answering
+ * {@code 500}) for a class compiled without the processor.
  *
  * <p>The dispatcher itself answers {@code 400} (malformed request), {@code 403} (bad secret) and
  * {@code 404} (unknown service/version/method) for its own failures — those responses carry no
