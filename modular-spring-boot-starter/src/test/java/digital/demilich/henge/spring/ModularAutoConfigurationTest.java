@@ -28,6 +28,12 @@ class ModularAutoConfigurationTest {
     }
 
     @Test
+    void explicitlyImportedPlainSpringConfigurationDoesNotCollideWithTheAutoConfiguredDispatcher() {
+        runner.withUserConfiguration(EchoTestApp.class, ModularConfiguration.class)
+                .run(ctx -> assertThat(ctx).hasNotFailed().hasSingleBean(ModularDispatcherController.class));
+    }
+
+    @Test
     void withoutEnableModularServicesTheRegistryIsAnEmptyFallback() {
         runner.run(ctx -> {
             assertThat(ctx).hasSingleBean(ModularServiceRegistry.class);

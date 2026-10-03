@@ -32,7 +32,9 @@ public class ModularAutoConfiguration {
         return new ModularServiceRegistry(List.of());
     }
 
+    /** Backs off when the application already imported {@link ModularDispatcherConfiguration} itself. */
     @Bean
+    @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "modular.server", name = "enabled", havingValue = "true", matchIfMissing = true)
     ModularDispatcherController modularDispatcherController(
             ApplicationContext applicationContext, ModularServiceRegistry registry, ModularProperties modularProperties) {
