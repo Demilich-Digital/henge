@@ -264,6 +264,14 @@ method behave identically. Two ways they silently don't, unless something stops 
   caller happened to rely on. `modular-spring`'s shared transport `ObjectMapper` knows how to
   deserialize them (`HengeCollectionsModule`) — `modular-core` itself stays Jackson-free.
 
+The same processor also checks the *shape* of a `@ModularService` interface, over its own and its
+superinterfaces' methods alike (those are exactly the methods the dispatcher exposes): no
+overloaded RPC names (rename one, or use `@ServiceMethod(name = ...)`), no static methods, no empty
+or non-positive `@AddedIn`/`@DeprecatedSince` ranges, and `@ModularService` only on interfaces.
+`@ServiceVersion` must sit on a concrete top-level or static nested class (or record) that
+actually implements a `@ModularService` interface. Each of these would otherwise compile and then
+fail — or silently do nothing — at startup.
+
 **Enforcing the boundary at the build level, not just the type level:** nothing in the language
 stops a consumer from depending on a service's implementation class directly instead of its
 interface — that compiles fine embedded, then breaks the moment the service is split into its own

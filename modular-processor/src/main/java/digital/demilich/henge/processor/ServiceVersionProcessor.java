@@ -3,11 +3,13 @@ package digital.demilich.henge.processor;
 import digital.demilich.henge.core.AddedIn;
 import digital.demilich.henge.core.DeprecatedSince;
 import digital.demilich.henge.core.ModularService;
+import digital.demilich.henge.core.ServiceMethod;
 import digital.demilich.henge.core.ServiceVersion;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -17,7 +19,6 @@ import javax.annotation.processing.Messager;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
-import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
@@ -25,6 +26,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
+import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.RecordComponentElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
@@ -49,6 +51,10 @@ import javax.tools.JavaFileObject;
  *   <li>For every {@code @ServiceVersion} implementation, validates that every interface method
  *       whose version range includes the implementation's declared version is genuinely
  *       overridden, not silently left to the generated throwing stub.</li>
+ *   <li>For every {@code @ModularService} interface, rejects shapes that can't behave the same
+ *       embedded and split: overloaded RPC names, static methods, inverted version ranges, and a
+ *       non-interface target. All of these checks, and the ones below, cover inherited
+ *       superinterface methods too — exactly the methods the runtime dispatcher exposes.</li>
  *   <li>For every {@code @ModularService} interface, rejects checked exceptions in method
  *       {@code throws} clauses and rejects parameter/return types that aren't guaranteed-value
  *       boundary types (records, enums, primitives, well-known immutable value types, or
@@ -57,7 +63,6 @@ import javax.tools.JavaFileObject;
  * </ul>
  */
 @SupportedAnnotationTypes({"digital.demilich.henge.core.ModularService", "digital.demilich.henge.core.ServiceVersion"})
-@SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class ServiceVersionProcessor extends AbstractProcessor {
 
     /**
@@ -105,7 +110,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     private Filer filer;
     private Elements elementUtils;
     private Types typeUtils;
-    private final Set<String> generatedSkeletons = new HashSet<>();
+    /** Skeleton qualified name -> the interface it was generated for, to catch two interfaces colliding on one name. */
+    private final Map<String, String> generatedSkeletons = new LinkedHashMap<>();
     private final List<String> pendingValidations = new ArrayList<>();
 
     @Override
@@ -118,17 +124,33 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     }
 
     @Override
+    public SourceVersion getSupportedSourceVersion() {
+        return SourceVersion.latestSupported();
+    }
+
+    @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         for (Element element : roundEnv.getElementsAnnotatedWith(ModularService.class)) {
             if (element.getKind() == ElementKind.INTERFACE) {
                 TypeElement interfaceElement = (TypeElement) element;
                 generateSkeletonIfNeeded(interfaceElement);
+                validateMethodShapes(interfaceElement);
+                validateVersionRanges(interfaceElement);
                 validateNoCheckedExceptions(interfaceElement);
                 validateBoundaryTypes(interfaceElement);
+            } else {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "@ModularService can only be applied to an interface, but " + element + " is a "
+                                + element.getKind().toString().toLowerCase().replace('_', ' ')
+                                + " -- it would silently never be registered as a service.",
+                        element);
             }
         }
         for (Element element : roundEnv.getElementsAnnotatedWith(ServiceVersion.class)) {
-            if (element.getKind() == ElementKind.CLASS) {
+            if (!(element instanceof TypeElement typeElement)) {
+                continue; // an injection-site use (field/parameter), not an implementation
+            }
+            if (validateImplementationShape(typeElement)) {
                 // Deferred to the final round: an impl extending a just-generated skeleton
                 // (written this round, but not parsed/resolved until the next one) doesn't have
                 // a fully resolved supertype chain yet, which makes Elements.overrides()
@@ -150,7 +172,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     }
 
     private void generateSkeletonIfNeeded(TypeElement interfaceElement) {
-        List<ExecutableElement> versionedMethods = ElementFilter.methodsIn(interfaceElement.getEnclosedElements()).stream()
+        List<ExecutableElement> versionedMethods = serviceMethods(interfaceElement).stream()
+                .filter(m -> !m.getModifiers().contains(Modifier.STATIC))
                 .filter(m -> m.getAnnotation(AddedIn.class) != null || m.getAnnotation(DeprecatedSince.class) != null)
                 .toList();
         if (versionedMethods.isEmpty()) {
@@ -161,7 +184,15 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         String skeletonSimpleName = interfaceElement.getSimpleName() + "Skeleton";
         String qualifiedSkeletonName = packageName.isEmpty() ? skeletonSimpleName : packageName + "." + skeletonSimpleName;
 
-        if (!generatedSkeletons.add(qualifiedSkeletonName)) {
+        String previousOwner = generatedSkeletons.putIfAbsent(qualifiedSkeletonName, interfaceElement.getQualifiedName().toString());
+        if (previousOwner != null) {
+            if (!previousOwner.equals(interfaceElement.getQualifiedName().toString())) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "Cannot generate " + qualifiedSkeletonName + " for " + interfaceElement.getQualifiedName()
+                                + ": that skeleton name was already generated for " + previousOwner
+                                + ". Give the two @ModularService interfaces distinct simple names.",
+                        interfaceElement);
+            }
             return;
         }
 
@@ -235,6 +266,120 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     }
 
     /**
+     * Every method the runtime dispatcher exposes for {@code interfaceElement}: its own and its
+     * superinterfaces' (the runtime uses {@code Class.getMethods()}), minus {@code Object}'s and
+     * private interface methods. Every check below runs over this set, so a method can't escape
+     * validation just by being declared on a parent interface.
+     */
+    private List<ExecutableElement> serviceMethods(TypeElement interfaceElement) {
+        List<ExecutableElement> methods = new ArrayList<>();
+        for (ExecutableElement method : ElementFilter.methodsIn(elementUtils.getAllMembers(interfaceElement))) {
+            Element owner = method.getEnclosingElement();
+            if (owner instanceof TypeElement ownerType && ownerType.getQualifiedName().contentEquals("java.lang.Object")) {
+                continue;
+            }
+            if (method.getModifiers().contains(Modifier.PRIVATE)) {
+                continue;
+            }
+            methods.add(method);
+        }
+        return methods;
+    }
+
+    private static String rpcName(ExecutableElement method) {
+        ServiceMethod override = method.getAnnotation(ServiceMethod.class);
+        return (override != null && !override.name().isBlank()) ? override.name() : method.getSimpleName().toString();
+    }
+
+    /**
+     * Static methods would be exposed as RPC methods but have no instance to dispatch on in any
+     * meaningful sense, and two methods resolving to one RPC name (overloads) can't be told apart
+     * in {@code POST .../{method}} -- the runtime rejects the latter only at startup, and only in
+     * a process that embeds the service.
+     */
+    private void validateMethodShapes(TypeElement interfaceElement) {
+        Map<String, ExecutableElement> byRpcName = new LinkedHashMap<>();
+        for (ExecutableElement method : serviceMethods(interfaceElement)) {
+            if (method.getModifiers().contains(Modifier.STATIC)) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "Method '" + method.getSimpleName() + "' on " + method.getEnclosingElement()
+                                + " is static; @ModularService interfaces may only declare instance methods "
+                                + "(a static method would be exposed as an RPC method with nothing to dispatch to).",
+                        method);
+                continue;
+            }
+            String rpcName = rpcName(method);
+            ExecutableElement existing = byRpcName.putIfAbsent(rpcName, method);
+            if (existing != null && !elementUtils.overrides(method, existing, interfaceElement)
+                    && !elementUtils.overrides(existing, method, interfaceElement)) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "Methods " + describeMethod(existing) + " and " + describeMethod(method) + " both resolve to the RPC name '"
+                                + rpcName + "' on " + interfaceElement.getQualifiedName() + "; overloaded methods are not "
+                                + "supported -- rename one or give it @ServiceMethod(name = ...).",
+                        method);
+            }
+        }
+    }
+
+    private static String describeMethod(ExecutableElement method) {
+        return method.getEnclosingElement() + "#" + method;
+    }
+
+    /**
+     * A range whose start isn't before its end can never be in force, which silently makes the
+     * method uncallable on every version; non-positive versions can't match any {@code @ServiceVersion}
+     * a sensible deployment declares.
+     */
+    private void validateVersionRanges(TypeElement interfaceElement) {
+        for (ExecutableElement method : serviceMethods(interfaceElement)) {
+            AddedIn addedIn = method.getAnnotation(AddedIn.class);
+            DeprecatedSince deprecatedSince = method.getAnnotation(DeprecatedSince.class);
+            if (addedIn != null && addedIn.value() < 1) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "@AddedIn(" + addedIn.value() + ") on " + describeMethod(method) + " must be a positive version", method);
+            }
+            if (deprecatedSince != null && deprecatedSince.value() < 1) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "@DeprecatedSince(" + deprecatedSince.value() + ") on " + describeMethod(method) + " must be a positive version", method);
+            }
+            if (addedIn != null && deprecatedSince != null && addedIn.value() >= deprecatedSince.value()) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        describeMethod(method) + " has @AddedIn(" + addedIn.value() + ") but @DeprecatedSince("
+                                + deprecatedSince.value() + "): the version range is empty, so no version could ever implement it.",
+                        method);
+            }
+        }
+    }
+
+    /**
+     * The shape the runtime registrar needs from an implementation: a concrete, top-level (or
+     * static nested) class or record. Anything else is silently skipped by classpath scanning, so
+     * the version would just not exist at startup. Returns whether the full validation should
+     * still run for this element.
+     */
+    private boolean validateImplementationShape(TypeElement implElement) {
+        ElementKind kind = implElement.getKind();
+        String problem = null;
+        if (kind != ElementKind.CLASS && kind != ElementKind.RECORD) {
+            problem = "it is a " + kind.toString().toLowerCase().replace('_', ' ') + ", not a class";
+        } else if (implElement.getModifiers().contains(Modifier.ABSTRACT)) {
+            problem = "it is abstract, so the framework can't instantiate it";
+        } else if (implElement.getNestingKind() == NestingKind.MEMBER && !implElement.getModifiers().contains(Modifier.STATIC)) {
+            problem = "it is a non-static inner class; make it a top-level or static nested class";
+        } else if (implElement.getNestingKind() == NestingKind.LOCAL || implElement.getNestingKind() == NestingKind.ANONYMOUS) {
+            problem = "it is a local/anonymous class";
+        }
+        if (problem != null) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    "@ServiceVersion on " + implElement.getQualifiedName() + " has no effect: " + problem
+                            + ", so it would silently never be registered.",
+                    implElement);
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Embedded dispatch propagates a thrown exception as-is; internal-rest dispatch reconstructs
      * failures as {@code RuntimeException} only (see {@code RemoteExceptionReconstructor} in
      * modular-spring) — a checked exception on a {@code @ModularService} method would therefore
@@ -245,13 +390,13 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         TypeMirror runtimeExceptionType = elementUtils.getTypeElement(RuntimeException.class.getName()).asType();
         TypeMirror errorType = elementUtils.getTypeElement(Error.class.getName()).asType();
 
-        for (ExecutableElement method : ElementFilter.methodsIn(interfaceElement.getEnclosedElements())) {
+        for (ExecutableElement method : serviceMethods(interfaceElement)) {
             for (TypeMirror thrown : method.getThrownTypes()) {
                 if (typeUtils.isSubtype(thrown, runtimeExceptionType) || typeUtils.isSubtype(thrown, errorType)) {
                     continue;
                 }
                 messager.printMessage(Diagnostic.Kind.ERROR,
-                        "Method '" + method.getSimpleName() + "' on " + interfaceElement.getQualifiedName()
+                        "Method '" + method.getSimpleName() + "' on " + method.getEnclosingElement()
                                 + " declares checked exception " + thrown + " in its throws clause. "
                                 + "@ModularService methods must not declare checked exceptions: embedded "
                                 + "dispatch would propagate it as-is, but internal-rest dispatch reconstructs "
@@ -273,7 +418,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
      * by construction at compile time.
      */
     private void validateBoundaryTypes(TypeElement interfaceElement) {
-        for (ExecutableElement method : ElementFilter.methodsIn(interfaceElement.getEnclosedElements())) {
+        for (ExecutableElement method : serviceMethods(interfaceElement)) {
             checkBoundaryType(method.getReturnType(), method, "return type", new HashSet<>());
             for (VariableElement param : method.getParameters()) {
                 checkBoundaryType(param.asType(), method, "parameter '" + param.getSimpleName() + "'", new HashSet<>());
@@ -366,9 +511,24 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             return;
         }
 
+        if (interfaceElement.getAnnotation(ModularService.class) == null) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    implElement.getQualifiedName() + " is annotated @ServiceVersion(" + interfaceElement.getSimpleName()
+                            + ".class, ...) but " + interfaceElement.getQualifiedName() + " is not annotated @ModularService",
+                    implElement);
+            return;
+        }
+        if (!typeUtils.isSubtype(typeUtils.erasure(implElement.asType()), typeUtils.erasure(interfaceElement.asType()))) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    implElement.getQualifiedName() + " is annotated @ServiceVersion(" + interfaceElement.getSimpleName()
+                            + ".class, ...) but does not implement " + interfaceElement.getQualifiedName(),
+                    implElement);
+            return;
+        }
+
         int implVersion = annotation.version();
 
-        for (ExecutableElement interfaceMethod : ElementFilter.methodsIn(interfaceElement.getEnclosedElements())) {
+        for (ExecutableElement interfaceMethod : serviceMethods(interfaceElement)) {
             AddedIn addedIn = interfaceMethod.getAnnotation(AddedIn.class);
             DeprecatedSince deprecatedSince = interfaceMethod.getAnnotation(DeprecatedSince.class);
             if (addedIn == null && deprecatedSince == null) {
