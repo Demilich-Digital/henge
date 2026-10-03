@@ -19,16 +19,12 @@ class ModularServiceInvocationHandlerTest {
 
     /**
      * A {@code @ModularService} interface that extends another interface is unusual but not
-     * forbidden -- when it happens, a call to a method inherited from the parent interface hands
-     * {@link java.lang.reflect.InvocationHandler#invoke} a {@link java.lang.reflect.Method} whose
-     * {@code getDeclaringClass()} is the *parent* interface, not the full service interface the
-     * proxy was created for. {@link ModularServiceInvocationHandler} must still report the full
-     * service interface on the {@link ServiceInvocation} it builds -- and it must match whatever the
-     * dispatching side registered ({@code ModularServiceRegistrar} always uses the full,
-     * registered interface, never a method's individual declaring class).
+     * forbidden -- a call to a method inherited from the parent hands the handler a {@link
+     * java.lang.reflect.Method} whose {@code getDeclaringClass()} is the parent interface. The
+     * invocation must still carry the service's own name/version and the method's RPC name.
      */
     @Test
-    void reportsTheFullServiceInterfaceEvenForAnInheritedMethod() {
+    void inheritedMethodStillReportsTheServiceIdentity() {
         ServiceInvocation[] captured = new ServiceInvocation[1];
         ServiceTransport capturingTransport = invocation -> {
             captured[0] = invocation;
@@ -38,13 +34,13 @@ class ModularServiceInvocationHandlerTest {
         ExtendedService proxy = (ExtendedService) Proxy.newProxyInstance(
                 ExtendedService.class.getClassLoader(),
                 new Class<?>[] {ExtendedService.class},
-                new ModularServiceInvocationHandler("extended-service", 1, ExtendedService.class, capturingTransport));
+                new ModularServiceInvocationHandler("extended-service", 1, capturingTransport));
 
         proxy.base("hi");
 
-        assertThat(captured[0].serviceInterface()).isEqualTo(ExtendedService.class);
-        assertThat(captured[0].method().getDeclaringClass())
-                .as("sanity check: the JDK proxy really does hand back the parent interface as the method's declaring class")
-                .isEqualTo(BaseService.class);
+        assertThat(captured[0].serviceName()).isEqualTo("extended-service");
+        assertThat(captured[0].serviceVersion()).isEqualTo(1);
+        assertThat(captured[0].methodName()).isEqualTo("base");
+        assertThat(captured[0].method().getDeclaringClass()).isEqualTo(BaseService.class);
     }
 }

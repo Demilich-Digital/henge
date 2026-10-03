@@ -76,7 +76,7 @@ class InternalRestTransportTest {
 
             Method echoMethod = EchoService.class.getMethod("echo", String.class);
             ServiceInvocation invocation =
-                    new ServiceInvocation("echo-service", 1, EchoService.class, "echo", echoMethod, new Object[] {"hi"});
+                    new ServiceInvocation("echo-service", 1, "echo", echoMethod, new Object[] {"hi"});
 
             long start = System.nanoTime();
             assertThatThrownBy(() -> transport.invoke(invocation))
