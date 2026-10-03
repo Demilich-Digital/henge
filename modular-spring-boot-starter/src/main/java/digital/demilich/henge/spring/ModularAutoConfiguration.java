@@ -11,11 +11,11 @@ import org.springframework.context.annotation.Import;
 
 /**
  * Boot-specific classpath auto-detection layer on top of the plain-Spring
- * {@link ModularTransportConfiguration}: unconditionally imports the transport wiring (RestClient,
- * {@code ServiceTransport}, {@link ModularProperties}), then adds Boot-only conveniences that
- * don't have a plain-Spring equivalent — an empty {@link ModularServiceRegistry} fallback when
- * {@link EnableModularServices} wasn't used, and gating the dispatcher controller behind
- * {@code modular.server.enabled}. See {@code modular-spring}'s {@link ModularConfiguration} for
+ * {@link ModularTransportConfiguration}: unconditionally imports the transport wiring (the
+ * {@code ServiceTransport} and {@link ModularProperties} beans -- its RestClient is deliberately not
+ * a bean), then adds Boot-only conveniences that don't have a plain-Spring equivalent — an empty
+ * {@link ModularServiceRegistry} fallback when {@link EnableModularServices} wasn't used, and
+ * gating the dispatcher controller behind a servlet web application and {@code modular.server.enabled}. See {@code modular-spring}'s {@link ModularConfiguration} for
  * the plain-Spring path, where "should this process serve requests" is a code-level `@Import`
  * choice instead of a property.
  *
