@@ -4,6 +4,7 @@ import digital.demilich.henge.core.ModularService;
 import digital.demilich.henge.core.ServiceNames;
 import digital.demilich.henge.core.ServiceVersion;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -277,6 +278,9 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             throw new IllegalStateException(ServiceNames.invalidServiceNameMessage(name, serviceInterface.getName()));
         }
         for (Method method : serviceInterface.getMethods()) {
+            if (Modifier.isStatic(method.getModifiers())) {
+                continue; // not an operation; see ModularServiceDescriptor
+            }
             String rpcName = ModularServiceDescriptor.rpcName(method);
             if (!ServiceNames.isValidMethodName(rpcName)) {
                 throw new IllegalStateException(ServiceNames.invalidMethodNameMessage(rpcName, serviceInterface.getName()));

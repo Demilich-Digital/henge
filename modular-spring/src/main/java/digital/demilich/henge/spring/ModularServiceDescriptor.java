@@ -2,6 +2,7 @@ package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.ServiceMethod;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -18,6 +19,12 @@ public record ModularServiceDescriptor(
     static ModularServiceDescriptor of(String name, int version, Class<?> interfaceType, String beanName) {
         Map<String, Method> methods = new LinkedHashMap<>();
         for (Method method : interfaceType.getMethods()) {
+            // getMethods() includes the interface's own static methods; they're helpers, not
+            // operations, and must not be reachable over /_modular (the processor rejects them, but
+            // an interface may be compiled without it).
+            if (Modifier.isStatic(method.getModifiers())) {
+                continue;
+            }
             // Reflective calls from the dispatcher into a non-public interface (a package-private
             // one is legal, and works embedded) otherwise fail with IllegalAccessException.
             method.trySetAccessible();

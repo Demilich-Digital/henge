@@ -40,6 +40,22 @@ class ModularServiceDescriptorTest {
         assertThat(descriptor.methods()).containsOnlyKeys("a");
     }
 
+    interface WithStaticHelper {
+        String a();
+
+        static WithStaticHelper of() {
+            return () -> "a";
+        }
+    }
+
+    @Test
+    void staticInterfaceMethodsAreNotDispatchable() {
+        ModularServiceDescriptor descriptor =
+                ModularServiceDescriptor.of("helper-service", 1, WithStaticHelper.class, "helper-service-1");
+
+        assertThat(descriptor.methods()).containsOnlyKeys("a");
+    }
+
     @Test
     void overloadedMethodsAreRejected() {
         assertThatThrownBy(() -> ModularServiceDescriptor.of("widget-service", 1, Overloaded.class, "widget-service-1"))
