@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.spring.fixture.echo.EchoService;
+import digital.demilich.henge.spring.fixture.echo.EchoServiceImpl;
 import digital.demilich.henge.spring.fixture.echo.EchoTestApp;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.WebApplicationType;
@@ -23,10 +24,9 @@ import org.springframework.web.client.RestClientResponseException;
 
 /**
  * Spring Security is on this module's test classpath, so every Boot test here already runs with its
- * default chain (authenticate everything, CSRF on POST); {@code src/test/resources/application.properties}
- * opts in to {@code modular.server.permit-spring-security}. These pin down the intended outcome:
- * with the opt-in, internal dispatch works and nothing else the application serves is opened up;
- * without it, Spring Security is left exactly as the application configured it.
+ * default chain (authenticate everything, CSRF on POST). These pin down the intended outcome:
+ * internal dispatch just works, nothing else the application serves is opened up, and the
+ * {@code modular.transport.secret} is enforced by Spring Security itself as an authentication.
  */
 class SpringSecurityCompatibilityTest {
 
@@ -73,30 +73,6 @@ class SpringSecurityCompatibilityTest {
 
             // Only POST under the prefix is skipped: a GET there is still the application's concern.
             assertThatThrownBy(() -> raw.get().uri("http://localhost:" + port + "/_modular/echo-service/1/echo").retrieve().body(String.class))
-                    .isInstanceOfSatisfying(RestClientResponseException.class,
-                            e -> assertThat(e.getStatusCode().value()).isEqualTo(401));
-        } finally {
-            server.close();
-        }
-    }
-
-    @Test
-    void springSecurityIsLeftAloneUnlessThePropertyOptsIn() {
-        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
-                .web(WebApplicationType.SERVLET)
-                .properties("server.port=0", "spring.main.banner-mode=off")
-                // a command-line arg outranks application.properties, which opts in for the other tests
-                .run("--modular.server.permit-spring-security=false");
-        try {
-            int port = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
-
-            assertThat(server.containsBean(ModularSecurityAutoConfiguration.CHAIN_BEAN_NAME)).isFalse();
-            assertThatThrownBy(() -> RestClient.create().post()
-                            .uri("http://localhost:" + port + "/_modular/echo-service/1/echo")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body("[\"hi\"]")
-                            .retrieve()
-                            .toBodilessEntity())
                     .isInstanceOfSatisfying(RestClientResponseException.class,
                             e -> assertThat(e.getStatusCode().value()).isEqualTo(401));
         } finally {
@@ -168,11 +144,11 @@ class SpringSecurityCompatibilityTest {
     }
 
     @Test
-    void chainIsOnlyRegisteredWhenOptedIn() {
+    void noChainIsRegisteredWhenTheDispatcherIsDisabled() {
         ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
                 .web(WebApplicationType.SERVLET)
-                .properties("server.port=0", "spring.main.banner-mode=off")
-                .run("--modular.server.permit-spring-security=false");
+                .properties("server.port=0", "spring.main.banner-mode=off", "modular.server.enabled=false")
+                .run();
         try {
             assertThat(server.getBeansOfType(SecurityFilterChain.class)).hasSize(1).doesNotContainKey(ModularSecurityAutoConfiguration.CHAIN_BEAN_NAME);
         } finally {
@@ -180,10 +156,87 @@ class SpringSecurityCompatibilityTest {
         }
     }
 
+    // ---- the secret is a real Spring Security authentication ----
+
+    private static final String SECRET_HEADER = "Modular-Internal-Secret";
+
+    private static int postStatus(int port, String secretHeader) {
+        try {
+            RestClient.RequestBodySpec request = RestClient.create().post()
+                    .uri("http://localhost:" + port + "/_modular/echo-service/1/echo")
+                    .contentType(MediaType.APPLICATION_JSON);
+            if (secretHeader != null) {
+                request.header(SECRET_HEADER, secretHeader);
+            }
+            request.body("[\"hi\"]").retrieve().toBodilessEntity();
+            return 200;
+        } catch (RestClientResponseException e) {
+            return e.getStatusCode().value();
+        }
+    }
+
+    @Test
+    void withASecretSpringSecurityRequiresItAndRejectsWrongOrMissingOnesWith403() {
+        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
+                .web(WebApplicationType.SERVLET)
+                .properties("server.port=0", "spring.main.banner-mode=off", "modular.transport.secret=s3cr3t")
+                .run();
+        try {
+            int port = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
+
+            assertThat(postStatus(port, "s3cr3t")).isEqualTo(200);
+            assertThat(postStatus(port, "wrong")).isEqualTo(403);
+            assertThat(postStatus(port, null)).isEqualTo(403);
+            // The application's own endpoints are unaffected by the secret.
+            assertThatThrownBy(() -> RestClient.create().get().uri("http://localhost:" + port + "/protected").retrieve().body(String.class))
+                    .isInstanceOfSatisfying(RestClientResponseException.class,
+                            e -> assertThat(e.getStatusCode().value()).isEqualTo(401));
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    void withoutASecretTheChainPermitsAllExplicitly() {
+        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
+                .web(WebApplicationType.SERVLET)
+                .properties("server.port=0", "spring.main.banner-mode=off")
+                .run();
+        try {
+            int port = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
+
+            assertThat(postStatus(port, null)).isEqualTo(200);
+            assertThat(postStatus(port, "anything")).isEqualTo(200);
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    void anAuthenticatedCallerIsAnAuthenticatedPrincipalWithTheModularServiceRole() throws Exception {
+        // What the service method itself sees in the SecurityContext once the chain's filters have run.
+        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
+                .web(WebApplicationType.SERVLET)
+                .properties("server.port=0", "spring.main.banner-mode=off", "modular.transport.secret=s3cr3t")
+                .run();
+        try {
+            int port = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
+            EchoServiceImpl.LAST_AUTHENTICATION.set(null);
+            assertThat(postStatus(port, "s3cr3t")).isEqualTo(200);
+
+            org.springframework.security.core.Authentication seen = EchoServiceImpl.LAST_AUTHENTICATION.get();
+            assertThat(seen).isNotNull();
+            assertThat(seen.isAuthenticated()).isTrue();
+            assertThat(seen.getName()).isEqualTo(ModularSecurityAutoConfiguration.PRINCIPAL);
+            assertThat(seen.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_" + ModularSecurityAutoConfiguration.ROLE);
+        } finally {
+            server.close();
+        }
+    }
+
     @Test
     void starterStillLoadsWithoutSpringSecurityOnTheClasspath() {
-        runner.withPropertyValues("modular.server.permit-spring-security=true")
-                .withClassLoader(new FilteredClassLoader(HttpSecurity.class)).run(ctx -> {
+        runner.withClassLoader(new FilteredClassLoader(HttpSecurity.class)).run(ctx -> {
             assertThat(ctx).hasNotFailed();
             assertThat(ctx).doesNotHaveBean(ModularSecurityAutoConfiguration.CHAIN_BEAN_NAME);
             assertThat(ctx).hasSingleBean(ModularDispatcherController.class);

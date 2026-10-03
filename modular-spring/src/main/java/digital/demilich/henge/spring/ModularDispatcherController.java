@@ -8,8 +8,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.commons.logging.Log;
@@ -48,16 +46,15 @@ class ModularDispatcherController {
     private final ApplicationContext applicationContext;
     private final ModularServiceRegistry registry;
     private final ObjectMapper objectMapper;
-    private final String configuredSecret;
+    private final SharedSecret secret;
 
     ModularDispatcherController(
             ApplicationContext applicationContext, ModularServiceRegistry registry, ObjectMapper objectMapper, ModularProperties properties) {
         this.applicationContext = applicationContext;
         this.registry = registry;
         this.objectMapper = objectMapper;
-        String secret = properties.getTransportSecret();
-        this.configuredSecret = (secret == null || secret.isBlank()) ? null : secret;
-        if (this.configuredSecret == null) {
+        this.secret = SharedSecret.from(properties);
+        if (!secret.isRequired()) {
             log.info("modular.transport.secret is not set: /_modular accepts calls without authentication and "
                     + "relies on network-level isolation.");
         }
@@ -112,20 +109,9 @@ class ModularDispatcherController {
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(objectMapper.valueToTree(result));
     }
 
-    /**
-     * No-op when no secret is configured (the supported, network-isolated default). Uses
-     * {@link MessageDigest#isEqual(byte[], byte[])} for the comparison -- guaranteed by its
-     * Javadoc to take time independent of where the arrays first differ, unlike {@link
-     * String#equals}, which would let a timing attack narrow down the secret one byte at a time.
-     */
+    /** No-op when no secret is configured (the supported, network-isolated default). */
     private void requireValidSecret(String providedSecret) {
-        if (configuredSecret == null) {
-            return;
-        }
-        boolean valid = providedSecret != null
-                && MessageDigest.isEqual(
-                        providedSecret.getBytes(StandardCharsets.UTF_8), configuredSecret.getBytes(StandardCharsets.UTF_8));
-        if (!valid) {
+        if (!secret.accepts(providedSecret)) {
             throw new ModularDispatchException(HttpStatus.FORBIDDEN, "Missing or invalid " + SECRET_HEADER + " header");
         }
     }
