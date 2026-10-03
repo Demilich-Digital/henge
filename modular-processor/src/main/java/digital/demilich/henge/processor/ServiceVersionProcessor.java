@@ -167,7 +167,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                         "@ServiceVersion(version = " + version + ") on " + element + " must be a positive version", element);
             }
             if (!(element instanceof TypeElement typeElement)) {
-                continue; // an injection-site use (field/parameter), not an implementation
+                validateInjectionSite(element); // a field/parameter pinning a dependency, not an implementation
+                continue;
             }
             validateNotAComponent(typeElement);
             if (validateImplementationShape(typeElement)) {
@@ -753,12 +754,54 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     }
 
     /**
+     * {@code @ServiceVersion} on a field or parameter is matched by Spring against beans of the
+     * declared type, so naming a different interface -- or one that isn't a {@code @ModularService}
+     * -- can only ever end in "no qualifying bean" at startup. The interface may also appear as a
+     * type argument ({@code ObjectProvider<Svc>}, {@code Optional<Svc>}, {@code List<Svc>}), which
+     * Spring resolves the same way.
+     */
+    private void validateInjectionSite(Element site) {
+        TypeElement target = resolveServiceVersionInterface(site);
+        if (target == null) {
+            return;
+        }
+        if (target.getAnnotation(ModularService.class) == null) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    "@ServiceVersion(" + target.getSimpleName() + ".class, ...) on " + site + " names "
+                            + target.getQualifiedName() + ", which is not annotated @ModularService",
+                    site);
+        } else if (!mentionsType(site.asType(), target)) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    "@ServiceVersion(" + target.getSimpleName() + ".class, ...) on " + site + " doesn't match its type "
+                            + site.asType() + "; it can only select a " + target.getQualifiedName() + " bean, so this "
+                            + "would fail at startup with no qualifying bean.",
+                    site);
+        }
+    }
+
+    private static boolean mentionsType(TypeMirror type, TypeElement target) {
+        if (type.getKind() != TypeKind.DECLARED) {
+            return false;
+        }
+        DeclaredType declared = (DeclaredType) type;
+        if (declared.asElement().equals(target)) {
+            return true;
+        }
+        for (TypeMirror typeArgument : declared.getTypeArguments()) {
+            if (mentionsType(typeArgument, target)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Reads the {@code Class<?>}-typed {@code value()} attribute of {@code @ServiceVersion} via
      * its {@link AnnotationMirror} rather than calling {@code annotation.value()} directly, which
      * would throw {@code MirroredTypeException} during processing.
      */
-    private TypeElement resolveServiceVersionInterface(TypeElement implElement) {
-        for (AnnotationMirror mirror : implElement.getAnnotationMirrors()) {
+    private TypeElement resolveServiceVersionInterface(Element annotated) {
+        for (AnnotationMirror mirror : annotated.getAnnotationMirrors()) {
             if (!mirror.getAnnotationType().toString().equals(ServiceVersion.class.getName())) {
                 continue;
             }

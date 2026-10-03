@@ -198,6 +198,29 @@ class CompileTimeChecksTest {
     }
 
     @Test
+    void injectionSiteServiceVersionMustNameTheInjectedInterface() {
+        var svc = src("site", "Svc", "@ModularService public interface Svc { void a(); }");
+        var other = src("site", "Other", "@ModularService public interface Other { void a(); }");
+
+        var ok = compile(svc, src("site", "Consumer", "public class Consumer { "
+                + "@ServiceVersion(value = Svc.class, version = 2) Svc field; "
+                + "public Consumer(@ServiceVersion(value = Svc.class, version = 1) Svc a, "
+                + "@ServiceVersion(value = Svc.class, version = 1) java.util.Optional<Svc> b, "
+                + "@ServiceVersion(value = Svc.class, version = 1) java.util.function.Supplier<Svc> c) {} }"));
+        assertThat(ok.success()).isTrue();
+
+        var mismatch = compile(svc, other, src("site", "Consumer",
+                "public class Consumer { public Consumer(@ServiceVersion(value = Other.class, version = 1) Svc svc) {} }"));
+        assertThat(mismatch.success()).isFalse();
+        assertThat(mismatch.hasErrorContaining("doesn't match its type")).isTrue();
+
+        var notAService = compile(src("site", "Plain", "public interface Plain { void a(); }"), src("site", "Consumer",
+                "public class Consumer { public Consumer(@ServiceVersion(value = Plain.class, version = 1) Plain p) {} }"));
+        assertThat(notAService.success()).isFalse();
+        assertThat(notAService.hasErrorContaining("not annotated @ModularService")).isTrue();
+    }
+
+    @Test
     void errorStatusMustBeA4xxOr5xxCode() {
         assertThat(compile(src("esok", "Missing", "@ErrorStatus(404) public class Missing extends RuntimeException {}")).success())
                 .isTrue();
