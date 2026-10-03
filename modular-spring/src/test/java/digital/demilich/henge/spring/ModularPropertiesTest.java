@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
@@ -136,5 +137,49 @@ class ModularPropertiesTest {
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("must start with '/' and not end with one");
         }
+    }
+
+    private static ModularProperties withProperties(Map<String, Object> properties) {
+        StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("test", properties));
+        return new ModularProperties(environment);
+    }
+
+    @Test
+    void validServicePropertiesAreNotReported() {
+        ModularProperties properties = withProperties(Map.of(
+                "modular.services.audit-service.mode", "internal-rest",
+                "modular.services.audit-service.url", "http://audit",
+                "modular.services.audit-service.versions.2.mode", "embedded",
+                "modular.services.audit-service.versions.2.url", "http://audit-v2"));
+
+        assertThat(properties.unknownServiceProperties(Set.of("audit-service"))).isEmpty();
+    }
+
+    @Test
+    void aMisspelledKeyOrServiceNameIsReported() {
+        ModularProperties properties = withProperties(Map.of(
+                "modular.services.audit-service.mdoe", "internal-rest",
+                "modular.services.audit-servce.mode", "internal-rest",
+                "modular.services.audit-service.versions.2.uri", "http://audit-v2"));
+
+        assertThat(properties.unknownServiceProperties(Set.of("audit-service", "greeting-service")))
+                .anySatisfy(problem -> assertThat(problem).startsWith("modular.services.audit-service.mdoe: not a known key"))
+                .anySatisfy(problem -> assertThat(problem).startsWith("modular.services.audit-servce.mode")
+                        .contains("did you mean 'audit-service'?"))
+                .anySatisfy(problem -> assertThat(problem).startsWith("modular.services.audit-service.versions.2.uri: not a known key"))
+                .hasSize(3);
+    }
+
+    @Test
+    void environmentVariablesAreCheckedAgainstEveryDiscoveredName() {
+        assertThat(new ModularProperties(environmentWithEnvVar("MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_2_URL", "http://a"))
+                .unknownServiceProperties(Set.of("audit-service"))).isEmpty();
+        // Ambiguous by construction, but valid as service "x-versions"'s mode.
+        assertThat(new ModularProperties(environmentWithEnvVar("MODULAR_SERVICES_X_VERSIONS_MODE", "embedded"))
+                .unknownServiceProperties(Set.of("x", "x-versions"))).isEmpty();
+        assertThat(new ModularProperties(environmentWithEnvVar("MODULAR_SERVICES_AUDIT_SERVICE_MDOE", "embedded"))
+                .unknownServiceProperties(Set.of("audit-service")))
+                .singleElement().asString().startsWith("MODULAR_SERVICES_AUDIT_SERVICE_MDOE: doesn't match");
     }
 }

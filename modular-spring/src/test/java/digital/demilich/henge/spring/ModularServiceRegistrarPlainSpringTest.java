@@ -162,6 +162,20 @@ class ModularServiceRegistrarPlainSpringTest {
     }
 
     @Test
+    void aMisspelledServiceKeyFailsStartupInsteadOfBeingIgnored() {
+        AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
+        ctx.getEnvironment()
+                .getPropertySources()
+                .addFirst(new MapPropertySource("test", Map.of("modular.services.counter-service.mdoe", "internal-rest")));
+        ctx.register(CounterTestConfig.class, ModularTransportConfiguration.class);
+
+        assertThatThrownBy(ctx::refresh)
+                .hasStackTraceContaining("Unrecognized modular.services configuration")
+                .hasStackTraceContaining("modular.services.counter-service.mdoe: not a known key");
+        ctx.close();
+    }
+
+    @Test
     void overlappingBasePackagesDoNotReportADuplicateImplementation() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(OverlappingPackagesConfig.class)) {
             assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);

@@ -165,6 +165,13 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             }
         }
 
+        List<String> unknownProperties = properties.unknownServiceProperties(namesToInterfaces.keySet());
+        if (!unknownProperties.isEmpty()) {
+            throw new IllegalStateException("Unrecognized modular.services configuration -- nothing reads these, so the "
+                    + "service(s) they meant to configure would silently keep their defaults:\n  "
+                    + String.join("\n  ", unknownProperties));
+        }
+
         // A name that matches no discovered interface (almost always a typo) would otherwise leave
         // every service in this process as an internal-rest proxy, silently hosting nothing.
         Set<String> unknownServeNames = new LinkedHashSet<>(serveSpec.names());

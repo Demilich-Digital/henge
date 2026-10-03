@@ -485,7 +485,8 @@ still gets `ServiceVersionUnsupportedException` reconstructed.)
 ## Configuration reference
 
 Everything is read from Spring's `Environment`, so CLI flags, `application.yml`, environment variables and
-`SPRING_APPLICATION_JSON` all work.
+`SPRING_APPLICATION_JSON` all work. A `modular.services.*` property that names no discovered service or isn't one of the
+keys below (say `.mdoe`) fails startup instead of being silently ignored.
 
 | Property | Default | Meaning |
 |---|---|---|

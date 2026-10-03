@@ -6,6 +6,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.Environment;
@@ -146,6 +147,106 @@ public class ModularProperties {
         }
     }
 
+    private static String toEnvVarStyle(String dotted) {
+        return dotted.toUpperCase(Locale.ROOT).replace('.', '_').replace('-', '_');
+    }
+
+    private static final Pattern DOTTED_SERVICE_KEY = Pattern.compile("mode|url|versions\\.\\d+\\.(mode|url)");
+    private static final Pattern ENV_SERVICE_KEY = Pattern.compile("MODE|URL|VERSIONS_\\d+_(MODE|URL)");
+
+    /**
+     * Every {@code modular.services.*} property (dotted, or as a {@code MODULAR_SERVICES_*}
+     * environment variable) that names no discovered service, or a key that doesn't exist, as one
+     * line each saying what's wrong. Nothing else would ever read such a property, so a typo --
+     * {@code .mdoe}, or a misspelled service name -- would silently leave that service on its
+     * default mode. Same enumerable-source scan as {@link ServiceConfig#explicitVersions()}.
+     */
+    public List<String> unknownServiceProperties(Set<String> serviceNames) {
+        Set<String> problems = new LinkedHashSet<>();
+        if (!(environment instanceof ConfigurableEnvironment configurable)) {
+            return List.of();
+        }
+        for (PropertySource<?> source : configurable.getPropertySources()) {
+            if (!(source instanceof EnumerablePropertySource<?> enumerable)) {
+                continue;
+            }
+            for (String propertyName : enumerable.getPropertyNames()) {
+                String problem = null;
+                if (propertyName.startsWith("modular.services.")) {
+                    problem = checkDotted(propertyName, serviceNames);
+                } else if (propertyName.startsWith("MODULAR_SERVICES_")) {
+                    problem = checkEnvVar(propertyName, serviceNames);
+                }
+                if (problem != null) {
+                    problems.add(problem);
+                }
+            }
+        }
+        return List.copyOf(problems);
+    }
+
+    private static String checkDotted(String propertyName, Set<String> serviceNames) {
+        String rest = propertyName.substring("modular.services.".length());
+        int dot = rest.indexOf('.');
+        String name = dot < 0 ? rest : rest.substring(0, dot);
+        if (!serviceNames.contains(name)) {
+            return propertyName + ": no @ModularService is named '" + name + "'" + suggestion(name, serviceNames);
+        }
+        if (dot < 0 || !DOTTED_SERVICE_KEY.matcher(rest.substring(dot + 1)).matches()) {
+            return propertyName + ": not a known key (mode, url, versions.<n>.mode, versions.<n>.url)";
+        }
+        return null;
+    }
+
+    /**
+     * The environment-variable form can't be split into name and key by itself ({@code -} and
+     * {@code .} both became {@code _}), so it's fine if any discovered service's name and a known
+     * key account for it.
+     */
+    private static String checkEnvVar(String propertyName, Set<String> serviceNames) {
+        String rest = propertyName.substring("MODULAR_SERVICES_".length());
+        for (String name : serviceNames) {
+            String envName = toEnvVarStyle(name) + "_";
+            if (rest.startsWith(envName) && ENV_SERVICE_KEY.matcher(rest.substring(envName.length())).matches()) {
+                return null;
+            }
+        }
+        return propertyName + ": doesn't match any discovered service and key (MODULAR_SERVICES_<NAME>_MODE, _URL, "
+                + "_VERSIONS_<n>_MODE or _VERSIONS_<n>_URL; discovered: " + serviceNames + ")";
+    }
+
+    private static String suggestion(String name, Set<String> serviceNames) {
+        String closest = null;
+        int closestDistance = Integer.MAX_VALUE;
+        for (String candidate : serviceNames) {
+            int distance = editDistance(name, candidate);
+            if (distance < closestDistance) {
+                closest = candidate;
+                closestDistance = distance;
+            }
+        }
+        return closest != null && closestDistance <= 3 ? " -- did you mean '" + closest + "'?" : " (discovered: " + serviceNames + ")";
+    }
+
+    private static int editDistance(String a, String b) {
+        int[] previous = new int[b.length() + 1];
+        int[] current = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) {
+            previous[j] = j;
+        }
+        for (int i = 1; i <= a.length(); i++) {
+            current[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int substitution = previous[j - 1] + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1);
+                current[j] = Math.min(substitution, Math.min(previous[j], current[j - 1]) + 1);
+            }
+            int[] swap = previous;
+            previous = current;
+            current = swap;
+        }
+        return previous[b.length()];
+    }
+
     public ServiceConfig service(String name) {
         return new ServiceConfig(environment, name);
     }
@@ -241,8 +342,6 @@ public class ModularProperties {
             }
         }
 
-        private static String toEnvVarStyle(String dotted) {
-            return dotted.toUpperCase(Locale.ROOT).replace('.', '_').replace('-', '_');
-        }
+
     }
 }
