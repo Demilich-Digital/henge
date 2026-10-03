@@ -33,6 +33,12 @@ final class ModularTransportSupport {
      * embedded: by default Jackson drops a {@code ZonedDateTime}'s zone region and normalizes both
      * it and an {@code OffsetDateTime} to UTC on the way in -- the same instant, but a different
      * value. So the zone id is written, and nothing is adjusted on reading.
+     *
+     * <p>Unknown properties are ignored so a record can gain a component without breaking calls
+     * mid-rollout: a newer peer's extra component is dropped by an older one, and a component an
+     * older peer doesn't send reads as {@code null}/{@code 0}. (Renaming or removing one is a
+     * breaking change -- that's what a new version is for.) Only this mapper is affected; it's never
+     * a bean, so the application's own Jackson configuration is untouched.
      */
     static ObjectMapper objectMapper() {
         return new ObjectMapper()
@@ -41,7 +47,8 @@ final class ModularTransportSupport {
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .enable(SerializationFeature.WRITE_DATES_WITH_ZONE_ID)
-                .disable(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE);
+                .disable(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     }
 
     /**

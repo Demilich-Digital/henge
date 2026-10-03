@@ -268,6 +268,10 @@ method behave identically. Two ways they silently don't, unless something stops 
     no actual Guava dependency added to this project — if you already depend on Guava, you don't
     need a second immutable-collection type just to satisfy this rule
 
+  Records may gain components without breaking a rolling deploy: the transport ignores a
+  component it doesn't know and reads a missing one as `null`/`0`. Renaming or removing one is a
+  breaking change — ship it as a new `@ServiceVersion`.
+
   Sealed interfaces are deliberately *not* allowed: Jackson can't pick a subtype without type
   information, so they would work embedded and fail once the service is split. Model a tagged
   union as a record instead (e.g. a `kind` enum plus the fields each kind needs).

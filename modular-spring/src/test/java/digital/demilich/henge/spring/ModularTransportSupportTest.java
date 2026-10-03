@@ -87,6 +87,22 @@ class ModularTransportSupportTest {
         assertThat(roundTrip(Color.RED, new TypeReference<Color>() {})).isEqualTo(Color.RED);
     }
 
+    record PointV1(int x, int y) {
+    }
+
+    record PointV2(int x, int y, int z) {
+    }
+
+    @Test
+    void aRecordComponentAddedOnOneSideDoesNotBreakTheOther() throws Exception {
+        // Newer writer, older reader: the extra component is ignored.
+        PointV1 older = mapper.readValue(mapper.writeValueAsBytes(new PointV2(1, 2, 3)), PointV1.class);
+        assertThat(older).isEqualTo(new PointV1(1, 2));
+        // Older writer, newer reader: the missing component reads as its default.
+        PointV2 newer = mapper.readValue(mapper.writeValueAsBytes(new PointV1(1, 2)), PointV2.class);
+        assertThat(newer).isEqualTo(new PointV2(1, 2, 0));
+    }
+
     @Test
     void decimalsRoundTripExactly() throws Exception {
         BigDecimal precise = new BigDecimal("12345678901234567.8901");
