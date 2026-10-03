@@ -347,7 +347,7 @@ class ServiceVersionProcessorTest {
     }
 
     @Test
-    void sealedInterfaceOfRecordsCompilesCleanly() {
+    void sealedInterfaceOfRecordsIsRejected() {
         String pkg = "sealedrecord";
         String source = """
                 package fixture.%s;
@@ -366,7 +366,7 @@ class ServiceVersionProcessorTest {
 
         TestCompiler.Result result = TestCompiler.compile(source(pkg, "WidgetService", source));
 
-        assertThat(result.success()).isTrue();
-        assertThat(result.diagnostics()).noneMatch(d -> d.getKind() == Diagnostic.Kind.ERROR);
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("sealed interfaces can't be deserialized")).isTrue();
     }
 }

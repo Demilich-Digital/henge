@@ -230,8 +230,10 @@ method behave identically. Two ways they silently don't, unless something stops 
   - Guava's `ImmutableList`/`ImmutableSet`/`ImmutableMap`, recognized by fully-qualified name with
     no actual Guava dependency added to this project — if you already depend on Guava, you don't
     need a second immutable-collection type just to satisfy this rule
-  - sealed interfaces where every permitted subtype is itself an allowed type (a compile-time
-    tagged union)
+
+  Sealed interfaces are deliberately *not* allowed: Jackson can't pick a subtype without type
+  information, so they would work embedded and fail once the service is split. Model a tagged
+  union as a record instead (e.g. a `kind` enum plus the fields each kind needs).
 
   A JPA entity can never satisfy this — no-arg constructor, mutable fields, lazy proxying — so it's
   rejected as a side effect of the positive rule, with a message calling out the `@Entity`

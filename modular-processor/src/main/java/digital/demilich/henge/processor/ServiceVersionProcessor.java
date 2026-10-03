@@ -327,15 +327,6 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 }
                 return;
             }
-            if (typeElement.getKind() == ElementKind.INTERFACE && typeElement.getModifiers().contains(Modifier.SEALED)) {
-                List<? extends TypeMirror> permitted = typeElement.getPermittedSubclasses();
-                if (!permitted.isEmpty()) {
-                    for (TypeMirror subtype : permitted) {
-                        checkBoundaryType(subtype, method, position, visiting);
-                    }
-                    return;
-                }
-            }
             reportBoundaryError(method, position, type, describeRejectionReason(typeElement));
         } finally {
             visiting.remove(qualifiedName);
@@ -347,6 +338,10 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 .anyMatch(m -> m.getAnnotationType().toString().equals("jakarta.persistence.Entity"));
         if (isEntity) {
             return "it's a JPA entity; boundary types must be immutable DTOs (records), never entities";
+        }
+        if (typeElement.getModifiers().contains(Modifier.SEALED)) {
+            return "sealed interfaces can't be deserialized from JSON without type information, so they would work "
+                    + "embedded and fail once the service is split; wrap the alternatives in a record instead";
         }
         return "it's not a record, enum, or a recognized immutable value type";
     }
