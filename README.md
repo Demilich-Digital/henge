@@ -472,7 +472,9 @@ curl -i http://localhost:8080/api/audit/recent/2    # -> 500 -- default (version
 The 500 comes from `ServiceVersionUnsupportedException`, thrown by the method
 `modular-processor` generated on `AuditServiceSkeleton`, naming exactly which version is required
 — visible in the server log even though the HTTP response body itself is Spring Boot's generic
-error JSON.
+error JSON. (That 500 is `DemoController`'s own unhandled exception. Split, the internal `/_modular`
+call itself answers `501 Not Implemented` — the exception carries `@ErrorStatus(501)` — and the caller
+still gets `ServiceVersionUnsupportedException` reconstructed.)
 
 ## Configuration reference
 

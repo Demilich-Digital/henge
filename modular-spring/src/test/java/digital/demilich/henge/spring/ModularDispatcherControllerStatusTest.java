@@ -3,6 +3,7 @@ package digital.demilich.henge.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import digital.demilich.henge.core.ErrorStatus;
+import digital.demilich.henge.core.ServiceVersionUnsupportedException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
@@ -36,6 +37,11 @@ class ModularDispatcherControllerStatusTest {
     @Test
     void subclassInheritsTheAnnotation() {
         assertThat(ModularDispatcherController.statusFor(new SpecificConflictException()).value()).isEqualTo(409);
+    }
+
+    @Test
+    void callingAMethodOutsideTheImplementationsVersionRangeIsA501() {
+        assertThat(ModularDispatcherController.statusFor(new ServiceVersionUnsupportedException("x")).value()).isEqualTo(501);
     }
 
     @Test
