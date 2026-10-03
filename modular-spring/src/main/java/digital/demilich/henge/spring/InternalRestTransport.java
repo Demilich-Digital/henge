@@ -6,9 +6,11 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
+import org.springframework.beans.factory.BeanClassLoaderAware;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.util.ClassUtils;
 import org.springframework.web.client.RestClientResponseException;
 
 /**
@@ -16,16 +18,29 @@ import org.springframework.web.client.RestClientResponseException;
  * {@code POST {baseUrl}{pathPrefix}/{service}/{version}/{method}} with a JSON array of
  * arguments, matching {@link ModularDispatcherController} on the receiving end.
  */
-class InternalRestTransport implements ServiceTransport {
+class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final ModularProperties properties;
 
+    /**
+     * Where remote exception types are looked up: the application's own classloader (what loaded
+     * the beans that threw them), not the loader of whichever interface declares the called method
+     * -- that one is {@code null} for an inherited JDK interface method and can be a parent loader
+     * that can't see the application's exception classes (e.g. under Spring Boot DevTools).
+     */
+    private volatile ClassLoader beanClassLoader = ClassUtils.getDefaultClassLoader();
+
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
+    }
+
+    @Override
+    public void setBeanClassLoader(ClassLoader classLoader) {
+        this.beanClassLoader = classLoader != null ? classLoader : ClassUtils.getDefaultClassLoader();
     }
 
     @Override
@@ -68,7 +83,7 @@ class InternalRestTransport implements ServiceTransport {
             RemoteServiceException fallback = new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
                     + invocation.methodName() + " -> " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
             throw RemoteExceptionReconstructor.reconstruct(
-                    e.getResponseBodyAsString(), invocation.method().getDeclaringClass().getClassLoader(), objectMapper, fallback);
+                    e.getResponseBodyAsString(), beanClassLoader, objectMapper, fallback);
         } catch (RestClientException e) {
             // The immediate exception's own message is often a generic wrapper (e.g. "Error while
             // extracting response..."); the actually-useful detail -- "connect timed out",

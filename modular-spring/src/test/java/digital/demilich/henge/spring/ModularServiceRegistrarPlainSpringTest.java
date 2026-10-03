@@ -9,7 +9,11 @@ import digital.demilich.henge.spring.fixture.counter.CounterServiceV2;
 import digital.demilich.henge.spring.fixture.counter.CounterTestConfig;
 import digital.demilich.henge.spring.fixture.counter.DefaultConsumer;
 import digital.demilich.henge.spring.fixture.counter.PinnedConsumer;
+import java.io.IOException;
 import java.lang.reflect.Proxy;
+import java.net.URL;
+import java.util.Enumeration;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -98,5 +102,37 @@ class ModularServiceRegistrarPlainSpringTest {
         "digital.demilich.henge.spring.fixture.counter", "digital.demilich.henge.spring.fixture"
     })
     static class OverlappingPackagesConfig {
+    }
+
+    /**
+     * Class files are discovered through the bean factory's classloader, not whatever the
+     * thread-context loader happens to be, so scanning and class loading can't disagree.
+     */
+    @Test
+    void scanningReadsClassFilesThroughTheContextClassLoader() {
+        AtomicInteger resourceLookups = new AtomicInteger();
+        ClassLoader counting = new ClassLoader(getClass().getClassLoader()) {
+            @Override
+            public Enumeration<URL> getResources(String name) throws IOException {
+                resourceLookups.incrementAndGet();
+                return super.getResources(name);
+            }
+        };
+        AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
+        ctx.setClassLoader(counting);
+        ctx.register(ScanOnlyConfig.class);
+        ctx.refresh();
+        try {
+            assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);
+            assertThat(resourceLookups.get()).isPositive();
+        } finally {
+            ctx.close();
+        }
+    }
+
+    /** No {@code @ComponentScan}: the only classpath scanning here is the registrar's own. */
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.fixture.counter")
+    static class ScanOnlyConfig {
     }
 }

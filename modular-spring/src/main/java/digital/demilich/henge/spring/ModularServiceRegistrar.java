@@ -19,6 +19,7 @@ import org.springframework.context.EnvironmentAware;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.context.annotation.ImportBeanDefinitionRegistrar;
 import org.springframework.core.env.Environment;
+import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.core.type.AnnotationMetadata;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.util.ClassUtils;
@@ -64,7 +65,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         // The bean factory's own classloader, not this class's -- under Spring Boot DevTools'
         // restart classloader (or any other classloader indirection), a candidate class found by
         // scanning the application's classpath may not be loadable via the classloader that
-        // happened to load this framework class.
+        // happened to load this framework class. The scanners read class files through the same
+        // loader, so what is found and what is loaded can never disagree.
         ClassLoader classLoader = (registry instanceof ConfigurableBeanFactory beanFactory)
                 ? beanFactory.getBeanClassLoader()
                 : ModularServiceRegistrar.class.getClassLoader();
@@ -169,7 +171,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
     private Set<Class<?>> discoverServiceInterfaces(Set<String> basePackages, ClassLoader classLoader) {
         Set<Class<?>> found = new LinkedHashSet<>();
-        ServiceInterfaceScanner scanner = new ServiceInterfaceScanner();
+        ServiceInterfaceScanner scanner = new ServiceInterfaceScanner(classLoader);
         for (String basePackage : basePackages) {
             for (BeanDefinition candidate : scanner.findCandidateComponents(basePackage)) {
                 found.add(resolveClass(candidate.getBeanClassName(), classLoader));
@@ -181,7 +183,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
     private Map<Class<?>, Map<Integer, Class<?>>> discoverServiceVersionImpls(
             Set<String> basePackages, Set<Class<?>> serviceInterfaces, ClassLoader classLoader) {
         Map<Class<?>, Map<Integer, Class<?>>> result = new LinkedHashMap<>();
-        ServiceVersionScanner scanner = new ServiceVersionScanner();
+        ServiceVersionScanner scanner = new ServiceVersionScanner(classLoader);
         for (String basePackage : basePackages) {
             for (BeanDefinition candidate : scanner.findCandidateComponents(basePackage)) {
                 Class<?> implClass = resolveClass(candidate.getBeanClassName(), classLoader);
@@ -281,8 +283,9 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
      */
     private static final class ServiceInterfaceScanner extends ClassPathScanningCandidateComponentProvider {
 
-        ServiceInterfaceScanner() {
+        ServiceInterfaceScanner(ClassLoader classLoader) {
             super(false);
+            setResourceLoader(new DefaultResourceLoader(classLoader));
             addIncludeFilter(new AnnotationTypeFilter(ModularService.class));
         }
 
@@ -300,8 +303,9 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
      */
     private static final class ServiceVersionScanner extends ClassPathScanningCandidateComponentProvider {
 
-        ServiceVersionScanner() {
+        ServiceVersionScanner(ClassLoader classLoader) {
             super(false);
+            setResourceLoader(new DefaultResourceLoader(classLoader));
             addIncludeFilter(new AnnotationTypeFilter(ServiceVersion.class));
         }
     }

@@ -142,6 +142,12 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   exception, no compatible constructor) falls back to `RemoteServiceException` alone, exactly as
   before. See `RemoteExceptionReconstructor`'s Javadoc for why checked exceptions are out of scope
   — it comes down to a real limitation of JDK dynamic proxies, not an oversight.
+  Reconstruction instantiates whichever `RuntimeException` subtype the remote response names
+  (public `(String)` constructor required), looked up through the application's own classloader —
+  not the loader of the interface that declares the called method, so it also works for methods
+  inherited from a JDK/third-party interface and under split-classloader setups such as Spring
+  Boot DevTools. Like everything else on `/_modular`, this assumes the peer is on a trusted
+  network: a compromised peer could pick any such exception type present on the caller's classpath.
 - **HTTP status of a failure.** The dispatcher answers `500` for anything it can't classify — a
   business exception that says nothing about its own status, or an unexpected error — and
   deliberately nothing else. An exception opts into a different status with
