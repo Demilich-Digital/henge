@@ -94,7 +94,9 @@ class ModularDispatcherController {
             result = targetMethod.invoke(bean, args);
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
-            throw new ModularDispatchException(statusFor(cause),
+            HttpStatusCode status = statusFor(cause);
+            logFailure(service, version, method, status, cause);
+            throw new ModularDispatchException(status,
                     describeFailure(service, method, cause), cause.getClass().getName(), cause.getMessage());
         } catch (IllegalAccessException e) {
             throw new ModularDispatchException(HttpStatus.INTERNAL_SERVER_ERROR,
@@ -201,6 +203,22 @@ class ModularDispatcherController {
             return HttpStatus.INTERNAL_SERVER_ERROR;
         }
         return HttpStatusCode.valueOf(code);
+    }
+
+    /**
+     * The caller only gets the exception's type and message, and Spring doesn't log an exception an
+     * {@code @ExceptionHandler} handles -- without this, the stack trace of a failure in a split
+     * service would exist nowhere. A {@code 4xx} (an {@link ErrorStatus} the service chose) is the
+     * caller's mistake rather than this process's, so it's only logged at debug.
+     */
+    private static void logFailure(String service, int version, String method, HttpStatusCode status, Throwable cause) {
+        String message = "Modular service '" + service + "' version " + version + " failed in '" + method
+                + "'; answering " + status.value();
+        if (status.is5xxServerError()) {
+            log.error(message, cause);
+        } else if (log.isDebugEnabled()) {
+            log.debug(message, cause);
+        }
     }
 
     private static String describeFailure(String service, String method, Throwable cause) {
