@@ -124,4 +124,17 @@ class ModularPropertiesTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("modular.transport.read-timeout=soon is not a duration");
     }
+
+    @Test
+    void pathPrefixMustStartWithASlashAndNotEndWithOne() {
+        assertThat(new ModularProperties(new StandardEnvironment()).getServerPathPrefix()).isEqualTo("/_modular");
+        for (String bad : new String[] {"_modular", "/_modular/", "/", ""}) {
+            StandardEnvironment environment = new StandardEnvironment();
+            environment.getPropertySources().addFirst(new MapPropertySource("test", Map.of("modular.server.path-prefix", bad)));
+            assertThatThrownBy(() -> new ModularProperties(environment).getServerPathPrefix())
+                    .as(bad)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("must start with '/' and not end with one");
+        }
+    }
 }

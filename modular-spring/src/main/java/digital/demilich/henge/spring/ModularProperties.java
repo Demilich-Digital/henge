@@ -33,9 +33,20 @@ public class ModularProperties {
         this.environment = environment;
     }
 
-    /** {@code modular.server.path-prefix}, default {@code /_modular}. */
+    /**
+     * {@code modular.server.path-prefix}, default {@code /_modular}. Must start with {@code /} and not
+     * end with one: the client appends it to a base URL and the server maps it, so {@code _modular}
+     * would make {@code http://host:8080_modular}, and a trailing {@code /} a {@code //} in the path.
+     * Empty is rejected too -- the Boot starter's security chain matches {@code prefix + "/**"}, which
+     * would then cover every POST the application serves.
+     */
     public String getServerPathPrefix() {
-        return environment.getProperty("modular.server.path-prefix", "/_modular");
+        String prefix = environment.getProperty("modular.server.path-prefix", "/_modular");
+        if (!prefix.startsWith("/") || prefix.endsWith("/")) {
+            throw new IllegalStateException("modular.server.path-prefix '" + prefix + "' must start with '/' and not end "
+                    + "with one, e.g. /_modular");
+        }
+        return prefix;
     }
 
     /** {@code modular.remote-url-template}; {@code null} if unset. */

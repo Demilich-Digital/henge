@@ -44,6 +44,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         this.objectMapper = objectMapper;
         this.properties = properties;
         requireKnownPlaceholders(properties.getRemoteUrlTemplate());
+        properties.getServerPathPrefix(); // validated at startup, not on the first call
     }
 
     /**

@@ -54,6 +54,13 @@ class ModularAutoConfigurationTest {
     }
 
     @Test
+    void aMalformedPathPrefixFailsAtStartup() {
+        runner.withPropertyValues("modular.server.path-prefix=_modular")
+                .run(ctx -> assertThat(ctx).hasFailed()
+                        .getFailure().hasStackTraceContaining("modular.server.path-prefix '_modular' must start with '/'"));
+    }
+
+    @Test
     void withoutEnableModularServicesTheRegistryIsAnEmptyFallback() {
         runner.run(ctx -> {
             assertThat(ctx).hasSingleBean(ModularServiceRegistry.class);

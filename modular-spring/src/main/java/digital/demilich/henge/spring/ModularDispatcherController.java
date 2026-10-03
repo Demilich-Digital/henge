@@ -55,6 +55,7 @@ class ModularDispatcherController {
         this.registry = registry;
         this.objectMapper = objectMapper;
         this.secret = SharedSecret.from(properties);
+        properties.getServerPathPrefix(); // validates it; the @RequestMapping above reads the same property
         if (!secret.isRequired()) {
             log.info("modular.transport.secret is not set: /_modular accepts calls without authentication and "
                     + "relies on network-level isolation.");
