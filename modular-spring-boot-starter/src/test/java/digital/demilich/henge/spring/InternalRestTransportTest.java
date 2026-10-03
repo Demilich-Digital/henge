@@ -2,6 +2,8 @@ package digital.demilich.henge.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
@@ -10,13 +12,15 @@ import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.mock.env.MockEnvironment;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 /**
  * Focused, deterministic tests for {@link InternalRestTransport} details that don't need a real
  * HTTP round trip (see {@link ModularServiceRemoteDispatchIntegrationTest} for the end-to-end
- * version) — {@code modular.remote-url-template} substitution, and that the configured
+ * version) — {@code modular.remote-url-template} substitution, base-URL normalization, and that the configured
  * connect/read timeouts actually bound how long a stalled call can hang.
  */
 class InternalRestTransportTest {
@@ -52,6 +56,25 @@ class InternalRestTransportTest {
                 new InternalRestTransport(RestClient.builder().build(), ModularTransportSupport.objectMapper(), properties);
 
         assertThat(transport.resolveFromTemplate("audit-service", 1)).isNull();
+    }
+
+    @Test
+    void trailingSlashOnTheBaseUrlDoesNotDoubleTheSeparator() throws Exception {
+        MockEnvironment environment = new MockEnvironment()
+                .withProperty("modular.services.echo-service.url", "http://echo-host:8080/");
+        ModularProperties properties = new ModularProperties(environment);
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("http://echo-host:8080/_modular/echo-service/1/echo"))
+                .andRespond(withSuccess("\"hi\"", MediaType.APPLICATION_JSON));
+        InternalRestTransport transport =
+                new InternalRestTransport(builder.build(), ModularTransportSupport.objectMapper(), properties);
+
+        Method echoMethod = EchoService.class.getMethod("echo", String.class);
+        Object result = transport.invoke(new ServiceInvocation("echo-service", 1, "echo", echoMethod, new Object[] {"hi"}));
+
+        assertThat(result).isEqualTo("hi");
+        server.verify();
     }
 
     @Test

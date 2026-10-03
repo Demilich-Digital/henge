@@ -56,6 +56,11 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
                     + ".url for a per-version override, or modular.remote-url-template for a shared convention)");
         }
 
+        // "http://audit:8080/" is a natural way to write a base URL; without this it would produce
+        // "//_modular/...", which the server doesn't route.
+        while (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
         String uri = url + properties.getServerPathPrefix() + "/" + invocation.serviceName() + "/"
                 + invocation.serviceVersion() + "/" + invocation.methodName();
 
