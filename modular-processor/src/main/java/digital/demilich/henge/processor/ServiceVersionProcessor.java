@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
@@ -164,7 +165,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             } else {
                 messager.printMessage(Diagnostic.Kind.ERROR,
                         "@ModularService can only be applied to an interface, but " + element + " is a "
-                                + element.getKind().toString().toLowerCase().replace('_', ' ')
+                                + describeKind(element.getKind())
                                 + " -- it would silently never be registered as a service.",
                         element);
             }
@@ -443,6 +444,11 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         return method.getEnclosingElement() instanceof TypeElement owner && !owner.getTypeParameters().isEmpty();
     }
 
+    /** {@code ANNOTATION_TYPE} -> "annotation type"; {@code Locale.ROOT} so a Turkish locale doesn't print "ınterface". */
+    private static String describeKind(ElementKind kind) {
+        return kind.toString().toLowerCase(Locale.ROOT).replace('_', ' ');
+    }
+
     private static String describeMethod(ExecutableElement method) {
         return method.getEnclosingElement() + "#" + method;
     }
@@ -497,7 +503,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         ElementKind kind = implElement.getKind();
         String problem = null;
         if (kind != ElementKind.CLASS && kind != ElementKind.RECORD) {
-            problem = "it is a " + kind.toString().toLowerCase().replace('_', ' ') + ", not a class";
+            problem = "it is a " + describeKind(kind) + ", not a class";
         } else if (implElement.getModifiers().contains(Modifier.ABSTRACT)) {
             problem = "it is abstract, so the framework can't instantiate it";
         } else if (implElement.getNestingKind() == NestingKind.MEMBER && !implElement.getModifiers().contains(Modifier.STATIC)) {
