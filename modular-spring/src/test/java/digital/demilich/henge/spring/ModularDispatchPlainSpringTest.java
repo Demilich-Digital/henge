@@ -153,6 +153,43 @@ class ModularDispatchPlainSpringTest {
         }
     }
 
+    /**
+     * The secret is checked before the request body is touched: an unauthenticated caller sending
+     * malformed JSON gets 403, not a 400 that proves the endpoint parsed their input. With the
+     * right secret the same body is a 400.
+     */
+    @Test
+    void secretIsCheckedBeforeTheBodyIsParsed() throws Exception {
+        RunningServer server = startServer(Map.of("modular.transport.secret", "s3cr3t"));
+        try {
+            String uri = "http://localhost:" + server.port() + "/_modular/echo-service/1/echo";
+            assertThatThrownBy(() -> RestClient.create()
+                            .post()
+                            .uri(uri)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("{ not json")
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOfSatisfying(RestClientResponseException.class,
+                            e -> assertThat(e.getStatusCode().value()).isEqualTo(403));
+
+            assertThatThrownBy(() -> RestClient.create()
+                            .post()
+                            .uri(uri)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .header(ModularDispatcherController.SECRET_HEADER, "s3cr3t")
+                            .body("{ not json")
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOfSatisfying(RestClientResponseException.class, e -> {
+                        assertThat(e.getStatusCode().value()).isEqualTo(400);
+                        assertThat(e.getResponseBodyAsString()).contains("not valid JSON");
+                    });
+        } finally {
+            server.stop();
+        }
+    }
+
     @Test
     void nonArrayRequestBodyIsRejectedNotBoundAsNull() throws Exception {
         RunningServer server = startServer(Map.of());

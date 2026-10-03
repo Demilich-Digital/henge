@@ -1,7 +1,10 @@
 package digital.demilich.henge.spring;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -17,7 +20,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -68,8 +70,11 @@ class ModularDispatcherController {
             @PathVariable("version") int version,
             @PathVariable("method") String method,
             @RequestHeader(value = SECRET_HEADER, required = false) String providedSecret,
-            @RequestBody(required = false) JsonNode body) {
+            InputStream requestBody) {
 
+        // The body is taken as a raw stream, not @RequestBody JsonNode: Spring would parse a
+        // @RequestBody before this method runs, letting an unauthenticated caller make the server
+        // parse arbitrary JSON (and answer 400 instead of 403) before the secret is ever checked.
         requireValidSecret(providedSecret);
 
         ModularServiceDescriptor descriptor = registry.find(service, version)
@@ -85,7 +90,7 @@ class ModularDispatcherController {
         // Looked up by bean name, not just type: multiple versions of the same interface may be
         // embedded in this process simultaneously, which would make a type-only lookup ambiguous.
         Object bean = applicationContext.getBean(descriptor.beanName(), descriptor.interfaceType());
-        Object[] args = bindArguments(targetMethod, body);
+        Object[] args = bindArguments(targetMethod, readBody(requestBody));
 
         Object result;
         try {
@@ -126,9 +131,19 @@ class ModularDispatcherController {
         }
     }
 
+    private JsonNode readBody(InputStream requestBody) {
+        try {
+            return objectMapper.readTree(requestBody);
+        } catch (JsonProcessingException e) {
+            throw new ModularDispatchException(HttpStatus.BAD_REQUEST, "Request body is not valid JSON");
+        } catch (IOException e) {
+            throw new ModularDispatchException(HttpStatus.BAD_REQUEST, "Failed to read request body");
+        }
+    }
+
     private Object[] bindArguments(Method method, JsonNode body) {
         Class<?>[] paramTypes = method.getParameterTypes();
-        boolean noBody = body == null || body.isNull();
+        boolean noBody = body == null || body.isNull() || body.isMissingNode();
         if (!noBody && !body.isArray()) {
             throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
                     "Request body must be a JSON array of arguments for " + method.getName());
