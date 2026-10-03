@@ -9,6 +9,7 @@ import digital.demilich.henge.spring.fixture.counter.CounterServiceV2;
 import digital.demilich.henge.spring.fixture.counter.CounterTestConfig;
 import digital.demilich.henge.spring.fixture.counter.DefaultConsumer;
 import digital.demilich.henge.spring.fixture.counter.PinnedConsumer;
+import digital.demilich.henge.spring.fixture.echo.EchoTestConfig;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.net.URL;
@@ -124,6 +125,14 @@ class ModularServiceRegistrarPlainSpringTest {
     @Configuration
     @EnableModularServices(basePackages = "digital.demilich.henge.spring.duplicateversion")
     static class DuplicateVersionConfig {
+    }
+
+    @Test
+    void aSecondEnableModularServicesFailsFastNamingBoth() {
+        assertThatThrownBy(() -> new AnnotationConfigApplicationContext(CounterTestConfig.class, EchoTestConfig.class).close())
+                .hasStackTraceContaining("@EnableModularServices is declared on both")
+                .hasStackTraceContaining(CounterTestConfig.class.getName())
+                .hasStackTraceContaining(EchoTestConfig.class.getName());
     }
 
     @Test

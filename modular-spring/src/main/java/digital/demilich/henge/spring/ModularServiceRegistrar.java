@@ -57,6 +57,9 @@ import org.springframework.util.ClassUtils;
  */
 class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, EnvironmentAware {
 
+    private static final String REGISTRY_BEAN_NAME = "modularServiceRegistry";
+    private static final String IMPORTED_BY_ATTRIBUTE = ModularServiceRegistrar.class.getName() + ".importedBy";
+
     private Environment environment;
 
     @Override
@@ -66,6 +69,16 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
     @Override
     public void registerBeanDefinitions(AnnotationMetadata importingClassMetadata, BeanDefinitionRegistry registry) {
+        // Each run registers its own registry of embedded services for the dispatcher; a second one
+        // would replace the first (silently in plain Spring, where /_modular then 404s the first
+        // run's services) or fail on the duplicate bean name (Boot) without saying why.
+        if (registry.containsBeanDefinition(REGISTRY_BEAN_NAME)) {
+            Object firstImporter = registry.getBeanDefinition(REGISTRY_BEAN_NAME).getAttribute(IMPORTED_BY_ATTRIBUTE);
+            throw new IllegalStateException("@EnableModularServices is declared on both " + firstImporter + " and "
+                    + importingClassMetadata.getClassName() + "; declare it once, listing every base package in "
+                    + "basePackages/basePackageClasses.");
+        }
+
         // The bean factory's own classloader, not this class's -- under Spring Boot DevTools'
         // restart classloader (or any other classloader indirection), a candidate class found by
         // scanning the application's classpath may not be loadable via the classloader that
@@ -161,10 +174,11 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                     + namesToInterfaces.keySet());
         }
 
-        registry.registerBeanDefinition("modularServiceRegistry",
-                BeanDefinitionBuilder.genericBeanDefinition(ModularServiceRegistry.class)
-                        .addConstructorArgValue(embedded)
-                        .getBeanDefinition());
+        BeanDefinition registryDefinition = BeanDefinitionBuilder.genericBeanDefinition(ModularServiceRegistry.class)
+                .addConstructorArgValue(embedded)
+                .getBeanDefinition();
+        registryDefinition.setAttribute(IMPORTED_BY_ATTRIBUTE, importingClassMetadata.getClassName());
+        registry.registerBeanDefinition(REGISTRY_BEAN_NAME, registryDefinition);
     }
 
     private static void addServiceVersionQualifier(RootBeanDefinition definition, Class<?> serviceInterface, int version) {
