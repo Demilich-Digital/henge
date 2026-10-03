@@ -3,6 +3,7 @@ package digital.demilich.henge.spring;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import digital.demilich.henge.core.ErrorStatus;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
@@ -15,6 +16,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -97,7 +99,7 @@ class ModularDispatcherController {
             result = targetMethod.invoke(bean, args);
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
-            throw new ModularDispatchException(HttpStatus.INTERNAL_SERVER_ERROR,
+            throw new ModularDispatchException(statusFor(cause),
                     describeFailure(service, method, cause), cause.getClass().getName(), cause.getMessage());
         } catch (IllegalAccessException e) {
             throw new ModularDispatchException(HttpStatus.INTERNAL_SERVER_ERROR,
@@ -166,6 +168,25 @@ class ModularDispatcherController {
             }
         }
         return args;
+    }
+
+    /**
+     * {@code 500} unless the exception's class (or a superclass) carries {@link ErrorStatus} with a
+     * valid {@code 4xx}/{@code 5xx} code. {@code 500} is deliberately what this framework answers
+     * for failures it can't classify, so an annotation is the only way to get anything else.
+     */
+    static HttpStatusCode statusFor(Throwable cause) {
+        ErrorStatus annotation = cause.getClass().getAnnotation(ErrorStatus.class);
+        if (annotation == null) {
+            return HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+        int code = annotation.value();
+        if (code < 400 || code > 599) {
+            log.warn("Ignoring @ErrorStatus(" + code + ") on " + cause.getClass().getName()
+                    + " -- must be a 4xx or 5xx status; answering 500 instead.");
+            return HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+        return HttpStatusCode.valueOf(code);
     }
 
     private static String describeFailure(String service, String method, Throwable cause) {

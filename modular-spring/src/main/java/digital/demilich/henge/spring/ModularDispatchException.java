@@ -1,14 +1,14 @@
 package digital.demilich.henge.spring;
 
-import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 
 class ModularDispatchException extends RuntimeException {
 
-    private final HttpStatus status;
+    private final HttpStatusCode status;
     private final String remoteExceptionType;
     private final String remoteExceptionMessage;
 
-    ModularDispatchException(HttpStatus status, String message) {
+    ModularDispatchException(HttpStatusCode status, String message) {
         this(status, message, null, null);
     }
 
@@ -18,14 +18,14 @@ class ModularDispatchException extends RuntimeException {
      * {@code remoteExceptionType}/{@code remoteExceptionMessage} let the caller attempt to
      * reconstruct that original exception; see {@link RemoteExceptionReconstructor}.
      */
-    ModularDispatchException(HttpStatus status, String message, String remoteExceptionType, String remoteExceptionMessage) {
+    ModularDispatchException(HttpStatusCode status, String message, String remoteExceptionType, String remoteExceptionMessage) {
         super(message);
         this.status = status;
         this.remoteExceptionType = remoteExceptionType;
         this.remoteExceptionMessage = remoteExceptionMessage;
     }
 
-    HttpStatus getStatus() {
+    HttpStatusCode getStatus() {
         return status;
     }
 

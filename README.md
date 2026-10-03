@@ -138,6 +138,15 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   exception, no compatible constructor) falls back to `RemoteServiceException` alone, exactly as
   before. See `RemoteExceptionReconstructor`'s Javadoc for why checked exceptions are out of scope
   — it comes down to a real limitation of JDK dynamic proxies, not an oversight.
+- **HTTP status of a failure.** The dispatcher answers `500` for anything it can't classify — a
+  business exception that says nothing about its own status, or an unexpected error — and
+  deliberately nothing else. An exception opts into a different status with
+  `@ErrorStatus(404)` (`digital.demilich.henge.core`; `4xx`/`5xx` only, inherited by subclasses),
+  e.g. `@ErrorStatus(404) class WidgetNotFoundException extends RuntimeException`. The caller still
+  gets the original exception reconstructed; only the wire status changes, and it has no effect when
+  the service is embedded. The dispatcher's own failures use `400` (malformed request/arguments),
+  `403` (bad secret) and `404` (unknown service/version/method); those bodies carry no exception
+  type, so they stay distinguishable from an annotated business exception that reuses the code.
 - The runtime wiring itself is just `BeanDefinitionRegistry` manipulation, `java.lang.reflect.Proxy`,
   and Spring's own `@Primary`/qualifier autowiring machinery — no bytecode generation there. See
   the Javadoc on
@@ -258,7 +267,7 @@ pattern for any module that calls into a `@ModularService`.
 
 | Module | Contents |
 |---|---|
-| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, the `ServiceTransport` SPI, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, the `ServiceTransport` SPI, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
 | `modular-processor` | The `@AddedIn`/`@DeprecatedSince` annotation processor: generates `{Interface}Skeleton` classes and validates `@ServiceVersion` implementations against them. Depends only on `modular-core` — no Spring. |
 | `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
 | `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically and adds the `modular.server.enabled` property gate — the only things a Boot classpath gets "for free" that a plain-Spring one doesn't. |

@@ -17,7 +17,11 @@ public class EchoServiceImpl implements EchoService {
 
     @Override
     public void explode(String reason) {
-        throw new EchoFailureException(reason);
+        switch (reason) {
+            case "not-found" -> throw new EchoNotFoundException(reason);
+            case "bad-status" -> throw new EchoBadStatusException(reason);
+            default -> throw new EchoFailureException(reason);
+        }
     }
 
     @Override

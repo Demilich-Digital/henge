@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import digital.demilich.henge.core.ImmutableList;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.spring.fixture.echo.EchoFailureException;
+import digital.demilich.henge.spring.fixture.echo.EchoNotFoundException;
 import digital.demilich.henge.spring.fixture.echo.EchoService;
 import digital.demilich.henge.spring.fixture.echo.EchoServiceImpl;
 import digital.demilich.henge.spring.fixture.echo.EchoTestConfig;
@@ -158,6 +159,61 @@ class ModularDispatchPlainSpringTest {
      * malformed JSON gets 403, not a 400 that proves the endpoint parsed their input. With the
      * right secret the same body is a 400.
      */
+    /**
+     * An unannotated business exception is a 500 (this framework's "unclassified failure" status);
+     * one annotated {@code @ErrorStatus(404)} is answered with that status instead, still carrying
+     * its type so the client reconstructs it; an out-of-range annotation value falls back to 500.
+     */
+    @Test
+    void businessExceptionStatusComesFromErrorStatusAnnotation() throws Exception {
+        RunningServer server = startServer(Map.of());
+        try {
+            assertThat(explodeStatusAndBody(server, "boom"))
+                    .satisfies(r -> {
+                        assertThat(r.status()).isEqualTo(500);
+                        assertThat(r.body()).contains("EchoFailureException");
+                    });
+            assertThat(explodeStatusAndBody(server, "not-found"))
+                    .satisfies(r -> {
+                        assertThat(r.status()).isEqualTo(404);
+                        assertThat(r.body()).contains("EchoNotFoundException");
+                    });
+            assertThat(explodeStatusAndBody(server, "bad-status").status()).isEqualTo(500);
+
+            AnnotationConfigApplicationContext clientContext = startClient(Map.of(
+                    "modular.services.echo-service.mode", "internal-rest",
+                    "modular.services.echo-service.url", "http://localhost:" + server.port()));
+            try {
+                EchoService proxied = clientContext.getBean(EchoService.class);
+                assertThatThrownBy(() -> proxied.explode("not-found"))
+                        .isInstanceOf(EchoNotFoundException.class)
+                        .hasMessage("not-found");
+            } finally {
+                clientContext.close();
+            }
+        } finally {
+            server.stop();
+        }
+    }
+
+    private record StatusAndBody(int status, String body) {
+    }
+
+    private static StatusAndBody explodeStatusAndBody(RunningServer server, String reason) {
+        try {
+            RestClient.create()
+                    .post()
+                    .uri("http://localhost:" + server.port() + "/_modular/echo-service/1/explode")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body("[\"" + reason + "\"]")
+                    .retrieve()
+                    .toBodilessEntity();
+            throw new AssertionError("expected an error response");
+        } catch (RestClientResponseException e) {
+            return new StatusAndBody(e.getStatusCode().value(), e.getResponseBodyAsString());
+        }
+    }
+
     @Test
     void secretIsCheckedBeforeTheBodyIsParsed() throws Exception {
         RunningServer server = startServer(Map.of("modular.transport.secret", "s3cr3t"));
