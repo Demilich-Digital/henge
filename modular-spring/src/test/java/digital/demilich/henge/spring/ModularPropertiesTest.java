@@ -53,13 +53,23 @@ class ModularPropertiesTest {
     }
 
     @Test
-    void explicitVersionsRejectsANonIntegerVersionKey() {
-        ModularProperties properties = new ModularProperties(
-                environmentWithEnvVar("MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_BETA_MODE", "internal-rest"));
+    void explicitVersionsRejectsANonIntegerVersionKeyInDottedForm() {
+        StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("yaml",
+                Map.of("modular.services.audit-service.versions.beta.mode", "internal-rest")));
+        ModularProperties properties = new ModularProperties(environment);
 
         assertThatThrownBy(() -> properties.service("audit-service").explicitVersions())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("versions must be integers");
+    }
+
+    @Test
+    void explicitVersionsIgnoresAnotherServicesEnvironmentVariableThatSharesItsPrefix() {
+        // Service "x-versions"'s mode, which also starts with service "x"'s MODULAR_SERVICES_X_VERSIONS_ prefix.
+        ModularProperties properties = new ModularProperties(environmentWithEnvVar("MODULAR_SERVICES_X_VERSIONS_MODE", "embedded"));
+
+        assertThat(properties.service("x").explicitVersions()).isEmpty();
     }
 
     @Test

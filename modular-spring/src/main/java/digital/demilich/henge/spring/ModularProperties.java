@@ -189,9 +189,9 @@ public class ModularProperties {
             for (PropertySource<?> source : configurable.getPropertySources()) {
                 if (source instanceof EnumerablePropertySource<?> enumerable) {
                     for (String propertyName : enumerable.getPropertyNames()) {
-                        Integer version = extractVersion(propertyName, dottedPrefix, '.');
+                        Integer version = extractVersion(propertyName, dottedPrefix, '.', true);
                         if (version == null) {
-                            version = extractVersion(propertyName, envStylePrefix, '_');
+                            version = extractVersion(propertyName, envStylePrefix, '_', false);
                         }
                         if (version != null) {
                             versions.add(version);
@@ -202,7 +202,14 @@ public class ModularProperties {
             return versions;
         }
 
-        private Integer extractVersion(String propertyName, String prefix, char separator) {
+        /**
+         * @param strict whether a non-integer version segment is an error. True for the dotted form,
+         *     where it can only be a typo; false for the environment-variable form, which is
+         *     ambiguous by construction -- with services {@code x} and {@code x-versions},
+         *     {@code MODULAR_SERVICES_X_VERSIONS_MODE} (the latter's mode) also starts with the
+         *     former's {@code MODULAR_SERVICES_X_VERSIONS_} prefix.
+         */
+        private Integer extractVersion(String propertyName, String prefix, char separator, boolean strict) {
             if (!propertyName.startsWith(prefix)) {
                 return null;
             }
@@ -215,6 +222,9 @@ public class ModularProperties {
             try {
                 return Integer.parseInt(version);
             } catch (NumberFormatException e) {
+                if (!strict) {
+                    return null;
+                }
                 throw new IllegalStateException("Property '" + propertyName + "' names version '" + version + "' of modular service '"
                         + name + "', but versions must be integers (e.g. modular.services." + name + ".versions.2.mode)");
             }
