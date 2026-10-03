@@ -8,6 +8,9 @@ import digital.demilich.henge.core.ServiceTransport;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.net.URI;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.beans.factory.BeanClassLoaderAware;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
@@ -21,6 +24,8 @@ import org.springframework.web.client.RestClientResponseException;
  * arguments, matching {@link ModularDispatcherController} on the receiving end.
  */
 class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
+
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\{[^}]*}");
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
@@ -38,6 +43,24 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        requireKnownPlaceholders(properties.getRemoteUrlTemplate());
+    }
+
+    /**
+     * Checked at startup: an unknown placeholder (say {@code {namespace}}) would otherwise fail every
+     * call to every service that falls back to the template, and only when the call is made.
+     */
+    private static void requireKnownPlaceholders(String template) {
+        if (template == null) {
+            return;
+        }
+        Matcher placeholder = PLACEHOLDER.matcher(template);
+        while (placeholder.find()) {
+            if (!placeholder.group().equals("{service}") && !placeholder.group().equals("{version}")) {
+                throw new IllegalStateException("modular.remote-url-template '" + template + "' contains "
+                        + placeholder.group() + "; only {service} and {version} are substituted");
+            }
+        }
     }
 
     @Override
@@ -63,8 +86,18 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         while (url.endsWith("/")) {
             url = url.substring(0, url.length() - 1);
         }
-        String uri = url + properties.getServerPathPrefix() + "/" + invocation.serviceName() + "/"
+        String endpoint = url + properties.getServerPathPrefix() + "/" + invocation.serviceName() + "/"
                 + invocation.serviceVersion() + "/" + invocation.methodName();
+        // A URI, not a String: RestClient would treat a String as a URI template and try to expand
+        // any '{...}' in it.
+        URI uri;
+        try {
+            uri = URI.create(endpoint);
+        } catch (IllegalArgumentException e) {
+            throw new RemoteServiceException("Invalid url '" + endpoint + "' for modular service '" + invocation.serviceName()
+                    + "' version '" + invocation.serviceVersion() + "' -- check modular.services." + invocation.serviceName()
+                    + ".url (or its per-version override) and modular.remote-url-template", e);
+        }
 
         byte[] body = writeArguments(invocation);
 

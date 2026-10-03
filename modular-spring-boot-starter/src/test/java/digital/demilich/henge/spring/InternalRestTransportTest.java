@@ -59,6 +59,29 @@ class InternalRestTransportTest {
     }
 
     @Test
+    void anUnknownTemplatePlaceholderFailsAtStartup() {
+        ModularProperties properties = new ModularProperties(new MockEnvironment()
+                .withProperty("modular.remote-url-template", "http://{service}.{namespace}.svc:8080"));
+
+        assertThatThrownBy(() -> new InternalRestTransport(RestClient.builder().build(), ModularTransportSupport.objectMapper(), properties))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("{namespace}");
+    }
+
+    @Test
+    void aMalformedUrlFailsAsARemoteServiceExceptionNamingTheConfig() throws Exception {
+        ModularProperties properties = new ModularProperties(new MockEnvironment()
+                .withProperty("modular.services.echo-service.url", "http://echo host:8080"));
+        InternalRestTransport transport =
+                new InternalRestTransport(RestClient.builder().build(), ModularTransportSupport.objectMapper(), properties);
+        Method echoMethod = EchoService.class.getMethod("echo", String.class);
+
+        assertThatThrownBy(() -> transport.invoke(new ServiceInvocation("echo-service", 1, "echo", echoMethod, new Object[] {"hi"})))
+                .isInstanceOf(RemoteServiceException.class)
+                .hasMessageContaining("modular.services.echo-service.url");
+    }
+
+    @Test
     void trailingSlashOnTheBaseUrlDoesNotDoubleTheSeparator() throws Exception {
         MockEnvironment environment = new MockEnvironment()
                 .withProperty("modular.services.echo-service.url", "http://echo-host:8080/");
