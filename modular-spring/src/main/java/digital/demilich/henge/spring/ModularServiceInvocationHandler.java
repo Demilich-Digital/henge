@@ -2,7 +2,6 @@ package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
-import digital.demilich.henge.core.ServiceMethod;
 import digital.demilich.henge.core.ServiceTransport;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -30,7 +29,7 @@ class ModularServiceInvocationHandler implements InvocationHandler {
             };
         }
 
-        String methodName = rpcName(method);
+        String methodName = ModularServiceDescriptor.rpcName(method);
         Object[] callArgs = args == null ? new Object[0] : args;
         ServiceInvocation invocation = new ServiceInvocation(serviceName, serviceVersion, methodName, method, callArgs);
 
@@ -47,10 +46,5 @@ class ModularServiceInvocationHandler implements InvocationHandler {
             throw new RemoteServiceException(
                     "Failed to invoke modular service '" + serviceName + "#" + methodName + "'", e);
         }
-    }
-
-    private static String rpcName(Method method) {
-        ServiceMethod override = method.getAnnotation(ServiceMethod.class);
-        return (override != null && !override.name().isBlank()) ? override.name() : method.getName();
     }
 }

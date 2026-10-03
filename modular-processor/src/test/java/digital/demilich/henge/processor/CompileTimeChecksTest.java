@@ -108,6 +108,32 @@ class CompileTimeChecksTest {
     }
 
     @Test
+    void serviceNamesMustBeLowercaseKebabCase() {
+        assertThat(compile(src("nameok", "Svc", "@ModularService(name = \"billing-v2\") public interface Svc { void a(); }")).success())
+                .isTrue();
+        assertThat(compile(src("namedefault", "BillingService", "@ModularService public interface BillingService { void a(); }")).success())
+                .isTrue();
+
+        for (String bad : new String[] {"billing/v2", "billing.v2", "Billing", "billing_v2", "billing--v2", "-billing"}) {
+            var result = compile(src("namebad", "Svc", "@ModularService(name = \"" + bad + "\") public interface Svc { void a(); }"));
+            assertThat(result.success()).as(bad).isFalse();
+            assertThat(result.hasErrorContaining("lowercase kebab case")).as(bad).isTrue();
+        }
+
+        var badDefault = compile(src("namebaddefault", "Billing_Service", "@ModularService public interface Billing_Service { void a(); }"));
+        assertThat(badDefault.success()).isFalse();
+        assertThat(badDefault.hasErrorContaining("'billing_-service'")).isTrue();
+    }
+
+    @Test
+    void serviceMethodNamesMustBeJavaIdentifiers() {
+        var result = compile(src("methodbad", "Svc", "@ModularService public interface Svc { @ServiceMethod(name = \"a/b\") void a(); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("must be a Java identifier")).isTrue();
+    }
+
+    @Test
     void staticMethodIsRejectedButDefaultAndPrivateAreFine() {
         var rejected = compile(src("static1", "Svc", "@ModularService public interface Svc { static String s() { return \"\"; } String a(); }"));
         assertThat(rejected.success()).isFalse();

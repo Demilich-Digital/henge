@@ -1,7 +1,9 @@
 package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.ModularService;
+import digital.demilich.henge.core.ServiceNames;
 import digital.demilich.henge.core.ServiceVersion;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -82,7 +84,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
         for (Class<?> serviceInterface : serviceInterfaces) {
             ModularService annotation = serviceInterface.getAnnotation(ModularService.class);
-            String name = defaultName(serviceInterface, annotation);
+            String name = ServiceNames.serviceName(annotation.name(), serviceInterface.getSimpleName());
+            validateNames(serviceInterface, name);
 
             Class<?> existingOwner = namesToInterfaces.putIfAbsent(name, serviceInterface);
             if (existingOwner != null) {
@@ -236,24 +239,21 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         return basePackages;
     }
 
-    private static String defaultName(Class<?> serviceInterface, ModularService annotation) {
-        if (!annotation.name().isBlank()) {
-            return annotation.name();
+    /**
+     * The same rule {@code modular-processor} enforces at compile time (see {@link ServiceNames}),
+     * repeated here for interfaces compiled without it: both names end up as dispatch-path segments,
+     * and a bad one would only fail -- as a 404 -- once the service is split.
+     */
+    private static void validateNames(Class<?> serviceInterface, String name) {
+        if (!ServiceNames.isValidServiceName(name)) {
+            throw new IllegalStateException(ServiceNames.invalidServiceNameMessage(name, serviceInterface.getName()));
         }
-        String simple = serviceInterface.getSimpleName();
-        StringBuilder kebab = new StringBuilder();
-        for (int i = 0; i < simple.length(); i++) {
-            char c = simple.charAt(i);
-            if (Character.isUpperCase(c)) {
-                if (i > 0) {
-                    kebab.append('-');
-                }
-                kebab.append(Character.toLowerCase(c));
-            } else {
-                kebab.append(c);
+        for (Method method : serviceInterface.getMethods()) {
+            String rpcName = ModularServiceDescriptor.rpcName(method);
+            if (!ServiceNames.isValidMethodName(rpcName)) {
+                throw new IllegalStateException(ServiceNames.invalidMethodNameMessage(rpcName, serviceInterface.getName()));
             }
         }
-        return kebab.toString();
     }
 
     /**

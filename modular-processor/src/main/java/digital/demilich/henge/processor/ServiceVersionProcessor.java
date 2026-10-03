@@ -4,6 +4,7 @@ import digital.demilich.henge.core.AddedIn;
 import digital.demilich.henge.core.DeprecatedSince;
 import digital.demilich.henge.core.ModularService;
 import digital.demilich.henge.core.ServiceMethod;
+import digital.demilich.henge.core.ServiceNames;
 import digital.demilich.henge.core.ServiceVersion;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -141,6 +142,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 TypeElement interfaceElement = (TypeElement) element;
                 generateSkeletonIfNeeded(interfaceElement);
                 validateMethodShapes(interfaceElement);
+                validateNames(interfaceElement);
                 validateVersionRanges(interfaceElement);
                 validateNoCheckedExceptions(interfaceElement);
                 validateBoundaryTypes(interfaceElement);
@@ -345,6 +347,23 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                                 + rpcName + "' on " + interfaceElement.getQualifiedName() + "; overloaded methods are not "
                                 + "supported -- rename one or give it @ServiceMethod(name = ...).",
                         method);
+            }
+        }
+    }
+
+    /** The service name and every RPC method name end up as dispatch-path segments; see {@link ServiceNames}. */
+    private void validateNames(TypeElement interfaceElement) {
+        String explicitName = interfaceElement.getAnnotation(ModularService.class).name();
+        String serviceName = ServiceNames.serviceName(explicitName, interfaceElement.getSimpleName().toString());
+        if (!ServiceNames.isValidServiceName(serviceName)) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    ServiceNames.invalidServiceNameMessage(serviceName, interfaceElement.getQualifiedName().toString()), interfaceElement);
+        }
+        for (ExecutableElement method : serviceMethods(interfaceElement)) {
+            String rpcName = rpcName(method);
+            if (!ServiceNames.isValidMethodName(rpcName)) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        ServiceNames.invalidMethodNameMessage(rpcName, interfaceElement.getQualifiedName().toString()), method);
             }
         }
     }

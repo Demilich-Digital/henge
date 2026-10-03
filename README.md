@@ -285,7 +285,11 @@ method behave identically. Two ways they silently don't, unless something stops 
 The same processor also checks the *shape* of a `@ModularService` interface, over its own and its
 superinterfaces' methods alike (those are exactly the methods the dispatcher exposes): no
 overloaded RPC names (rename one, or use `@ServiceMethod(name = ...)`), no static methods, no empty
-or non-positive `@AddedIn`/`@DeprecatedSince` ranges, and `@ModularService` only on interfaces.
+or non-positive `@AddedIn`/`@DeprecatedSince` ranges, and `@ModularService` only on interfaces. Names
+end up in the dispatch path and in config keys, so a service name (explicit, or the interface's simple
+name in kebab case: `AuditService` → `audit-service`) must be lowercase kebab case, and an RPC method
+name a Java identifier; the registrar repeats this check at startup for interfaces compiled without the
+processor.
 `@ServiceVersion` must sit on a concrete top-level or static nested class (or record) that
 actually implements a `@ModularService` interface. Each of these would otherwise compile and then
 fail — or silently do nothing — at startup.

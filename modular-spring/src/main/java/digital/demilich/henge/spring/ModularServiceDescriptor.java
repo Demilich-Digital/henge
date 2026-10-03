@@ -31,7 +31,8 @@ public record ModularServiceDescriptor(
         return new ModularServiceDescriptor(name, version, interfaceType, beanName, Map.copyOf(methods));
     }
 
-    private static String rpcName(Method method) {
+    /** The dispatch-path name of {@code method}: {@code @ServiceMethod(name)} if set, else the Java name. */
+    static String rpcName(Method method) {
         ServiceMethod override = method.getAnnotation(ServiceMethod.class);
         return (override != null && !override.name().isBlank()) ? override.name() : method.getName();
     }

@@ -26,7 +26,9 @@ public @interface ModularService {
 
     /**
      * Logical service name, used as the config key ({@code modular.services.<name>.*})
-     * and in the dispatch path. Defaults to the interface's simple name.
+     * and in the dispatch path. Defaults to the interface's simple name in kebab case
+     * ({@code AuditService} -> {@code audit-service}). Must be lowercase kebab case -- see
+     * {@link ServiceNames}.
      */
     String name() default "";
 

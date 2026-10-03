@@ -91,6 +91,18 @@ class ModularServiceRegistrarPlainSpringTest {
     }
 
     @Test
+    void anInvalidServiceNameFailsAtStartupEvenWithoutTheProcessor() {
+        assertThatThrownBy(() -> new AnnotationConfigApplicationContext(BadNameConfig.class).close())
+                .hasStackTraceContaining("'billing/v2'")
+                .hasStackTraceContaining("lowercase kebab case");
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.badname")
+    static class BadNameConfig {
+    }
+
+    @Test
     void overlappingBasePackagesDoNotReportADuplicateImplementation() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(OverlappingPackagesConfig.class)) {
             assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);
