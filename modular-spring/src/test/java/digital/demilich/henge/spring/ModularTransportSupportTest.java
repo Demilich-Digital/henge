@@ -100,6 +100,26 @@ class ModularTransportSupportTest {
     }
 
     @Test
+    void mapKeysTheProcessorAllowsRoundTrip() throws Exception {
+        UUID uuid = UUID.randomUUID();
+        assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(uuid, 1)), new TypeReference<ImmutableMap<UUID, Integer>>() {}))
+                .containsEntry(uuid, 1);
+        assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(7L, 1)), new TypeReference<ImmutableMap<Long, Integer>>() {}))
+                .containsEntry(7L, 1);
+        assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(Color.RED, 1)), new TypeReference<ImmutableMap<Color, Integer>>() {}))
+                .containsEntry(Color.RED, 1);
+        LocalDate date = LocalDate.of(2026, 10, 3);
+        assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(date, 1)), new TypeReference<ImmutableMap<LocalDate, Integer>>() {}))
+                .containsEntry(date, 1);
+        Instant instant = Instant.parse("2026-10-03T12:34:56.789Z");
+        assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(instant, 1)), new TypeReference<ImmutableMap<Instant, Integer>>() {}))
+                .containsEntry(instant, 1);
+        BigDecimal amount = new BigDecimal("1.50");
+        assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(amount, 1)), new TypeReference<ImmutableMap<BigDecimal, Integer>>() {}))
+                .containsEntry(amount, 1);
+    }
+
+    @Test
     void genericRecordsRoundTripWithTheirTypeArguments() throws Exception {
         Box<Point> box = new Box<>(new Point(1, 2), ImmutableList.of(new Point(3, 4)));
         assertThat(roundTrip(box, new TypeReference<Box<Point>>() {})).isEqualTo(box);

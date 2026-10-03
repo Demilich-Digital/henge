@@ -32,6 +32,7 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
+import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.ElementFilter;
@@ -505,7 +506,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             return;
         }
         if ((IMMUTABLE_MAP.equals(qualifiedName) || GUAVA_IMMUTABLE_MAP.equals(qualifiedName)) && typeArgs.size() == 2) {
-            checkBoundaryType(typeArgs.get(0), method, position + "'s key type", visiting);
+            checkMapKeyType(typeArgs.get(0), method, position + "'s key type", visiting);
             checkBoundaryType(typeArgs.get(1), method, position + "'s value type", visiting);
             return;
         }
@@ -533,6 +534,31 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         } finally {
             visiting.remove(key);
         }
+    }
+
+    /**
+     * A map key crosses the wire as a JSON object key -- a string -- so it has to be a type Jackson
+     * can parse back from one: a leaf value type or an enum. A record, {@code Optional} or
+     * collection key is written with {@code toString()} and can't be read back at all, so it would
+     * work embedded and fail once the service is split.
+     */
+    private void checkMapKeyType(TypeMirror keyType, ExecutableElement method, String position, Set<String> visiting) {
+        TypeMirror key = keyType;
+        String keyPosition = position;
+        if (key.getKind() == TypeKind.WILDCARD && ((WildcardType) key).getExtendsBound() != null) {
+            key = ((WildcardType) key).getExtendsBound();
+            keyPosition = position + "'s wildcard bound";
+        }
+        if (key.getKind() == TypeKind.DECLARED) {
+            TypeElement keyElement = (TypeElement) ((DeclaredType) key).asElement();
+            if (!ALLOWED_LEAF_TYPES.contains(keyElement.getQualifiedName().toString()) && keyElement.getKind() != ElementKind.ENUM) {
+                reportBoundaryError(method, keyPosition, key,
+                        "a map key travels as a JSON object key, a string, and only String, boxed primitives, enums and "
+                                + "the listed immutable value types can be read back from one -- not a record or container");
+                return;
+            }
+        }
+        checkBoundaryType(key, method, keyPosition, visiting);
     }
 
     private static String describeRejectionReason(TypeElement typeElement) {

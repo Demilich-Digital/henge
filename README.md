@@ -261,7 +261,9 @@ method behave identically. Two ways they silently don't, unless something stops 
   - `ImmutableList<T>` / `ImmutableSet<T>` / `ImmutableMap<K, V>` (`digital.demilich.henge.core`) or
     `Optional<T>` of an allowed type — plain `java.util.List`/`Set`/`Map` are **not** allowed:
     Jackson deserializes them to a mutable `ArrayList`/`HashMap` by default, which reopens exactly
-    the aliasing gap this rule exists to close
+    the aliasing gap this rule exists to close. A map *key* is narrower still: it travels as a JSON
+    object key (a string), so it must be `String`, a boxed primitive, an enum or one of the value
+    types above — a record, `Optional` or collection key can't be read back, and is rejected
   - Guava's `ImmutableList`/`ImmutableSet`/`ImmutableMap`, recognized by fully-qualified name with
     no actual Guava dependency added to this project — if you already depend on Guava, you don't
     need a second immutable-collection type just to satisfy this rule

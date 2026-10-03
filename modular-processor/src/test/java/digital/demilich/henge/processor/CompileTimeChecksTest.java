@@ -342,6 +342,34 @@ class CompileTimeChecksTest {
         assertThat(lower.hasErrorContaining("no usable upper bound")).isTrue();
     }
 
+    @Test
+    void mapKeysMustBeReadableFromAJsonObjectKey() {
+        var ok = compile(
+                src("keyok", "Color", "public enum Color { RED }"),
+                src("keyok", "Svc", "@ModularService public interface Svc { "
+                        + "void put(ImmutableMap<String, Integer> a, ImmutableMap<java.util.UUID, String> b, "
+                        + "ImmutableMap<Color, String> c, ImmutableMap<java.time.LocalDate, String> d, "
+                        + "ImmutableMap<? extends Long, String> e); }"));
+        assertThat(ok.success()).isTrue();
+
+        var recordKey = compile(
+                src("keyrec", "Point", "public record Point(int x, int y) {}"),
+                src("keyrec", "Svc", "@ModularService public interface Svc { void put(ImmutableMap<Point, String> m); }"));
+        assertThat(recordKey.success()).isFalse();
+        assertThat(recordKey.hasErrorContaining("JSON object key")).isTrue();
+
+        var optionalKey = compile(src("keyopt", "Svc",
+                "@ModularService public interface Svc { ImmutableMap<java.util.Optional<String>, String> get(); }"));
+        assertThat(optionalKey.success()).isFalse();
+        assertThat(optionalKey.hasErrorContaining("JSON object key")).isTrue();
+
+        var wildcardRecordKey = compile(
+                src("keywild", "Point", "public record Point(int x, int y) {}"),
+                src("keywild", "Svc", "@ModularService public interface Svc { void put(ImmutableMap<? extends Point, String> m); }"));
+        assertThat(wildcardRecordKey.success()).isFalse();
+        assertThat(wildcardRecordKey.hasErrorContaining("JSON object key")).isTrue();
+    }
+
     // ---- generated skeletons ----
 
     @Test
