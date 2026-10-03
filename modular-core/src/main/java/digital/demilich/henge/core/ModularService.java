@@ -10,9 +10,9 @@ import java.lang.annotation.Target;
  *
  * <p>One or more implementations may be registered against this interface, each declaring which
  * version it provides via {@link ServiceVersion} in place of {@code @Service}. Each implementation
- * may run in-process ({@code embedded} mode) or in a separate process reachable over a configured
- * transport ({@code internal-rest}, and later {@code grpc}), decided entirely by deployment
- * configuration under {@code modular.services.<name>.*}. A dependency that doesn't pin a specific
+ * may run in-process ({@code embedded} mode) or in a separate process reached over HTTP
+ * ({@code internal-rest}), decided entirely by deployment configuration
+ * ({@code modular.services.<name>.*}, {@code modular.serve}). A dependency that doesn't pin a specific
  * version via {@link ServiceVersion} always resolves to {@link #defaultVersion()} — most services
  * only ever have one version and never need to think about this at all.
  *
