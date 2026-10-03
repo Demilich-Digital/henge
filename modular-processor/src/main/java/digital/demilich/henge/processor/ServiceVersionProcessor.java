@@ -192,10 +192,11 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         }
 
         if (roundEnv.processingOver()) {
+            Map<String, TypeElement> implsByVersion = new LinkedHashMap<>();
             for (String qualifiedName : pendingValidations) {
                 TypeElement implElement = elementUtils.getTypeElement(qualifiedName);
                 if (implElement != null) {
-                    validateImplementation(implElement);
+                    validateImplementation(implElement, implsByVersion);
                 }
             }
         }
@@ -675,7 +676,12 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 method);
     }
 
-    private void validateImplementation(TypeElement implElement) {
+    /**
+     * @param implsByVersion {@code interface@version} -> the implementation already claiming it in
+     *     this compilation. Implementations in different modules can still collide; the registrar
+     *     catches that at startup.
+     */
+    private void validateImplementation(TypeElement implElement, Map<String, TypeElement> implsByVersion) {
         ServiceVersion annotation = implElement.getAnnotation(ServiceVersion.class);
         TypeElement interfaceElement = resolveServiceVersionInterface(implElement);
         if (interfaceElement == null) {
@@ -700,6 +706,14 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         }
 
         int implVersion = annotation.version();
+
+        TypeElement existing = implsByVersion.putIfAbsent(interfaceElement.getQualifiedName() + "@" + implVersion, implElement);
+        if (existing != null) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    "Two implementations both claim version " + implVersion + " of " + interfaceElement.getQualifiedName()
+                            + ": " + existing.getQualifiedName() + " and " + implElement.getQualifiedName(),
+                    implElement);
+        }
 
         for (ExecutableElement interfaceMethod : serviceMethods(interfaceElement)) {
             AddedIn addedIn = interfaceMethod.getAnnotation(AddedIn.class);

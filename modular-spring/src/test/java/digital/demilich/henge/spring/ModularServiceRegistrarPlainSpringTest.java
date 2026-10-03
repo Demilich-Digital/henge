@@ -114,6 +114,19 @@ class ModularServiceRegistrarPlainSpringTest {
     }
 
     @Test
+    void twoImplementationsClaimingTheSameVersionFailAtStartup() {
+        assertThatThrownBy(() -> new AnnotationConfigApplicationContext(DuplicateVersionConfig.class).close())
+                .hasStackTraceContaining("Two implementations both claim version '1'")
+                .hasStackTraceContaining("DuplicateServiceImplA")
+                .hasStackTraceContaining("DuplicateServiceImplB");
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.duplicateversion")
+    static class DuplicateVersionConfig {
+    }
+
+    @Test
     void overlappingBasePackagesDoNotReportADuplicateImplementation() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(OverlappingPackagesConfig.class)) {
             assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);

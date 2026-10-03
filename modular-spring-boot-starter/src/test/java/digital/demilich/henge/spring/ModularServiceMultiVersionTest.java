@@ -3,7 +3,6 @@ package digital.demilich.henge.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import digital.demilich.henge.spring.fixture.duplicateinterfacename.DuplicateInterfaceNameTestApp;
-import digital.demilich.henge.spring.fixture.duplicateversion.DuplicateVersionTestApp;
 import digital.demilich.henge.spring.fixture.multiversion.CounterService;
 import digital.demilich.henge.spring.fixture.multiversion.CounterServiceV1;
 import digital.demilich.henge.spring.fixture.multiversion.CounterServiceV2;
@@ -102,22 +101,6 @@ class ModularServiceMultiVersionTest {
                     assertThat(root).isInstanceOf(IllegalStateException.class);
                     assertThat(root).hasMessageContaining("counter-service@2").hasMessageContaining("--modular.serve");
                 });
-    }
-
-    @Test
-    void duplicateVersionClaimFailsFast() {
-        new ApplicationContextRunner().withUserConfiguration(DuplicateVersionTestApp.class).run(ctx -> {
-            assertThat(ctx).hasFailed();
-            Throwable root = ctx.getStartupFailure();
-            while (root.getCause() != null) {
-                root = root.getCause();
-            }
-            assertThat(root).isInstanceOf(IllegalStateException.class);
-            assertThat(root)
-                    .hasMessageContaining("version '1'")
-                    .hasMessageContaining("DuplicateServiceImplA")
-                    .hasMessageContaining("DuplicateServiceImplB");
-        });
     }
 
     @Test

@@ -303,6 +303,19 @@ class CompileTimeChecksTest {
     }
 
     @Test
+    void twoImplementationsOfTheSameVersionAreRejected() {
+        var result = compile(
+                src("dupver", "Svc", "@ModularService public interface Svc { void a(); }"),
+                src("dupver", "I1", "@ServiceVersion(value = Svc.class, version = 1) public class I1 implements Svc { public void a() {} }"),
+                src("dupver", "I2", "@ServiceVersion(value = Svc.class, version = 1) public class I2 implements Svc { public void a() {} }"),
+                src("dupver", "I3", "@ServiceVersion(value = Svc.class, version = 2) public class I3 implements Svc { public void a() {} }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("Two implementations both claim version 1 of fixture.dupver.Svc")).isTrue();
+        assertThat(result.hasErrorContaining("version 2")).isFalse();
+    }
+
+    @Test
     void recordImplementationsAreAccepted() {
         String svc = "@ModularService(defaultVersion = 2) public interface Svc { String a(); @AddedIn(2) String b(); }";
         var ok = compile(src("rec", "Svc", svc), src("rec", "Impl",

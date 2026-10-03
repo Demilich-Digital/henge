@@ -1,4 +1,4 @@
-package digital.demilich.henge.spring.fixture.duplicateversion;
+package digital.demilich.henge.spring.duplicateversion;
 
 import digital.demilich.henge.core.ModularService;
 
