@@ -1,11 +1,13 @@
 package digital.demilich.henge.spring;
 
 import java.util.List;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.autoconfigure.web.servlet.DispatcherServletPath;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -76,12 +78,21 @@ public class ModularSecurityAutoConfiguration {
     @Bean(CHAIN_BEAN_NAME)
     @Order(Ordered.HIGHEST_PRECEDENCE)
     @ConditionalOnMissingBean(name = CHAIN_BEAN_NAME)
-    SecurityFilterChain modularSecurityFilterChain(HttpSecurity http, ModularProperties modularProperties) throws Exception {
+    SecurityFilterChain modularSecurityFilterChain(HttpSecurity http, ModularProperties modularProperties,
+            ObjectProvider<DispatcherServletPath> dispatcherServletPath) throws Exception {
         SharedSecret secret = SharedSecret.from(modularProperties);
         AuthenticationEntryPoint rejectWith403 = new HttpStatusEntryPoint(HttpStatus.FORBIDDEN);
 
-        http.securityMatcher(PathPatternRequestMatcher.withDefaults()
-                        .matcher(HttpMethod.POST, modularProperties.getServerPathPrefix() + "/**"))
+        // The dispatcher's mapping is relative to the DispatcherServlet; under spring.mvc.servlet.path=/api
+        // the request path is /api/_modular/..., which a bare /_modular/** matcher never sees -- the call
+        // then falls through to the application's own chain and gets a 401.
+        PathPatternRequestMatcher.Builder paths = PathPatternRequestMatcher.withDefaults();
+        DispatcherServletPath servletPath = dispatcherServletPath.getIfAvailable();
+        if (servletPath != null && !servletPath.getPrefix().isEmpty()) {
+            paths = paths.basePath(servletPath.getPrefix());
+        }
+
+        http.securityMatcher(paths.matcher(HttpMethod.POST, modularProperties.getServerPathPrefix() + "/**"))
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sessions -> sessions.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(rejectWith403));

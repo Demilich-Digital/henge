@@ -58,6 +58,32 @@ class SpringSecurityCompatibilityTest {
     }
 
     @Test
+    void remoteDispatchWorksUnderANonRootServletPath() {
+        ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
+                .web(WebApplicationType.SERVLET)
+                .properties("server.port=0", "spring.main.banner-mode=off", "spring.mvc.servlet.path=/api",
+                        "modular.transport.secret=s3cr3t")
+                .run();
+        try {
+            int port = ((ServletWebServerApplicationContext) server).getWebServer().getPort();
+            ConfigurableApplicationContext client = new SpringApplicationBuilder(EchoTestApp.class)
+                    .web(WebApplicationType.NONE)
+                    .properties("spring.main.banner-mode=off", "modular.server.enabled=false",
+                            "modular.transport.secret=s3cr3t",
+                            "modular.services.echo-service.mode=internal-rest",
+                            "modular.services.echo-service.url=http://localhost:" + port + "/api")
+                    .run();
+            try {
+                assertThat(client.getBean(EchoService.class).echo("hi")).isEqualTo("echo:hi");
+            } finally {
+                client.close();
+            }
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
     void theApplicationsOwnEndpointsStayProtected() {
         ConfigurableApplicationContext server = new SpringApplicationBuilder(EchoTestApp.class)
                 .web(WebApplicationType.SERVLET)

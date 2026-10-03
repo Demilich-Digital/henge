@@ -130,7 +130,8 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   yourself — that's a decision this framework deliberately stays out of.
 - **Spring Security.** Add it and `/_modular` just works — no flag. Spring Security's default chain would
   demand a user session and a CSRF token on every POST, so the Boot starter adds a dedicated
-  `SecurityFilterChain` for exactly `POST {modular.server.path-prefix}/**`, ordered ahead of yours and
+  `SecurityFilterChain` for exactly `POST {modular.server.path-prefix}/**` (under `spring.mvc.servlet.path`, if you
+  set one), ordered ahead of yours and
   added *next to* whatever you have, including Boot's default chain, never instead of it — nothing else
   you serve is affected. With `modular.transport.secret` set, the secret is a real authentication: a
   valid `Modular-Internal-Secret` header becomes an authenticated principal
