@@ -15,8 +15,13 @@ import java.lang.annotation.Target;
  * implementation of this method, so a {@code @ServiceVersion} implementation whose version is at
  * or after {@link #value()} doesn't have to implement it. Has no effect at runtime; nothing reads
  * this reflectively.
+ *
+ * <p>{@code CLASS} retention, not {@code SOURCE}: an implementation is usually compiled in a
+ * different module from its interface, and the processor then sees the interface only as a class
+ * file -- a {@code SOURCE}-retained annotation would be gone, and the implementation silently
+ * unchecked.
  */
-@Retention(RetentionPolicy.SOURCE)
+@Retention(RetentionPolicy.CLASS)
 @Target(ElementType.METHOD)
 public @interface DeprecatedSince {
 

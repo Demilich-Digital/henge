@@ -62,6 +62,25 @@ class CompileTimeChecksTest {
     }
 
     @Test
+    void versionedMethodIsEnforcedOnAnImplementationCompiledSeparatelyFromItsInterface() {
+        // Interface and skeleton in one compilation, implementations in a later one that sees them
+        // only as class files -- the usual contracts-module / services-module split.
+        var contracts = compile(src("xmod", "Svc", "@ModularService public interface Svc { String a(); @AddedIn(2) String b(); }"));
+        assertThat(contracts.success()).isTrue();
+
+        var v1 = TestCompiler.compileAgainst(contracts, src("xmodimpl", "V1",
+                "@ServiceVersion(value = fixture.xmod.Svc.class, version = 1) "
+                        + "public class V1 extends fixture.xmod.SvcSkeleton { public String a() { return \"a\"; } }"));
+        assertThat(v1.success()).isTrue();
+
+        var v2Missing = TestCompiler.compileAgainst(contracts, src("xmodimpl", "V2",
+                "@ServiceVersion(value = fixture.xmod.Svc.class, version = 2) "
+                        + "public class V2 extends fixture.xmod.SvcSkeleton { public String a() { return \"a\"; } }"));
+        assertThat(v2Missing.success()).isFalse();
+        assertThat(v2Missing.hasErrorContaining("does not implement 'b'")).isTrue();
+    }
+
+    @Test
     void redeclaringAnInheritedMethodIsNotAnOverload() {
         var result = compile(
                 src("redecl", "Base", "public interface Base { String a(); }"),

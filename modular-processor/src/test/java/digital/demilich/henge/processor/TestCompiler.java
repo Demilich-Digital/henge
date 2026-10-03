@@ -1,5 +1,6 @@
 package digital.demilich.henge.processor;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -23,7 +24,8 @@ final class TestCompiler {
     private TestCompiler() {
     }
 
-    record Result(boolean success, List<Diagnostic<? extends JavaFileObject>> diagnostics) {
+    /** {@code outputDir} holds the compiled classes, usable as another compilation's classpath. */
+    record Result(boolean success, List<Diagnostic<? extends JavaFileObject>> diagnostics, Path outputDir) {
 
         boolean hasErrorContaining(String snippet) {
             return diagnostics.stream()
@@ -33,24 +35,38 @@ final class TestCompiler {
     }
 
     static Result compile(JavaFileObject... sources) {
+        return compileAgainst(null, sources);
+    }
+
+    /**
+     * Compiles with {@code dependency}'s output on the classpath, so its types are seen as class
+     * files rather than source -- the situation of an implementation module compiled against a
+     * separately built contracts module.
+     */
+    static Result compileAgainst(Result dependency, JavaFileObject... sources) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, StandardCharsets.UTF_8);
 
+        Path outputDir;
         try {
-            Path outputDir = Files.createTempDirectory("modular-processor-test");
+            outputDir = Files.createTempDirectory("modular-processor-test");
             fileManager.setLocation(StandardLocation.CLASS_OUTPUT, List.of(outputDir.toFile()));
             fileManager.setLocation(StandardLocation.SOURCE_OUTPUT, List.of(outputDir.toFile()));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
 
-        List<String> options = List.of("-classpath", System.getProperty("java.class.path"));
+        String classpath = System.getProperty("java.class.path");
+        if (dependency != null) {
+            classpath = dependency.outputDir() + File.pathSeparator + classpath;
+        }
+        List<String> options = List.of("-classpath", classpath);
         JavaCompiler.CompilationTask task =
                 compiler.getTask(null, fileManager, diagnostics, options, null, List.of(sources));
         task.setProcessors(List.of(new ServiceVersionProcessor()));
 
         boolean success = task.call();
-        return new Result(success, diagnostics.getDiagnostics());
+        return new Result(success, diagnostics.getDiagnostics(), outputDir);
     }
 }
