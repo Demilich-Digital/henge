@@ -12,8 +12,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
  * <ul>
  *   <li>On an implementation class, in place of {@code @Service}: declares that this class
  *       provides {@link #version()} of {@link #value()}. The framework registers the bean
- *       itself; do not also annotate the class with {@code @Service}/{@code @Component} or it
- *       will be registered twice.</li>
+ *       itself; do not also annotate the class with {@code @Service}/{@code @Component} -- that
+ *       would register a second instance, so it's rejected at compile time and at startup.</li>
  *   <li>On a constructor parameter or field of any bean (another modular service implementation,
  *       a controller, ...): pins that dependency to a specific version, instead of the
  *       interface's default version. Omit this

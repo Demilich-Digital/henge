@@ -114,6 +114,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     private static final Set<String> SINGLE_ARG_CONTAINERS =
             Set.of("java.util.Optional", IMMUTABLE_LIST, IMMUTABLE_SET, GUAVA_IMMUTABLE_LIST, GUAVA_IMMUTABLE_SET);
 
+    private static final String SPRING_COMPONENT = "org.springframework.stereotype.Component";
+
     /** Guards against non-regular generic records (e.g. {@code R<T>(R<R<T>> x)}) that would expand forever. */
     private static final int MAX_TYPE_NESTING = 32;
 
@@ -167,6 +169,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             if (!(element instanceof TypeElement typeElement)) {
                 continue; // an injection-site use (field/parameter), not an implementation
             }
+            validateNotAComponent(typeElement);
             if (validateImplementationShape(typeElement)) {
                 // Deferred to the final round: an impl extending a just-generated skeleton
                 // (written this round, but not parsed/resolved until the next one) doesn't have
@@ -466,6 +469,39 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             return false;
         }
         return true;
+    }
+
+    /**
+     * The framework registers every {@code @ServiceVersion} implementation itself; a Spring stereotype
+     * ({@code @Component}, {@code @Service}, ... -- anything meta-annotated {@code @Component}) makes
+     * component scanning register a second, independent instance that also carries the
+     * {@code @ServiceVersion} qualifier: silently doubled state, or an ambiguous-bean failure as soon
+     * as something pins a non-default version. Matched by name, so this needs no Spring dependency.
+     */
+    private void validateNotAComponent(TypeElement implElement) {
+        String stereotype = findComponentStereotype(implElement, new HashSet<>());
+        if (stereotype != null) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    implElement.getQualifiedName() + " is annotated both @ServiceVersion and @" + stereotype + ": the framework "
+                            + "registers @ServiceVersion implementations itself, so component scanning would register a second, "
+                            + "independent instance. Remove @" + stereotype + ".",
+                    implElement);
+        }
+    }
+
+    /** The simple name of the annotation on {@code element} that is, or is meta-annotated with, {@code @Component}. */
+    private static String findComponentStereotype(Element element, Set<String> visited) {
+        for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
+            TypeElement annotationType = (TypeElement) mirror.getAnnotationType().asElement();
+            String name = annotationType.getQualifiedName().toString();
+            if (!visited.add(name)) {
+                continue;
+            }
+            if (name.equals(SPRING_COMPONENT) || findComponentStereotype(annotationType, visited) != null) {
+                return annotationType.getSimpleName().toString();
+            }
+        }
+        return null;
     }
 
     /**

@@ -22,8 +22,10 @@ import org.springframework.context.annotation.ClassPathScanningCandidateComponen
 import org.springframework.context.annotation.ImportBeanDefinitionRegistrar;
 import org.springframework.core.env.Environment;
 import org.springframework.core.io.DefaultResourceLoader;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.type.AnnotationMetadata;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
+import org.springframework.stereotype.Component;
 import org.springframework.util.ClassUtils;
 
 /**
@@ -202,6 +204,13 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 if (!serviceInterface.isAssignableFrom(implClass)) {
                     throw new IllegalStateException(implClass.getName() + " is annotated @ServiceVersion("
                             + serviceInterface.getName() + ".class, ...) but does not implement " + serviceInterface.getName());
+                }
+
+                // modular-processor rejects this at compile time; repeated for classes compiled without it.
+                if (AnnotatedElementUtils.hasAnnotation(implClass, Component.class)) {
+                    throw new IllegalStateException(implClass.getName() + " is annotated both @ServiceVersion and a Spring "
+                            + "stereotype (@Component, @Service, ...): the framework registers @ServiceVersion implementations "
+                            + "itself, so component scanning would register a second, independent instance. Remove the stereotype.");
                 }
 
                 Map<Integer, Class<?>> byVersion = result.computeIfAbsent(serviceInterface, k -> new LinkedHashMap<>());

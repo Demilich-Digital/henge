@@ -49,7 +49,7 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   `@GetMapping`, ...), fully developer-owned, and the framework never touches it.
 - **`@ServiceVersion(value = TheInterface.class, version = 1)`** stands in for `@Service` on an
   implementation — the framework registers the bean itself, so don't also annotate it `@Service`/
-  `@Component`. Multiple classes can implement the same interface as long as each declares a
+  `@Component` (that would register a second instance, and is rejected at compile time and at startup). Multiple classes can implement the same interface as long as each declares a
   distinct version; they all coexist as separate beans in the same process.
 - A dependency that doesn't care which version it gets just injects the interface normally —
   no annotation needed, resolves to the interface's `defaultVersion()` (default version) via

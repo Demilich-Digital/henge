@@ -258,6 +258,28 @@ class CompileTimeChecksTest {
     }
 
     @Test
+    void springStereotypesOnAnImplementationAreRejected() {
+        // Stand-ins for Spring's own annotations, matched by name: this module has no Spring dependency.
+        var component = new StringJavaFileObject("org.springframework.stereotype.Component",
+                "package org.springframework.stereotype; public @interface Component {}");
+        var service = new StringJavaFileObject("org.springframework.stereotype.Service",
+                "package org.springframework.stereotype; @Component public @interface Service {}");
+        var svc = src("stereo", "Svc", "@ModularService public interface Svc { void a(); }");
+
+        var direct = compile(component, svc, src("stereo", "Impl",
+                "@org.springframework.stereotype.Component @ServiceVersion(value = Svc.class, version = 1) "
+                        + "public class Impl implements Svc { public void a() {} }"));
+        assertThat(direct.success()).isFalse();
+        assertThat(direct.hasErrorContaining("both @ServiceVersion and @Component")).isTrue();
+
+        var meta = compile(component, service, svc, src("stereo", "Impl",
+                "@org.springframework.stereotype.Service @ServiceVersion(value = Svc.class, version = 1) "
+                        + "public class Impl implements Svc { public void a() {} }"));
+        assertThat(meta.success()).isFalse();
+        assertThat(meta.hasErrorContaining("both @ServiceVersion and @Service")).isTrue();
+    }
+
+    @Test
     void recordImplementationsAreAccepted() {
         String svc = "@ModularService(defaultVersion = 2) public interface Svc { String a(); @AddedIn(2) String b(); }";
         var ok = compile(src("rec", "Svc", svc), src("rec", "Impl",

@@ -103,6 +103,17 @@ class ModularServiceRegistrarPlainSpringTest {
     }
 
     @Test
+    void aStereotypedImplementationFailsAtStartupEvenWithoutTheProcessor() {
+        assertThatThrownBy(() -> new AnnotationConfigApplicationContext(StereotypedConfig.class).close())
+                .hasStackTraceContaining("StereotypedServiceImpl is annotated both @ServiceVersion and a Spring stereotype");
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.stereotyped")
+    static class StereotypedConfig {
+    }
+
+    @Test
     void overlappingBasePackagesDoNotReportADuplicateImplementation() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(OverlappingPackagesConfig.class)) {
             assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);
