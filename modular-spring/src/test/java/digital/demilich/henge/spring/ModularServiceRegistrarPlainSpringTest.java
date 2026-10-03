@@ -148,6 +148,20 @@ class ModularServiceRegistrarPlainSpringTest {
     }
 
     @Test
+    void anInternalRestServiceWithoutTheTransportConfigurationSaysWhatToImport() {
+        AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
+        ctx.getEnvironment()
+                .getPropertySources()
+                .addFirst(new MapPropertySource("test", Map.of("modular.services.counter-service.mode", "internal-rest")));
+        ctx.register(CounterTestConfig.class); // no ModularTransportConfiguration
+
+        assertThatThrownBy(ctx::refresh)
+                .hasStackTraceContaining("no ServiceTransport bean")
+                .hasStackTraceContaining("@Import ModularTransportConfiguration");
+        ctx.close();
+    }
+
+    @Test
     void overlappingBasePackagesDoNotReportADuplicateImplementation() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(OverlappingPackagesConfig.class)) {
             assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);

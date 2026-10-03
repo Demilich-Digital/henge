@@ -3,6 +3,7 @@ package digital.demilich.henge.spring;
 import digital.demilich.henge.core.ServiceTransport;
 import java.lang.reflect.Proxy;
 import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
@@ -34,7 +35,15 @@ class ModularServiceProxyFactoryBean implements FactoryBean<Object>, Application
 
     @Override
     public Object getObject() {
-        ServiceTransport transport = applicationContext.getBean(ServiceTransport.class);
+        ServiceTransport transport;
+        try {
+            transport = applicationContext.getBean(ServiceTransport.class);
+        } catch (NoSuchBeanDefinitionException e) {
+            // Only reachable without the Boot starter, which always provides one.
+            throw new IllegalStateException("Modular service '" + serviceName + "' version '" + serviceVersion
+                    + "' is internal-rest, but there is no ServiceTransport bean to call it with -- @Import "
+                    + "ModularTransportConfiguration (or ModularConfiguration, to also serve embedded services).", e);
+        }
         return Proxy.newProxyInstance(
                 serviceInterface.getClassLoader(),
                 new Class<?>[] {serviceInterface},
