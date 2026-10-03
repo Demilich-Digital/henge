@@ -31,7 +31,9 @@ import javax.lang.model.element.RecordComponentElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
@@ -106,6 +108,9 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     private static final Set<String> SINGLE_ARG_CONTAINERS =
             Set.of("java.util.Optional", IMMUTABLE_LIST, IMMUTABLE_SET, GUAVA_IMMUTABLE_LIST, GUAVA_IMMUTABLE_SET);
 
+    /** Guards against non-regular generic records (e.g. {@code R<T>(R<R<T>> x)}) that would expand forever. */
+    private static final int MAX_TYPE_NESTING = 32;
+
     private Messager messager;
     private Filer filer;
     private Elements elementUtils;
@@ -174,6 +179,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     private void generateSkeletonIfNeeded(TypeElement interfaceElement) {
         List<ExecutableElement> versionedMethods = serviceMethods(interfaceElement).stream()
                 .filter(m -> !m.getModifiers().contains(Modifier.STATIC))
+                .filter(m -> !hasTypeParameters(m)) // rejected by validateMethodShapes; stubs would not compile
                 .filter(m -> m.getAnnotation(AddedIn.class) != null || m.getAnnotation(DeprecatedSince.class) != null)
                 .toList();
         if (versionedMethods.isEmpty()) {
@@ -298,8 +304,29 @@ public class ServiceVersionProcessor extends AbstractProcessor {
      * a process that embeds the service.
      */
     private void validateMethodShapes(TypeElement interfaceElement) {
+        if (!interfaceElement.getTypeParameters().isEmpty()) {
+            messager.printMessage(Diagnostic.Kind.ERROR,
+                    interfaceElement.getQualifiedName() + " declares type parameters; a @ModularService interface can't be "
+                            + "generic: nothing at runtime knows what the type variable stands for, so values of that type "
+                            + "would be bound as untyped JSON maps once the service is split.",
+                    interfaceElement);
+        }
         Map<String, ExecutableElement> byRpcName = new LinkedHashMap<>();
         for (ExecutableElement method : serviceMethods(interfaceElement)) {
+            if (!method.getTypeParameters().isEmpty()) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "Method " + describeMethod(method) + " declares its own type parameters; @ModularService methods "
+                                + "can't be generic -- a type variable is bound as an untyped JSON map once the service "
+                                + "is split. Use a concrete type.",
+                        method);
+            } else if (method.getEnclosingElement() instanceof TypeElement owner
+                    && owner != interfaceElement && !owner.getTypeParameters().isEmpty()) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "Method " + describeMethod(method) + " is inherited from the generic interface " + owner.getQualifiedName()
+                                + "; the runtime binds it against the unresolved type variable, not " + interfaceElement.getQualifiedName()
+                                + "'s type argument. Declare the method concretely on the @ModularService interface instead.",
+                        method);
+            }
             if (method.getModifiers().contains(Modifier.STATIC)) {
                 messager.printMessage(Diagnostic.Kind.ERROR,
                         "Method '" + method.getSimpleName() + "' on " + method.getEnclosingElement()
@@ -319,6 +346,14 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                         method);
             }
         }
+    }
+
+    /** Whether the method's signature involves a type variable the runtime can't resolve (already reported). */
+    private static boolean hasTypeParameters(ExecutableElement method) {
+        if (!method.getTypeParameters().isEmpty()) {
+            return true;
+        }
+        return method.getEnclosingElement() instanceof TypeElement owner && !owner.getTypeParameters().isEmpty();
     }
 
     private static String describeMethod(ExecutableElement method) {
@@ -419,6 +454,9 @@ public class ServiceVersionProcessor extends AbstractProcessor {
      */
     private void validateBoundaryTypes(TypeElement interfaceElement) {
         for (ExecutableElement method : serviceMethods(interfaceElement)) {
+            if (hasTypeParameters(method)) {
+                continue; // already reported by validateMethodShapes; its type variables would only add noise
+            }
             checkBoundaryType(method.getReturnType(), method, "return type", new HashSet<>());
             for (VariableElement param : method.getParameters()) {
                 checkBoundaryType(param.asType(), method, "parameter '" + param.getSimpleName() + "'", new HashSet<>());
@@ -434,8 +472,18 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             case ARRAY -> reportBoundaryError(method, position, type,
                     "arrays are mutable and alias across the embedded/internal-rest boundary; use List<T> instead");
             case DECLARED -> checkDeclaredBoundaryType((DeclaredType) type, method, position, visiting);
-            case TYPEVAR, WILDCARD -> {
-                // the concrete type isn't known from the interface alone; left unchecked
+            case TYPEVAR -> reportBoundaryError(method, position, type,
+                    "a type variable has no concrete type at runtime, so it would be bound as an untyped JSON map");
+            case WILDCARD -> {
+                // "? extends X" is bound as X at runtime, so X is what has to be valid; an unbounded or
+                // lower-bounded wildcard says nothing usable about the actual type.
+                TypeMirror upper = ((WildcardType) type).getExtendsBound();
+                if (upper == null) {
+                    reportBoundaryError(method, position, type,
+                            "an unbounded or lower-bounded wildcard has no usable upper bound at runtime; use '? extends X'");
+                } else {
+                    checkBoundaryType(upper, method, position + "'s wildcard bound", visiting);
+                }
             }
             default -> {
                 // NONE, NULL, etc. -- not a real signature type
@@ -462,19 +510,28 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             return;
         }
 
-        if (!visiting.add(qualifiedName)) {
-            return; // already validating this type along this path -- cycle, not a violation
+        // Keyed by the full parameterized type, not just the class: Box<Box<List<String>>> must still
+        // validate the inner Box<List<String>> even though a Box is already being validated.
+        String key = type.toString();
+        if (!visiting.add(key)) {
+            return; // already validating this exact type along this path -- cycle, not a violation
         }
         try {
+            if (visiting.size() > MAX_TYPE_NESTING) {
+                reportBoundaryError(method, position, type, "it is nested more than " + MAX_TYPE_NESTING + " levels deep");
+                return;
+            }
             if (typeElement.getKind() == ElementKind.RECORD) {
                 for (RecordComponentElement component : typeElement.getRecordComponents()) {
-                    checkBoundaryType(component.asType(), method, position + "'s component '" + component.getSimpleName() + "'", visiting);
+                    // Substituted through the accessor, so Box<List<String>>'s component T is seen as List<String>.
+                    TypeMirror componentType = ((ExecutableType) typeUtils.asMemberOf(type, component.getAccessor())).getReturnType();
+                    checkBoundaryType(componentType, method, position + "'s component '" + component.getSimpleName() + "'", visiting);
                 }
                 return;
             }
             reportBoundaryError(method, position, type, describeRejectionReason(typeElement));
         } finally {
-            visiting.remove(qualifiedName);
+            visiting.remove(key);
         }
     }
 

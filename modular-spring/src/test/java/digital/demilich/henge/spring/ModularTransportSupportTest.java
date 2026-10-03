@@ -33,6 +33,9 @@ class ModularTransportSupportTest {
     record Point(int x, int y) {
     }
 
+    record Box<T>(T value, ImmutableList<T> more) {
+    }
+
     enum Color {
         RED
     }
@@ -94,5 +97,11 @@ class ModularTransportSupportTest {
         assertThat(roundTrip(ImmutableSet.of("a", "b"), new TypeReference<ImmutableSet<String>>() {})).containsExactlyInAnyOrder("a", "b");
         assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of("k", new Point(1, 2))), new TypeReference<ImmutableMap<String, Point>>() {}))
                 .containsEntry("k", new Point(1, 2));
+    }
+
+    @Test
+    void genericRecordsRoundTripWithTheirTypeArguments() throws Exception {
+        Box<Point> box = new Box<>(new Point(1, 2), ImmutableList.of(new Point(3, 4)));
+        assertThat(roundTrip(box, new TypeReference<Box<Point>>() {})).isEqualTo(box);
     }
 }

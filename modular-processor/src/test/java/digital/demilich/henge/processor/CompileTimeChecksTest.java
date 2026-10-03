@@ -177,6 +177,113 @@ class CompileTimeChecksTest {
         assertThat(ok.success()).isTrue();
     }
 
+    // ---- generics ----
+
+    @Test
+    void genericMethodIsRejectedWithoutBrokenGeneratedCode() {
+        var result = compile(src("genmeth", "Svc",
+                "@ModularService public interface Svc { String a(); @AddedIn(2) <T> T echo(T value); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("declares its own type parameters")).isTrue();
+        assertThat(result.hasErrorContaining("cannot find symbol")).as("no confusing errors from generated code").isFalse();
+    }
+
+    @Test
+    void genericInterfaceIsRejected() {
+        var result = compile(src("genif", "Svc", "@ModularService public interface Svc<T> { T get(); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("can't be generic")).isTrue();
+    }
+
+    @Test
+    void methodInheritedFromAGenericInterfaceIsRejected() {
+        var result = compile(
+                src("geninh", "Base", "public interface Base<T> { T get(); }"),
+                src("geninh", "Svc", "@ModularService public interface Svc extends Base<String> { }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("is inherited from the generic interface")).isTrue();
+    }
+
+    @Test
+    void genericRecordWithAnAllowedTypeArgumentIsAccepted() {
+        var result = compile(
+                src("recok", "Point", "public record Point(int x, int y) {}"),
+                src("recok", "Box", "public record Box<T>(T value, ImmutableList<T> more) {}"),
+                src("recok", "Svc", "@ModularService public interface Svc { Box<Point> put(Box<String> b); }"));
+
+        assertThat(result.success()).isTrue();
+    }
+
+    @Test
+    void genericRecordTypeArgumentIsValidated() {
+        var result = compile(
+                src("recbad", "Box", "public record Box<T>(T value) {}"),
+                src("recbad", "Svc", "@ModularService public interface Svc { void put(Box<java.util.List<String>> b); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("java.util.List<java.lang.String>")).isTrue();
+    }
+
+    @Test
+    void nestingTheSameGenericRecordDoesNotHideAMutableTypeArgument() {
+        var result = compile(
+                src("recnest", "Box", "public record Box<T>(T value) {}"),
+                src("recnest", "Svc", "@ModularService public interface Svc { void put(Box<Box<java.util.List<String>>> b); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("java.util.List<java.lang.String>")).isTrue();
+    }
+
+    @Test
+    void rawGenericRecordIsRejected() {
+        var result = compile(
+                src("recraw", "Box", "public record Box<T>(T value) {}"),
+                src("recraw", "Svc", "@ModularService public interface Svc { @SuppressWarnings(\"rawtypes\") void put(Box b); }"));
+
+        assertThat(result.success()).isFalse();
+    }
+
+    @Test
+    void recursiveGenericRecordIsAccepted() {
+        var result = compile(
+                src("recrec", "Node", "public record Node<T>(T value, ImmutableList<Node<T>> children) {}"),
+                src("recrec", "Svc", "@ModularService public interface Svc { Node<String> tree(); }"));
+
+        assertThat(result.success()).isTrue();
+    }
+
+    @Test
+    void wildcardWithAnAllowedUpperBoundIsAccepted() {
+        var result = compile(
+                src("wildok", "Point", "public record Point(int x) {}"),
+                src("wildok", "Svc", "@ModularService public interface Svc { void put(ImmutableList<? extends Point> p); }"));
+
+        assertThat(result.success()).isTrue();
+    }
+
+    @Test
+    void wildcardUpperBoundIsValidated() {
+        var result = compile(src("wildbad", "Svc",
+                "@ModularService public interface Svc { void put(ImmutableList<? extends java.util.List<String>> l); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("not a valid @ModularService boundary type")).isTrue();
+    }
+
+    @Test
+    void unboundedAndLowerBoundedWildcardsAreRejected() {
+        var unbounded = compile(src("wildun", "Svc", "@ModularService public interface Svc { void put(ImmutableList<?> l); }"));
+        assertThat(unbounded.success()).isFalse();
+        assertThat(unbounded.hasErrorContaining("no usable upper bound")).isTrue();
+
+        var lower = compile(src("wildlow", "Svc", "@ModularService public interface Svc { void put(ImmutableList<? super String> l); }"));
+        assertThat(lower.success()).isFalse();
+        assertThat(lower.hasErrorContaining("no usable upper bound")).isTrue();
+    }
+
     // ---- generated skeletons ----
 
     @Test

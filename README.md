@@ -272,6 +272,12 @@ or non-positive `@AddedIn`/`@DeprecatedSince` ranges, and `@ModularService` only
 actually implements a `@ModularService` interface. Each of these would otherwise compile and then
 fail — or silently do nothing — at startup.
 
+Generics: a `@ModularService` interface or method can't declare type parameters (nothing at runtime
+knows what `T` is, so it would bind as an untyped JSON map once split), nor inherit methods from a
+generic interface. Generic *records* are fine — `Box<Point>` is validated through its type
+arguments, so `Box<List<String>>` is rejected like `List<String>` itself — and a wildcard needs a
+usable bound (`ImmutableList<? extends Point>`; `?` and `? super X` are rejected).
+
 **Enforcing the boundary at the build level, not just the type level:** nothing in the language
 stops a consumer from depending on a service's implementation class directly instead of its
 interface — that compiles fine embedded, then breaks the moment the service is split into its own
