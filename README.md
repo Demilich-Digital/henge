@@ -216,7 +216,7 @@ public class AuditServiceImpl extends AuditServiceSkeleton {
 @ServiceVersion(value = AuditService.class, version = 2)
 public class AuditServiceImplV2 extends AuditServiceSkeleton {
     @Override
-    public ImmutableList<String> getRecentEvents(int limit) { ... } // version "2" actually supports it
+    public ImmutableList<String> getRecentEvents(int limit) { ... } // version 2 actually supports it
 }
 ```
 
@@ -308,9 +308,9 @@ pattern for any module that calls into a `@ModularService`.
 | Module | Contents |
 |---|---|
 | `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, the `ServiceTransport` seam, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
-| `modular-processor` | The `@AddedIn`/`@DeprecatedSince` annotation processor: generates `{Interface}Skeleton` classes and validates `@ServiceVersion` implementations against them. Depends only on `modular-core` — no Spring. |
+| `modular-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges). Depends only on `modular-core` — no Spring. |
 | `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
-| `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically and adds the `modular.server.enabled` property gate — the only things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
+| `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, adds the `modular.server.enabled` property gate, and — when Spring Security is present — the dedicated security chain for `/_modular` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
 | `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn(2)` method. |
 | `examples/example-services` | Their `@ServiceVersion` implementations, including a second `AuditService` version to demonstrate multi-version wiring and the generated-skeleton mechanism. No Spring dependency at all. |
 | `examples/example-app` | One Spring Boot application tying it together, runnable as the monolith or as either half of a split deployment. |
@@ -449,7 +449,7 @@ needed — just config: `--modular.services.audit-service.versions.1.mode=intern
 
 ### A method that only exists from version 2 onward
 
-`AuditService.getRecentEvents(int limit)` is `@AddedIn(2)`. Version "1"'s implementation
+`AuditService.getRecentEvents(int limit)` is `@AddedIn(2)`. Version 1's implementation
 (`AuditServiceImpl`) never overrides it; version "2"'s (`AuditServiceImplV2`) does:
 
 ```bash
@@ -460,7 +460,7 @@ java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --serve
 curl http://localhost:8080/api/audit/v2/hello
 curl http://localhost:8080/api/audit/v2/world
 curl http://localhost:8080/api/audit/v2/recent/2   # -> ["v2:hello","v2:world"] -- version 2 really implements it
-curl -i http://localhost:8080/api/audit/recent/2    # -> 500 -- default (version "1") never overrode it
+curl -i http://localhost:8080/api/audit/recent/2    # -> 500 -- default (version 1) never overrode it
 ```
 
 The 500 comes from `ServiceVersionUnsupportedException`, thrown by the method
@@ -468,12 +468,30 @@ The 500 comes from `ServiceVersionUnsupportedException`, thrown by the method
 — visible in the server log even though the HTTP response body itself is Spring Boot's generic
 error JSON.
 
+## Configuration reference
+
+Everything is read from Spring's `Environment`, so CLI flags, `application.yml`, environment variables and
+`SPRING_APPLICATION_JSON` all work.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `modular.services.<name>.mode` | `embedded` | `embedded` or `internal-rest`, for every version of the service unless overridden below. |
+| `modular.services.<name>.url` | — | Base URL of the process hosting the service; used when the mode is `internal-rest`. |
+| `modular.services.<name>.versions.<n>.mode` / `.url` | inherit the service-level value | Per-version override; `<n>` is an integer. |
+| `modular.serve` | unset | Comma-separated `name[@version]` list of what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
+| `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`) used for any `internal-rest` service without an explicit `url`. |
+| `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all. |
+| `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. |
+| `modular.transport.secret` | unset | Optional shared secret sent as `Modular-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
+| `modular.transport.connect-timeout` | `2000` | Milliseconds. |
+| `modular.transport.read-timeout` | `10000` | Milliseconds. |
+
 ## Using this without Spring Boot
 
 `modular-spring-boot-starter` is a convenience layer, not a requirement — the actual mechanism
 (discovery, bean-definition wiring, the internal-rest transport, the dispatcher controller) lives
 in `modular-spring`, which only depends on plain Spring Framework (`spring-context`, `spring-web`).
-A plain-Spring consumer does two things Boot users get for free:
+A plain-Spring consumer does three things Boot users get for free:
 
 - **`@Import` the configuration explicitly.** `modular-spring-boot-starter`'s autoconfiguration
   unconditionally wires `ModularTransportConfiguration` (the `ServiceTransport` and
@@ -483,6 +501,10 @@ A plain-Spring consumer does two things Boot users get for free:
   `ModularTransportConfiguration` alone if this process never serves any requests. "Should this
   process serve requests" becomes a code-level choice (which class you import) instead of a
   runtime property.
+- **Spring Security isn't wired for you.** The dedicated `/_modular` chain described under "How it
+  works" is part of the Boot starter. A plain-Spring application that uses Spring Security has to permit
+  `POST {modular.server.path-prefix}/**` itself (stateless, CSRF off for that path), and — if it sets
+  `modular.transport.secret` — decide for itself whether to authenticate it through Spring Security.
 - **CLI-flag property parsing isn't automatic.** Boot turns `--modular.serve=...` into environment
   properties for free; plain Spring doesn't. Add a
   [`SimpleCommandLinePropertySource`](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/core/env/SimpleCommandLinePropertySource.html)
@@ -524,8 +546,9 @@ Deliberately out of scope for now, to keep the core mechanism small and correct:
   actually has.)
 - Retries, load balancing, circuit breaking for `internal-rest`.
 - Async/streaming methods — calls are synchronous/blocking only.
-- Overloaded methods on a `@ModularService` interface (RPC dispatch is by method name; use
-  `@ServiceMethod(name = ...)` to disambiguate if you need two methods with the same name).
+- Overloaded methods on a `@ModularService` interface — rejected at compile time (RPC dispatch is by
+  method name; use `@ServiceMethod(name = ...)` to disambiguate if you need two methods with the same
+  name).
 
 ## Roadmap
 
