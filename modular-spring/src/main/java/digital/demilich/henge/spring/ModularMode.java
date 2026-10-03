@@ -7,7 +7,7 @@ import java.util.Locale;
  */
 public enum ModularMode {
 
-    /** The local {@code @Service} implementation bean handles the call directly, in-process. */
+    /** The local {@code @ServiceVersion} implementation handles the call directly, in-process. */
     EMBEDDED,
 
     /** The call is dispatched over HTTP to another process's {@link #EMBEDDED} instance of this service. */
