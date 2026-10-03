@@ -66,6 +66,14 @@ class ImmutableCollectionsTest {
     }
 
     @Test
+    void immutableMapOfBuildsFromPairs() {
+        assertThat(ImmutableMap.of("a", 1)).isEqualTo(Map.of("a", 1));
+        assertThat(ImmutableMap.of("a", 1, "b", 2, "c", 3, "d", 4, "e", 5))
+                .isEqualTo(Map.of("a", 1, "b", 2, "c", 3, "d", 4, "e", 5));
+        assertThatThrownBy(() -> ImmutableMap.of("a", 1, "a", 2)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void immutableMapCopyOfIsUnaffectedByLaterMutationOfSource() {
         Map<String, Integer> source = new HashMap<>(Map.of("a", 1));
         ImmutableMap<String, Integer> copy = ImmutableMap.copyOf(source);

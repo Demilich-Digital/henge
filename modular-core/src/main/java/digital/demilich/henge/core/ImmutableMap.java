@@ -24,6 +24,28 @@ public final class ImmutableMap<K, V> extends AbstractMap<K, V> {
         return new ImmutableMap<>(Map.of());
     }
 
+    // Up to five pairs, as Guava offers; ImmutableMap.copyOf(Map.of(...)) covers more.
+
+    public static <K, V> ImmutableMap<K, V> of(K k1, V v1) {
+        return new ImmutableMap<>(Map.of(k1, v1));
+    }
+
+    public static <K, V> ImmutableMap<K, V> of(K k1, V v1, K k2, V v2) {
+        return new ImmutableMap<>(Map.of(k1, v1, k2, v2));
+    }
+
+    public static <K, V> ImmutableMap<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3) {
+        return new ImmutableMap<>(Map.of(k1, v1, k2, v2, k3, v3));
+    }
+
+    public static <K, V> ImmutableMap<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4) {
+        return new ImmutableMap<>(Map.of(k1, v1, k2, v2, k3, v3, k4, v4));
+    }
+
+    public static <K, V> ImmutableMap<K, V> of(K k1, V v1, K k2, V v2, K k3, V v3, K k4, V v4, K k5, V v5) {
+        return new ImmutableMap<>(Map.of(k1, v1, k2, v2, k3, v3, k4, v4, k5, v5));
+    }
+
     public static <K, V> ImmutableMap<K, V> copyOf(Map<? extends K, ? extends V> source) {
         return new ImmutableMap<>(Map.copyOf(source));
     }
