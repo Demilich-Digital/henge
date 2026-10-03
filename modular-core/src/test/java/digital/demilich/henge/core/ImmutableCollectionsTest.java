@@ -22,6 +22,17 @@ class ImmutableCollectionsTest {
     }
 
     @Test
+    void immutableListRejectsSequencedMutation() {
+        ImmutableList<String> list = ImmutableList.of("a");
+
+        assertThatThrownBy(() -> list.addFirst("z")).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> list.addLast("z")).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> list.removeLast()).isInstanceOf(UnsupportedOperationException.class);
+        // Not NoSuchElementException, as the inherited default would throw for an empty list.
+        assertThatThrownBy(() -> ImmutableList.of().removeFirst()).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
     void immutableListCopyOfIsUnaffectedByLaterMutationOfSource() {
         List<String> source = new ArrayList<>(List.of("a", "b"));
         ImmutableList<String> copy = ImmutableList.copyOf(source);

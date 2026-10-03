@@ -131,4 +131,30 @@ public final class ImmutableList<T> extends AbstractList<T> implements RandomAcc
     public final void clear() {
         throw new UnsupportedOperationException();
     }
+
+    // Java 21's SequencedCollection mutators.
+
+    @Override
+    @Deprecated
+    public final void addFirst(T element) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final void addLast(T element) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final T removeFirst() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Deprecated
+    public final T removeLast() {
+        throw new UnsupportedOperationException();
+    }
 }
