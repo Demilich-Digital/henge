@@ -64,9 +64,11 @@ class ModularTransportSupportTest {
         LocalDateTime dateTime = LocalDateTime.of(2026, 10, 3, 12, 34, 56);
         assertThat(roundTrip(dateTime, new TypeReference<LocalDateTime>() {})).isEqualTo(dateTime);
         OffsetDateTime offset = OffsetDateTime.of(dateTime, ZoneOffset.ofHours(-4));
-        assertThat(roundTrip(offset, new TypeReference<OffsetDateTime>() {}).toInstant()).isEqualTo(offset.toInstant());
+        // Compared as strings: AssertJ's isEqualTo for these types only checks the instant, and the
+        // point is that the offset and zone region survive too, as they would embedded.
+        assertThat(roundTrip(offset, new TypeReference<OffsetDateTime>() {})).hasToString(offset.toString());
         ZonedDateTime zoned = ZonedDateTime.parse("2026-10-03T12:34:56-04:00[America/New_York]");
-        assertThat(roundTrip(zoned, new TypeReference<ZonedDateTime>() {}).toInstant()).isEqualTo(zoned.toInstant());
+        assertThat(roundTrip(zoned, new TypeReference<ZonedDateTime>() {})).hasToString(zoned.toString());
         Duration duration = Duration.ofMillis(90_500);
         assertThat(roundTrip(duration, new TypeReference<Duration>() {})).isEqualTo(duration);
     }
@@ -114,6 +116,9 @@ class ModularTransportSupportTest {
         Instant instant = Instant.parse("2026-10-03T12:34:56.789Z");
         assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(instant, 1)), new TypeReference<ImmutableMap<Instant, Integer>>() {}))
                 .containsEntry(instant, 1);
+        ZonedDateTime zoned = ZonedDateTime.parse("2026-10-03T12:34:56-04:00[America/New_York]");
+        assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(zoned, 1)), new TypeReference<ImmutableMap<ZonedDateTime, Integer>>() {}))
+                .containsEntry(zoned, 1);
         BigDecimal amount = new BigDecimal("1.50");
         assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of(amount, 1)), new TypeReference<ImmutableMap<BigDecimal, Integer>>() {}))
                 .containsEntry(amount, 1);

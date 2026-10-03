@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
@@ -28,13 +29,20 @@ final class ModularTransportSupport {
      * needs {@link Jdk8Module} and {@code java.time.*} needs {@link JavaTimeModule}, neither of
      * which Jackson registers by default. Dates are written as ISO-8601 strings, not numeric
      * timestamps, so the wire format is readable and independent of time-zone/precision defaults.
+     *
+     * <p>A zoned or offset date-time has to come back {@code equals} to what was sent, as it would
+     * embedded: by default Jackson drops a {@code ZonedDateTime}'s zone region and normalizes both
+     * it and an {@code OffsetDateTime} to UTC on the way in -- the same instant, but a different
+     * value. So the zone id is written, and nothing is adjusted on reading.
      */
     static ObjectMapper objectMapper() {
         return new ObjectMapper()
                 .registerModule(new HengeCollectionsModule())
                 .registerModule(new Jdk8Module())
                 .registerModule(new JavaTimeModule())
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .enable(SerializationFeature.WRITE_DATES_WITH_ZONE_ID)
+                .disable(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE);
     }
 
     /**
