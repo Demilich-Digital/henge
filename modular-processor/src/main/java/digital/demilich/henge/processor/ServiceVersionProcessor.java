@@ -201,6 +201,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
     private void generateSkeletonIfNeeded(TypeElement interfaceElement) {
         List<ExecutableElement> versionedMethods = serviceMethods(interfaceElement).stream()
                 .filter(m -> !m.getModifiers().contains(Modifier.STATIC))
+                .filter(m -> !m.getModifiers().contains(Modifier.DEFAULT)) // rejected by validateVersionRanges
                 .filter(m -> !hasTypeParameters(m)) // rejected by validateMethodShapes; stubs would not compile
                 .filter(m -> m.getAnnotation(AddedIn.class) != null || m.getAnnotation(DeprecatedSince.class) != null)
                 .toList();
@@ -422,6 +423,13 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             if (deprecatedSince != null && deprecatedSince.value() < 1) {
                 messager.printMessage(Diagnostic.Kind.ERROR,
                         "@DeprecatedSince(" + deprecatedSince.value() + ") on " + describeMethod(method) + " must be a positive version", method);
+            }
+            if ((addedIn != null || deprecatedSince != null) && method.getModifiers().contains(Modifier.DEFAULT)) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        describeMethod(method) + " is a default method with @AddedIn/@DeprecatedSince: a method with a body "
+                                + "is never required to be implemented, so the version range has nothing to enforce. Drop the "
+                                + "annotation, or make the method abstract.",
+                        method);
             }
             if (addedIn != null && deprecatedSince != null && addedIn.value() >= deprecatedSince.value()) {
                 messager.printMessage(Diagnostic.Kind.ERROR,
@@ -659,8 +667,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         for (ExecutableElement interfaceMethod : serviceMethods(interfaceElement)) {
             AddedIn addedIn = interfaceMethod.getAnnotation(AddedIn.class);
             DeprecatedSince deprecatedSince = interfaceMethod.getAnnotation(DeprecatedSince.class);
-            if (addedIn == null && deprecatedSince == null) {
-                continue;
+            if ((addedIn == null && deprecatedSince == null) || interfaceMethod.getModifiers().contains(Modifier.DEFAULT)) {
+                continue; // unversioned, or a default method (rejected by validateVersionRanges)
             }
 
             boolean inRange = (addedIn == null || implVersion >= addedIn.value())

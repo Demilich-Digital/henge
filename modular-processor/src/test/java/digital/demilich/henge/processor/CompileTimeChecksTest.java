@@ -156,6 +156,18 @@ class CompileTimeChecksTest {
     }
 
     @Test
+    void versionAnnotationsOnADefaultMethodAreRejectedOnce() {
+        var result = compile(
+                src("defver", "Svc", "@ModularService public interface Svc { String a(); @DeprecatedSince(3) default String b() { return \"d\"; } }"),
+                src("defver", "V1", "@ServiceVersion(value = Svc.class, version = 1) public class V1 implements Svc { public String a() { return \"a\"; } }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("is a default method with @AddedIn/@DeprecatedSince")).isTrue();
+        // Not also reported as unimplemented: the interface's body is an implementation.
+        assertThat(result.hasErrorContaining("does not implement")).isFalse();
+    }
+
+    @Test
     void nonPositiveVersionsAreRejected() {
         var result = compile(src("zero", "Svc", "@ModularService public interface Svc { String a(); @AddedIn(0) String b(); }"));
 
