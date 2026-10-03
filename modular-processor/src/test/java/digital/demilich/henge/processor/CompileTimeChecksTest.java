@@ -89,6 +89,24 @@ class CompileTimeChecksTest {
         assertThat(result.success()).isTrue();
     }
 
+    @Test
+    void theSameMethodInheritedFromTwoSuperinterfacesIsNotAnOverload() {
+        var plain = compile(
+                src("diamond", "A", "public interface A { String a(); }"),
+                src("diamond", "B", "public interface B { String a(); }"),
+                src("diamond", "Svc", "@ModularService public interface Svc extends A, B { }"));
+        assertThat(plain.success()).isTrue();
+
+        // And a versioned one gets a single skeleton stub, not two clashing ones.
+        var versioned = compile(
+                src("diamondver", "A", "public interface A { String a(); @AddedIn(2) String b(); }"),
+                src("diamondver", "B", "public interface B { @AddedIn(2) String b(); }"),
+                src("diamondver", "Svc", "@ModularService public interface Svc extends A, B { }"),
+                src("diamondver", "V1", "@ServiceVersion(value = Svc.class, version = 1) public class V1 extends SvcSkeleton { "
+                        + "public String a() { return \"a\"; } }"));
+        assertThat(versioned.success()).isTrue();
+    }
+
     // ---- method shapes ----
 
     @Test

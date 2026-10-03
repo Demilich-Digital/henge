@@ -303,7 +303,9 @@ public class ServiceVersionProcessor extends AbstractProcessor {
      * Every method the runtime dispatcher exposes for {@code interfaceElement}: its own and its
      * superinterfaces' (the runtime uses {@code Class.getMethods()}), minus {@code Object}'s and
      * private interface methods. Every check below runs over this set, so a method can't escape
-     * validation just by being declared on a parent interface.
+     * validation just by being declared on a parent interface. The same method inherited from two
+     * unrelated superinterfaces ({@code Svc extends A, B}, both declaring {@code String a()}) is one
+     * method, not an overload, so only the first of them is kept.
      */
     private List<ExecutableElement> serviceMethods(TypeElement interfaceElement) {
         List<ExecutableElement> methods = new ArrayList<>();
@@ -315,9 +317,21 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             if (method.getModifiers().contains(Modifier.PRIVATE)) {
                 continue;
             }
-            methods.add(method);
+            if (methods.stream().noneMatch(existing -> sameSignature(interfaceElement, existing, method))) {
+                methods.add(method);
+            }
         }
         return methods;
+    }
+
+    private boolean sameSignature(TypeElement interfaceElement, ExecutableElement a, ExecutableElement b) {
+        if (!a.getSimpleName().contentEquals(b.getSimpleName())) {
+            return false;
+        }
+        DeclaredType container = (DeclaredType) interfaceElement.asType();
+        ExecutableType aType = (ExecutableType) typeUtils.asMemberOf(container, a);
+        ExecutableType bType = (ExecutableType) typeUtils.asMemberOf(container, b);
+        return typeUtils.isSubsignature(aType, bType) && typeUtils.isSubsignature(bType, aType);
     }
 
     private static String rpcName(ExecutableElement method) {

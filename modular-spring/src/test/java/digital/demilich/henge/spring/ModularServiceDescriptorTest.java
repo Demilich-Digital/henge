@@ -22,6 +22,24 @@ class ModularServiceDescriptorTest {
         void save(String name, int age);
     }
 
+    interface FromA {
+        String a();
+    }
+
+    interface FromB {
+        String a();
+    }
+
+    interface Diamond extends FromA, FromB {
+    }
+
+    @Test
+    void theSameMethodInheritedFromTwoSuperinterfacesIsOneMethod() {
+        ModularServiceDescriptor descriptor = ModularServiceDescriptor.of("diamond-service", 1, Diamond.class, "diamond-service-1");
+
+        assertThat(descriptor.methods()).containsOnlyKeys("a");
+    }
+
     @Test
     void overloadedMethodsAreRejected() {
         assertThatThrownBy(() -> ModularServiceDescriptor.of("widget-service", 1, Overloaded.class, "widget-service-1"))

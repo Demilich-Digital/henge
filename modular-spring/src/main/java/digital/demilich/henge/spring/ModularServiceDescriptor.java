@@ -2,6 +2,7 @@ package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.ServiceMethod;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -22,13 +23,19 @@ public record ModularServiceDescriptor(
             method.trySetAccessible();
             String rpcName = rpcName(method);
             Method existing = methods.putIfAbsent(rpcName, method);
-            if (existing != null) {
+            // getMethods() lists the same method inherited from two unrelated superinterfaces
+            // (Svc extends A, B, both declaring String a()) once per superinterface; that's one method.
+            if (existing != null && !sameSignature(existing, method)) {
                 throw new IllegalStateException("Modular service '" + name + "' has two methods that resolve to the same "
                         + "RPC name '" + rpcName + "' (" + existing + " and " + method + "); overloaded methods are not "
                         + "supported, use @ServiceMethod(name = ...) to disambiguate");
             }
         }
         return new ModularServiceDescriptor(name, version, interfaceType, beanName, Map.copyOf(methods));
+    }
+
+    private static boolean sameSignature(Method a, Method b) {
+        return a.getName().equals(b.getName()) && Arrays.equals(a.getParameterTypes(), b.getParameterTypes());
     }
 
     /** The dispatch-path name of {@code method}: {@code @ServiceMethod(name)} if set, else the Java name. */
