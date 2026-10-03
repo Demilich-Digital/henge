@@ -144,6 +144,16 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             }
         }
 
+        // A name that matches no discovered interface (almost always a typo) would otherwise leave
+        // every service in this process as an internal-rest proxy, silently hosting nothing.
+        Set<String> unknownServeNames = new LinkedHashSet<>(serveSpec.names());
+        unknownServeNames.removeAll(namesToInterfaces.keySet());
+        if (!unknownServeNames.isEmpty()) {
+            throw new IllegalStateException("modular.serve names " + unknownServeNames + " but no @ModularService with "
+                    + (unknownServeNames.size() == 1 ? "that name was" : "those names were") + " found; discovered services: "
+                    + namesToInterfaces.keySet());
+        }
+
         registry.registerBeanDefinition("modularServiceRegistry",
                 BeanDefinitionBuilder.genericBeanDefinition(ModularServiceRegistry.class)
                         .addConstructorArgValue(embedded)
@@ -191,7 +201,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
                 Map<Integer, Class<?>> byVersion = result.computeIfAbsent(serviceInterface, k -> new LinkedHashMap<>());
                 Class<?> existing = byVersion.putIfAbsent(version, implClass);
-                if (existing != null) {
+                // Overlapping basePackages (e.g. "a" and "a.b") make the scanner find the same class twice.
+                if (existing != null && existing != implClass) {
                     throw new IllegalStateException("Two implementations both claim version '" + version + "' of "
                             + serviceInterface.getName() + ": " + existing.getName() + " and " + implClass.getName());
                 }

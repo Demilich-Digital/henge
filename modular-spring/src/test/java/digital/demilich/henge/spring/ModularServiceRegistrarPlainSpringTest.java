@@ -1,6 +1,7 @@
 package digital.demilich.henge.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.spring.fixture.counter.CounterService;
 import digital.demilich.henge.spring.fixture.counter.CounterServiceV1;
@@ -12,6 +13,7 @@ import java.lang.reflect.Proxy;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.MapPropertySource;
 
 /**
@@ -68,5 +70,33 @@ class ModularServiceRegistrarPlainSpringTest {
         } finally {
             ctx.close();
         }
+    }
+
+    @Test
+    void modularServeNamingAnUnknownServiceFailsFast() {
+        AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
+        ctx.getEnvironment()
+                .getPropertySources()
+                .addFirst(new MapPropertySource("test", Map.of("modular.serve", "counter-servce")));
+        ctx.register(CounterTestConfig.class, ModularTransportConfiguration.class);
+
+        assertThatThrownBy(ctx::refresh)
+                .hasStackTraceContaining("modular.serve names [counter-servce]")
+                .hasStackTraceContaining("counter-service");
+        ctx.close();
+    }
+
+    @Test
+    void overlappingBasePackagesDoNotReportADuplicateImplementation() {
+        try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(OverlappingPackagesConfig.class)) {
+            assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);
+        }
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = {
+        "digital.demilich.henge.spring.fixture.counter", "digital.demilich.henge.spring.fixture"
+    })
+    static class OverlappingPackagesConfig {
     }
 }

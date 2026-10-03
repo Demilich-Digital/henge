@@ -66,6 +66,11 @@ class ServeSpec {
         return false;
     }
 
+    /** Every service name mentioned in {@code modular.serve}, with or without a version. */
+    Set<String> names() {
+        return entries.stream().map(Entry::name).collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
     /**
      * Explicit (non-wildcard) versions named for this service, e.g. {@code ["2"]} for
      * {@code audit-service@2} — so a serve-listed version that isn't otherwise discovered (no
