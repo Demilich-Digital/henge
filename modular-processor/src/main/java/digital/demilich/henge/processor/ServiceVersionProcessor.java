@@ -188,7 +188,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
 
         String packageName = elementUtils.getPackageOf(interfaceElement).getQualifiedName().toString();
         String skeletonSimpleName = interfaceElement.getSimpleName() + "Skeleton";
-        String qualifiedSkeletonName = packageName.isEmpty() ? skeletonSimpleName : packageName + "." + skeletonSimpleName;
+        String qualifiedSkeletonName = skeletonQualifiedName(interfaceElement);
 
         String previousOwner = generatedSkeletons.putIfAbsent(qualifiedSkeletonName, interfaceElement.getQualifiedName().toString());
         if (previousOwner != null) {
@@ -598,7 +598,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 continue;
             }
 
-            if (!isOverriddenDirectly(implElement, interfaceMethod)) {
+            if (!isGenuinelyImplemented(implElement, interfaceElement, interfaceMethod)) {
                 messager.printMessage(Diagnostic.Kind.ERROR,
                         implElement.getQualifiedName() + " declares @ServiceVersion(" + interfaceElement.getSimpleName()
                                 + ".class, " + annotation.version() + ") but does not implement '"
@@ -609,13 +609,32 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         }
     }
 
-    private boolean isOverriddenDirectly(TypeElement implElement, ExecutableElement interfaceMethod) {
-        for (ExecutableElement candidate : ElementFilter.methodsIn(implElement.getEnclosedElements())) {
-            if (elementUtils.overrides(candidate, interfaceMethod, implElement)) {
-                return true;
+    /**
+     * Whether {@code implElement} gets a real implementation of {@code interfaceMethod} -- declared
+     * on itself or inherited from any superclass -- as opposed to the generated skeleton's throwing
+     * stub. Looks at the class's full member set rather than only its own declarations, so an
+     * implementation that inherits the method from a shared base class (or from an earlier
+     * version's implementation) isn't wrongly reported as missing it. {@code getAllMembers} lists
+     * only the most-derived implementation of each method, so the one found here is the one a call
+     * would actually reach.
+     */
+    private boolean isGenuinelyImplemented(TypeElement implElement, TypeElement interfaceElement, ExecutableElement interfaceMethod) {
+        String skeletonName = skeletonQualifiedName(interfaceElement);
+        for (ExecutableElement candidate : ElementFilter.methodsIn(elementUtils.getAllMembers(implElement))) {
+            if (!elementUtils.overrides(candidate, interfaceMethod, implElement)) {
+                continue;
             }
+            boolean isGeneratedStub = candidate.getEnclosingElement() instanceof TypeElement owner
+                    && owner.getQualifiedName().contentEquals(skeletonName);
+            return !isGeneratedStub;
         }
         return false;
+    }
+
+    private String skeletonQualifiedName(TypeElement interfaceElement) {
+        String packageName = elementUtils.getPackageOf(interfaceElement).getQualifiedName().toString();
+        String simpleName = interfaceElement.getSimpleName() + "Skeleton";
+        return packageName.isEmpty() ? simpleName : packageName + "." + simpleName;
     }
 
     /**

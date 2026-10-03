@@ -177,6 +177,45 @@ class CompileTimeChecksTest {
         assertThat(ok.success()).isTrue();
     }
 
+    // ---- what counts as "implemented" ----
+
+    private static final String VERSIONED_SVC =
+            "@ModularService(defaultVersion = 2) public interface Svc { String a(); @AddedIn(2) String b(); }";
+
+    @Test
+    void versionedMethodInheritedFromABaseClassCountsAsImplemented() {
+        var result = compile(
+                src("basecls", "Svc", VERSIONED_SVC),
+                src("basecls", "BaseImpl",
+                        "public abstract class BaseImpl extends SvcSkeleton { public String a() { return \"a\"; } public String b() { return \"b\"; } }"),
+                src("basecls", "Impl", "@ServiceVersion(value = Svc.class, version = 2) public class Impl extends BaseImpl { }"));
+
+        assertThat(result.success()).isTrue();
+    }
+
+    @Test
+    void laterVersionMayInheritAnEarlierVersionsImplementation() {
+        var result = compile(
+                src("chain", "Svc", VERSIONED_SVC),
+                src("chain", "V1",
+                        "@ServiceVersion(value = Svc.class, version = 1) public class V1 extends SvcSkeleton { public String a() { return \"a\"; } }"),
+                src("chain", "V2", "@ServiceVersion(value = Svc.class, version = 2) public class V2 extends V1 { public String b() { return \"b\"; } }"),
+                src("chain", "V3", "@ServiceVersion(value = Svc.class, version = 3) public class V3 extends V2 { }"));
+
+        assertThat(result.success()).isTrue();
+    }
+
+    @Test
+    void methodLeftToTheSkeletonStubIsStillReportedEvenThroughABaseClass() {
+        var result = compile(
+                src("stub", "Svc", VERSIONED_SVC),
+                src("stub", "BaseImpl", "public abstract class BaseImpl extends SvcSkeleton { public String a() { return \"a\"; } }"),
+                src("stub", "Impl", "@ServiceVersion(value = Svc.class, version = 2) public class Impl extends BaseImpl { }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("does not implement 'b'")).isTrue();
+    }
+
     // ---- generics ----
 
     @Test
