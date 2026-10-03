@@ -128,7 +128,12 @@ class ModularDispatcherController {
 
     private Object[] bindArguments(Method method, JsonNode body) {
         Class<?>[] paramTypes = method.getParameterTypes();
-        int provided = (body == null || body.isNull()) ? 0 : body.size();
+        boolean noBody = body == null || body.isNull();
+        if (!noBody && !body.isArray()) {
+            throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
+                    "Request body must be a JSON array of arguments for " + method.getName());
+        }
+        int provided = noBody ? 0 : body.size();
         if (provided != paramTypes.length) {
             throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
                     "Expected " + paramTypes.length + " argument(s) for " + method.getName() + " but received " + provided);
@@ -138,7 +143,9 @@ class ModularDispatcherController {
             try {
                 args[i] = objectMapper.convertValue(body.get(i),
                         objectMapper.getTypeFactory().constructType(method.getGenericParameterTypes()[i]));
-            } catch (IllegalArgumentException e) {
+            } catch (RuntimeException e) {
+                // Not just IllegalArgumentException (Jackson's wrapper for malformed JSON): a custom
+                // deserializer can throw anything, e.g. ImmutableList rejecting a null element.
                 throw new ModularDispatchException(HttpStatus.BAD_REQUEST,
                         "Failed to bind argument " + i + " of " + method.getName());
             }

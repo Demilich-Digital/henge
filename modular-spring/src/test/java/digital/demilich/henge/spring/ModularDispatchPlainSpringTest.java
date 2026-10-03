@@ -153,6 +153,47 @@ class ModularDispatchPlainSpringTest {
         }
     }
 
+    @Test
+    void nonArrayRequestBodyIsRejectedNotBoundAsNull() throws Exception {
+        RunningServer server = startServer(Map.of());
+        try {
+            assertThatThrownBy(() -> RestClient.create()
+                            .post()
+                            .uri("http://localhost:" + server.port() + "/_modular/echo-service/1/echo")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("{\"value\":\"hi\"}")
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOfSatisfying(RestClientResponseException.class, e -> {
+                        assertThat(e.getStatusCode().value()).isEqualTo(400);
+                        assertThat(e.getResponseBodyAsString()).contains("JSON array");
+                    });
+            assertThat(server.context().getBean(EchoServiceImpl.class).getCallCount()).isZero();
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    void nullElementInAnImmutableCollectionArgumentIsA400() throws Exception {
+        RunningServer server = startServer(Map.of());
+        try {
+            assertThatThrownBy(() -> RestClient.create()
+                            .post()
+                            .uri("http://localhost:" + server.port() + "/_modular/echo-service/1/upperCaseAll")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body("[[\"a\", null]]")
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOfSatisfying(RestClientResponseException.class, e -> {
+                        assertThat(e.getStatusCode().value()).isEqualTo(400);
+                        assertThat(e.getResponseBodyAsString()).contains("Failed to bind argument 0");
+                    });
+        } finally {
+            server.stop();
+        }
+    }
+
     private record RunningServer(Tomcat tomcat, AnnotationConfigWebApplicationContext context, int port) {
         void stop() throws Exception {
             tomcat.stop();

@@ -1,6 +1,9 @@
 package digital.demilich.henge.spring;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.Duration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
@@ -19,8 +22,19 @@ final class ModularTransportSupport {
     private ModularTransportSupport() {
     }
 
+    /**
+     * Every type the processor allows across a {@code @ModularService} boundary has to survive this
+     * mapper, or it works embedded and breaks only once the service is split: {@code Optional}
+     * needs {@link Jdk8Module} and {@code java.time.*} needs {@link JavaTimeModule}, neither of
+     * which Jackson registers by default. Dates are written as ISO-8601 strings, not numeric
+     * timestamps, so the wire format is readable and independent of time-zone/precision defaults.
+     */
     static ObjectMapper objectMapper() {
-        return new ObjectMapper().registerModule(new HengeCollectionsModule());
+        return new ObjectMapper()
+                .registerModule(new HengeCollectionsModule())
+                .registerModule(new Jdk8Module())
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
     /**

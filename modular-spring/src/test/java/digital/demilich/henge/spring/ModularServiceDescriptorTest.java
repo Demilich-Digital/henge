@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.ServiceMethod;
+import digital.demilich.henge.spring.fixture.hidden.HiddenFixtures;
 import org.junit.jupiter.api.Test;
 
 class ModularServiceDescriptorTest {
@@ -34,5 +35,13 @@ class ModularServiceDescriptorTest {
                 ModularServiceDescriptor.of("widget-service", 1, OverloadedWithRename.class, "widget-service-1");
 
         assertThat(descriptor.methods()).containsOnlyKeys("save", "saveWithAge");
+    }
+
+    @Test
+    void methodsOfANonPublicInterfaceAreInvocableFromAnotherPackage() throws Exception {
+        ModularServiceDescriptor descriptor =
+                ModularServiceDescriptor.of("hidden-service", 1, HiddenFixtures.interfaceType(), "hidden-service-1");
+
+        assertThat(descriptor.methods().get("hello").invoke(HiddenFixtures.newImpl())).isEqualTo("hello");
     }
 }

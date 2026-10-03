@@ -17,6 +17,9 @@ public record ModularServiceDescriptor(
     static ModularServiceDescriptor of(String name, int version, Class<?> interfaceType, String beanName) {
         Map<String, Method> methods = new LinkedHashMap<>();
         for (Method method : interfaceType.getMethods()) {
+            // Reflective calls from the dispatcher into a non-public interface (a package-private
+            // one is legal, and works embedded) otherwise fail with IllegalAccessException.
+            method.trySetAccessible();
             String rpcName = rpcName(method);
             Method existing = methods.putIfAbsent(rpcName, method);
             if (existing != null) {
