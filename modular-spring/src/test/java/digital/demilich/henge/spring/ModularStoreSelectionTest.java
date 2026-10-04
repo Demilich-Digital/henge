@@ -129,7 +129,7 @@ class ModularStoreSelectionTest {
             assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isSameAs(FakeDatastoreProvider.CREATED.get());
             created = FakeDatastoreProvider.CREATED.get();
             // The chosen store really is the one in use.
-            assertThat(created.read("lease:ledger-db").members()).hasSize(2);
+            assertThat(created.read("lease:ledger-db").members()).hasSize(1); // one claim, shared by both services
             assertThat(created.closed).isFalse();
         }
         assertThat(created.closed).isTrue();
@@ -178,12 +178,12 @@ class ModularStoreSelectionTest {
                 assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isInstanceOf(RedisEphemeralDatastore.class);
 
                 var leases = observer.read("lease:ledger-db").members();
-                assertThat(leases).hasSize(2);
+                assertThat(leases).hasSize(1);
                 assertThat(leases.keySet()).allSatisfy(member -> assertThat(member.nodeId())
                         .isEqualTo(ctx.getBean(SystemEphemeralDatastore.class).nodeId()));
-                // This node's claims count against another node's: 40 + 40 held, so 30 more is refused.
-                assertThat(observer.claim("lease:ledger-db", "elsewhere", 30, 100, Duration.ofSeconds(30))).isFalse();
-                assertThat(observer.claim("lease:ledger-db", "elsewhere", 20, 100, Duration.ofSeconds(30))).isTrue();
+                // This node's claim counts against another node's: 40 held, so 61 more is refused.
+                assertThat(observer.claim("lease:ledger-db", "elsewhere", 61, 100, Duration.ofSeconds(30))).isFalse();
+                assertThat(observer.claim("lease:ledger-db", "elsewhere", 60, 100, Duration.ofSeconds(30))).isTrue();
                 observer.remove("lease:ledger-db", "elsewhere");
 
                 var advertisement = observer.read("adv:ledger-service@1").members().values().iterator().next();

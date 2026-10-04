@@ -165,9 +165,12 @@ class ModularTopologyReportTest {
             assertThat(report.store().readable()).isTrue();
             assertThat(report.leases()).singleElement().satisfies(lease -> {
                 assertThat(lease.capacity()).isEqualTo(100);
-                assertThat(lease.claimed()).isEqualTo(60);
-                assertThat(lease.holders()).extracting(holder -> holder.service() + " " + holder.amount())
-                        .containsExactlyInAnyOrder("ledger-service@1 30", "report-service@1 30");
+                // One claim for the node, shared by both services.
+                assertThat(lease.claimed()).isEqualTo(30);
+                assertThat(lease.holders()).singleElement().satisfies(holder -> {
+                    assertThat(holder.amount()).isEqualTo(30);
+                    assertThat(holder.self()).isTrue();
+                });
             });
         }
     }

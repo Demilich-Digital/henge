@@ -340,13 +340,13 @@ Leases are declared on a version's implementation, so two versions of one servic
 database each claim a lease, and each opens its own pool: the cluster's claim, and the database's real
 load, grow with the number of versions a node hosts. Two things address that.
 
-**Triage (built).** When a lease can't cover everyone, who is refused is a policy, and it is "newest
-first, round-robin": the newest version of every service claims, then the second newest of every
-service, and so on, so a shortfall lands on old versions, which are reached remotely. It is
-implemented by chaining each round's `depends-on` to the one before. Once leases are shared by name
-(below) it only decides between different leases, since consumers of one lease share a claim.
-
-**One resource per lease name, per node, reference counted (to build).** Claim dedup alone would only
+**One claim per lease name, per node, reference counted (built); one resource per lease name (to
+build).** The claim is built: the keeper writes one member per lease for the node, every service that
+declares it joins, and the last one letting go (stopped, or failed to construct) hands it back, so a
+lease is never kept for consumers that didn't start. Because different leases are different keys with
+independent capacities, the order a node claims them in can't change what it ends up hosting, so there
+is no claim ordering or triage between versions or services. The resource is still per consumer.
+Claim dedup alone would only
 move the bookkeeping: if v1 and v2 share a claim and each still builds a pool of that size, the
 database sees twice the lease. So the resource itself must be one object, built once per node and
 owned by Henge rather than by an implementation constructor.

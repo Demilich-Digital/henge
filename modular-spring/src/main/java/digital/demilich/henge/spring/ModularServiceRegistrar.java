@@ -11,13 +11,11 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinition;
@@ -111,9 +109,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         List<ModularTopologyCatalog.Entry> catalogEntries = new ArrayList<>();
         List<String> serviceBeanNames = new ArrayList<>();
         Set<String> leasedBeanNames = new LinkedHashSet<>();
-        Map<String, Map<Integer, LeasedBean>> leasedVersions = new LinkedHashMap<>();
         Set<String> declaredLeaseNames = new LinkedHashSet<>();
-        Map<String, List<LeaseNeed>> allLeasedServices = new LinkedHashMap<>();
         Map<String, Class<?>> namesToInterfaces = new LinkedHashMap<>();
 
         for (Class<?> serviceInterface : serviceInterfaces) {
@@ -154,12 +150,6 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 }
 
                 Class<?> implClass = implsByVersion.get(version);
-                if (implClass != null) {
-                    List<LeaseNeed> configured = configuredLeaseNeeds(properties, implClass);
-                    if (!configured.isEmpty()) {
-                        allLeasedServices.put(qualifiedName, configured);
-                    }
-                }
                 // Derived from the resolved service name (not the interface's raw simple name) so
                 // that two interfaces with the same simple name in different packages -- already
                 // rejected above unless disambiguated via @ModularService(name = ...) -- get
@@ -183,12 +173,9 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                         definition = new RootBeanDefinition(ModularLeasedServiceFactoryBean.class);
                         LeasedImplementation leased =
                                 leasedImplementation(properties, serviceInterface, name, version, implClass, declaredLeases);
-                        allLeasedServices.put(qualifiedName, leased.needs());
                         definition.getConstructorArgumentValues().addIndexedArgumentValue(0, leased);
                         definition.setDependsOn(LEASE_KEEPER_BEAN_NAME);
                         leasedBeanNames.add(beanName);
-                        leasedVersions.computeIfAbsent(name, k -> new TreeMap<>(Comparator.reverseOrder()))
-                                .put(version, new LeasedBean(beanName, definition));
                         declaredLeases.forEach(lease -> declaredLeaseNames.add(lease.value()));
                     }
                     embedded.add(ModularServiceDescriptor.of(name, version, serviceInterface, beanName));
@@ -217,8 +204,6 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                     + String.join("\n  ", unknownProperties));
         }
 
-        requireStaticallyGrantable(allLeasedServices);
-        claimNewestVersionsFirst(leasedVersions);
 
         List<String> unknownLeaseProperties = properties.unknownLeaseProperties(declaredLeaseNames);
         if (!unknownLeaseProperties.isEmpty()) {
@@ -279,86 +264,6 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 .map(declared -> new ModularTopologyCatalog.LeaseDeclaration(declared.value(),
                         properties.leaseAmount(declared.value()), properties.leaseCapacity(declared.value())))
                 .toList();
-    }
-
-    /**
-     * The leases an implementation declares that are fully configured (capacity and this service's
-     * amount), for the check below; unlike {@link #leasedImplementation} it never throws, since a
-     * service this process doesn't host has no obligation to be configured here.
-     */
-    private static List<LeaseNeed> configuredLeaseNeeds(ModularProperties properties, Class<?> implClass) {
-        List<LeaseNeed> needs = new ArrayList<>();
-        for (RequiresLease declared : implClass.getAnnotationsByType(RequiresLease.class)) {
-            Integer capacity = properties.leaseCapacity(declared.value());
-            Integer amount = properties.leaseAmount(declared.value());
-            if (capacity != null && amount != null) {
-                needs.add(new LeaseNeed(declared.value(), amount, capacity));
-            }
-        }
-        return needs;
-    }
-
-    /**
-     * A lease's capacity is cluster-wide and every leased service has to be hosted somewhere at least
-     * once, so if one instance of each service that declares it claims more than the capacity, no
-     * deployment of this jar, monolith or split however finely, can ever host them all. That is
-     * known at boot, from the configuration alone, so it's refused at boot, counting every leased
-     * implementation on the classpath whether or not this process hosts it.
-     */
-    private record LeasedBean(String beanName, RootBeanDefinition definition) {
-    }
-
-    /**
-     * Decides who is refused when a lease can't cover everyone. Leased implementations are constructed
-     * eagerly, so left alone the order they claim in is an accident of scanning, and a node short of
-     * capacity would refuse whichever version happened to come last. Instead they claim in rounds: the
-     * newest version of every service, then the second newest of every service, and so on, so a
-     * shortfall lands on the old versions, which are reached remotely. Spring creates a bean's
-     * {@code depends-on} first, so each round depends on the one before it.
-     */
-    private static void claimNewestVersionsFirst(Map<String, Map<Integer, LeasedBean>> leasedVersions) {
-        List<LeasedBean> previousRound = List.of();
-        for (int rank = 0; ; rank++) {
-            List<LeasedBean> round = new ArrayList<>();
-            for (Map<Integer, LeasedBean> versions : leasedVersions.values()) {
-                if (versions.size() > rank) {
-                    round.add(new ArrayList<>(versions.values()).get(rank));
-                }
-            }
-            if (round.isEmpty()) {
-                return;
-            }
-            String[] after = previousRound.stream().map(LeasedBean::beanName).toArray(String[]::new);
-            for (LeasedBean bean : round) {
-                Set<String> dependsOn = new LinkedHashSet<>(Arrays.asList(bean.definition().getDependsOn()));
-                dependsOn.addAll(Arrays.asList(after));
-                bean.definition().setDependsOn(dependsOn.toArray(String[]::new));
-            }
-            previousRound = round;
-        }
-    }
-
-    private static void requireStaticallyGrantable(Map<String, List<LeaseNeed>> leasedServices) {
-        Map<String, List<String>> claimants = new LinkedHashMap<>();
-        Map<String, Integer> totals = new LinkedHashMap<>();
-        Map<String, Integer> capacities = new LinkedHashMap<>();
-        leasedServices.forEach((service, needs) -> {
-            for (LeaseNeed need : needs) {
-                claimants.computeIfAbsent(need.name(), k -> new ArrayList<>()).add(service + " " + need.amount());
-                totals.merge(need.name(), need.amount(), Integer::sum);
-                capacities.put(need.name(), need.capacity());
-            }
-        });
-        for (Map.Entry<String, Integer> total : totals.entrySet()) {
-            String lease = total.getKey();
-            if (total.getValue() > capacities.get(lease)) {
-                throw new IllegalStateException("Lease '" + lease + "' has capacity " + capacities.get(lease) + ", but one instance of "
-                        + "each service that declares it claims " + total.getValue() + " (" + String.join(", ", claimants.get(lease))
-                        + "). The capacity is cluster-wide and each of those services has to run somewhere, so no deployment "
-                        + "of this jar, however it's split, can host them all. Raise modular.leases." + lease + ".capacity, or "
-                        + "lower modular.leases." + lease + ".amount.");
-            }
-        }
     }
 
     /**

@@ -57,8 +57,9 @@ class ModularLeasesTest {
             assertThat(ctx.getBean(ReportService.class).grant()).isEqualTo("ledger-db:40");
 
             var held = ctx.getBean(SystemEphemeralDatastore.class).read("lease:ledger-db").members();
-            assertThat(held).hasSize(2);
-            assertThat(held.values()).extracting(SystemEphemeralDatastore::claimedAmount).containsExactlyInAnyOrder(40, 40);
+            // One claim for the node, shared by both services.
+            assertThat(held).hasSize(1);
+            assertThat(held.values()).extracting(SystemEphemeralDatastore::claimedAmount).containsExactly(40);
 
             var registry = ctx.getBean(ModularServiceRegistry.class);
             assertThat(registry.find("ledger-service", 1)).isPresent();
@@ -82,40 +83,10 @@ class ModularLeasesTest {
         try (var ctx = context(leases(100, 40), LeasedConfig.class)) {
             ctx.refresh();
             store = ctx.getBean(SystemEphemeralDatastore.class);
-            assertThat(store.read("lease:ledger-db").members()).hasSize(2);
+            assertThat(store.read("lease:ledger-db").members()).hasSize(1);
         }
 
         assertThat(store.read("lease:ledger-db").members()).isEmpty();
-    }
-
-    @Test
-    void aMonolithThatOverAllocatesALeaseFailsAtBootNamingEveryService() {
-        try (var ctx = context(leases(100, 60), LeasedConfig.class)) {
-            assertThatThrownBy(ctx::refresh)
-                    .hasStackTraceContaining("Lease 'ledger-db' has capacity 100, but one instance of each service that declares it claims 120")
-                    .hasStackTraceContaining("ledger-service@1 60")
-                    .hasStackTraceContaining("report-service@1 60")
-                    .hasStackTraceContaining("no deployment of this jar, however it's split, can host them all")
-                    .hasStackTraceContaining("Raise modular.leases.ledger-db.capacity");
-        }
-    }
-
-    @Test
-    void aUrlToFallBackOnDoesNotExcuseOverAllocation() {
-        Map<String, Object> properties = new HashMap<>(leases(100, 60));
-        properties.put("modular.services.report-service.url", "http://report-host:8080");
-        try (var ctx = context(properties, LeasedConfig.class, ModularTransportConfiguration.class)) {
-            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("claims 120");
-        }
-    }
-
-    @Test
-    void aServiceThisProcessDoesntHostStillCountsOnceItsAmountIsConfigured() {
-        Map<String, Object> properties = new HashMap<>(leases(100, 60));
-        properties.put("modular.serve", "report-service");
-        try (var ctx = context(properties, LeasedConfig.class, ModularTransportConfiguration.class)) {
-            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("ledger-service@1 60");
-        }
     }
 
     @Test
@@ -254,26 +225,36 @@ class ModularLeasesTest {
     }
 
     @Test
-    void aLeaseHeldByOtherProcessesSendsTheServiceRemoteInstead() {
-        Map<String, Object> properties = new HashMap<>(leases(100, 20));
+    void aLeaseHeldByOtherProcessesSendsItsServicesRemoteInstead() {
+        // 70 held elsewhere leaves 30, so a claim of 40 is refused, and with it both services on the lease.
+        Map<String, Object> properties = new HashMap<>(leases(100, 40));
         properties.put("modular.services.ledger-service.url", "http://ledger-host:8080");
         properties.put("modular.services.report-service.url", "http://report-host:8080");
         try (var ctx = context(properties, LeasedConfig.class, ForeignHolderConfig.class, ModularTransportConfiguration.class)) {
             ctx.refresh();
 
-            // 70 held elsewhere leaves 30: one claim of 20 fits, so one of the two is reached remotely.
-            // Which one is decided by claim order, which isn't the test's business.
             var registry = ctx.getBean(ModularServiceRegistry.class);
-            boolean ledgerHere = registry.find("ledger-service", 1).isPresent();
-            boolean reportHere = registry.find("report-service", 1).isPresent();
-            assertThat(ledgerHere ^ reportHere).isTrue();
-            Object refused = ledgerHere ? ctx.getBean(ReportService.class) : ctx.getBean(LedgerService.class);
-            assertThat(java.lang.reflect.Proxy.isProxyClass(refused.getClass())).isTrue();
+            assertThat(registry.find("ledger-service", 1)).isEmpty();
+            assertThat(registry.find("report-service", 1)).isEmpty();
+            assertThat(java.lang.reflect.Proxy.isProxyClass(ctx.getBean(LedgerService.class).getClass())).isTrue();
+            assertThat(java.lang.reflect.Proxy.isProxyClass(ctx.getBean(ReportService.class).getClass())).isTrue();
 
             // Only what is actually hosted here is advertised.
             var datastore = ctx.getBean(SystemEphemeralDatastore.class);
-            assertThat(datastore.read("adv:ledger-service@1").members()).hasSize(ledgerHere ? 1 : 0);
-            assertThat(datastore.read("adv:report-service@1").members()).hasSize(reportHere ? 1 : 0);
+            assertThat(datastore.read("adv:ledger-service@1").members()).isEmpty();
+            assertThat(datastore.read("adv:report-service@1").members()).isEmpty();
+        }
+    }
+
+    @Test
+    void servicesOnTheSameLeaseAreBothHostedWhenOneClaimFits() {
+        // 70 held elsewhere leaves 30: one claim of 20 fits, and both services stand on it.
+        try (var ctx = context(leases(100, 20), LeasedConfig.class, ForeignHolderConfig.class, ModularTransportConfiguration.class)) {
+            ctx.refresh();
+
+            var registry = ctx.getBean(ModularServiceRegistry.class);
+            assertThat(registry.find("ledger-service", 1)).isPresent();
+            assertThat(registry.find("report-service", 1)).isPresent();
         }
     }
 
@@ -290,42 +271,75 @@ class ModularLeasesTest {
         }
     }
 
-    @Configuration
-    static class ForeignHolderOf80Config {
-        @Bean
-        SystemEphemeralDatastore datastore() {
-            return new ForeignHolderDatastore(80);
-        }
-    }
-
     @Test
-    void whenTheLeaseCantCoverEveryVersionTheNewestVersionOfEachServiceClaimsFirst() {
-        // 20 of 100 is left: room for two claims of 10, and four versions want one. Every version of
-        // both services is scanned oldest first, so only claiming newest first leaves v2 of each.
-        try (var ctx = context(Map.of(
-                "modular.leases.shared-db.capacity", 100,
-                "modular.leases.shared-db.amount", 10),
-                VersionedConfig.class, ForeignHolderOf80Config.class, ModularTransportConfiguration.class)) {
-            ctx.refresh();
-
-            var registry = ctx.getBean(ModularServiceRegistry.class);
-            assertThat(registry.find("alpha-service", 2)).isPresent();
-            assertThat(registry.find("beta-service", 2)).isPresent();
-            assertThat(registry.find("alpha-service", 1)).isEmpty();
-            assertThat(registry.find("beta-service", 1)).isEmpty();
-        }
-    }
-
-    @Test
-    void everyVersionIsHostedWhenTheLeaseCoversThemAll() {
+    void everyVersionOfEveryServiceSharesTheNodesOneClaim() {
         try (var ctx = context(Map.of(
                 "modular.leases.shared-db.capacity", 100,
                 "modular.leases.shared-db.amount", 10),
                 VersionedConfig.class)) {
             ctx.refresh();
 
-            var registry = ctx.getBean(ModularServiceRegistry.class);
-            assertThat(registry.hosted()).hasSize(4);
+            assertThat(ctx.getBean(ModularServiceRegistry.class).hosted()).hasSize(4);
+            var held = ctx.getBean(SystemEphemeralDatastore.class).read("lease:shared-db").members();
+            assertThat(held).hasSize(1);
+            assertThat(held.values()).extracting(SystemEphemeralDatastore::claimedAmount).containsExactly(10);
+        }
+    }
+
+    /** Refuses one lease and grants the rest, as if another node held all of it. */
+    static class RefusesDbBDatastore implements SystemEphemeralDatastore {
+        private final InProcessEphemeralDatastore delegate = new InProcessEphemeralDatastore();
+
+        @Override
+        public String nodeId() {
+            return delegate.nodeId();
+        }
+
+        @Override
+        public void put(String key, String localName, byte[] value, Duration ttl) {
+            delegate.put(key, localName, value, ttl);
+        }
+
+        @Override
+        public void remove(String key, String localName) {
+            delegate.remove(key, localName);
+        }
+
+        @Override
+        public Snapshot read(String key) {
+            return delegate.read(key);
+        }
+
+        @Override
+        public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
+            return !key.equals("lease:db-b") && delegate.claim(key, localName, amount, capacity, ttl);
+        }
+    }
+
+    @Configuration
+    static class RefusesDbBConfig {
+        @Bean
+        SystemEphemeralDatastore datastore() {
+            return new RefusesDbBDatastore();
+        }
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.multi")
+    static class MultiLeaseConfig {
+    }
+
+    @Test
+    void aLeaseWhoseOnlyConsumerWasRefusedAnotherLeaseIsNotKept() {
+        try (var ctx = context(Map.of(
+                "modular.leases.db-a.capacity", 10, "modular.leases.db-a.amount", 5,
+                "modular.leases.db-b.capacity", 10, "modular.leases.db-b.amount", 5),
+                MultiLeaseConfig.class, RefusesDbBConfig.class, ModularTransportConfiguration.class)) {
+            ctx.refresh();
+
+            // db-a was granted, then db-b was refused: the service is remote, and db-a has no use here.
+            assertThat(ctx.getBean(ModularServiceRegistry.class).hosted()).isEmpty();
+            assertThat(ctx.getBean(SystemEphemeralDatastore.class).read("lease:db-a").members()).isEmpty();
         }
     }
 }

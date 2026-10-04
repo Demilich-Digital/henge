@@ -557,25 +557,24 @@ modular:
       amount: 20             # what one node claims
 ```
 
-All of a service's leases are acquired before its implementation is constructed, or none are. If
-they are refused, the service is reached over `internal-rest` like any other remote one: at its
-explicit `modular.services.<name>.url` if there is one, otherwise wherever it is advertised (see
-"Service advertisements"). `modular.remote-url-template` can't be combined with leases, since the
-template assumes every node behind the name hosts the service. A lease is held for
-the life of the process and renewed on a heartbeat, so a crashed node gives its share back after the
-lease's 30-second TTL.
+A lease is a node-level claim: every service on a node that declares `orders-db` shares the node's one
+claim of `modular.leases.orders-db.amount`, however many services and versions that is. All of a
+service's leases are acquired before its implementation is constructed, or none are. If they are
+refused, the service is reached over `internal-rest` like any other remote one: at its explicit
+`modular.services.<name>.url` if there is one, otherwise wherever it is advertised (see "Service
+advertisements"). `modular.remote-url-template` can't be combined with leases, since the template
+assumes every node behind the name hosts the service. A claim is renewed on a heartbeat and handed back
+when the last service on it lets go, whether it was stopped or failed to start; a crashed node gives
+its share back after the lease's 30-second TTL.
 
 What Henge does and doesn't do:
 
 - **It keeps books; it never sees a connection.** Size the real resource from `Lease.amount()`, and
   keep the resource inside the service: a shared pool bean (or JPA, Flyway, ...) opens its connections
-  whether or not the service was built here.
-- **Over-allocating a lease fails startup, in every deployment.** A lease's capacity is cluster-wide
-  and each leased service has to run somewhere, so if one instance of each service that declares it
-  claims more than the capacity, no way of splitting the jar can host them all. That's checked at boot,
-  from configuration alone, over every leased implementation on the classpath whose capacity and
-  amount are configured (whether or not this process hosts it, so give every process the same
-  config), and fails naming each service and amount.
+  whether or not the service was built here. Services sharing a lease share its claim, not a pool:
+  each one that builds its own from `Lease.amount()` opens that many connections, so give a service
+  that needs its own share its own lease.
+- **An amount larger than the capacity fails startup**, since no node could ever be granted it.
 - **The cap is soft.** Shared state lives in a `SystemEphemeralDatastore` (in-process by default, so a
   single node always grants what fits). To share it across nodes, add `modular-redis` and set
   `modular.store.type=redis` with `modular.store.redis.uri`, or define your own bean of that type

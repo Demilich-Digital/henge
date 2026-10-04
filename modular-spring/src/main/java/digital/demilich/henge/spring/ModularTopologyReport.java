@@ -100,7 +100,7 @@ class ModularTopologyReport {
     record Dependency(String from, String to, boolean remote) {
     }
 
-    record Holder(String node, String service, int amount, boolean self) {
+    record Holder(String node, int amount, boolean self) {
     }
 
     record LeaseStatus(String name, Integer capacity, int claimed, List<Holder> holders) {
@@ -239,7 +239,7 @@ class ModularTopologyReport {
         Map<MemberId, byte[]> members = datastore.read(ModularLeaseKeeper.key(lease)).members();
         return members.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(MemberId::nodeId).thenComparing(MemberId::localName)))
-                .map(member -> new Holder(member.getKey().nodeId(), member.getKey().localName(),
+                .map(member -> new Holder(member.getKey().nodeId(),
                         SystemEphemeralDatastore.claimedAmount(member.getValue()), member.getKey().nodeId().equals(datastore.nodeId())))
                 .toList();
     }
