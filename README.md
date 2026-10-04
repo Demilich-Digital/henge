@@ -338,7 +338,7 @@ pattern for any module that calls into a `@ModularService`.
 |---|---|
 | `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, `@RequiresLease` / `Lease`, the `ServiceTransport` seam, the `SystemEphemeralDatastore` contract and its `InProcessEphemeralDatastore`, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
 | `modular-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges and names). Declared to Gradle as an aggregating incremental processor. Depends only on `modular-core` — no Spring. |
-| `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, leases (`@RequiresLease` enforcement and renewal), service advertisements and advertisement-based routing, retries, datastore selection (`modular.store.type`), plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
+| `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, leases (`@RequiresLease` enforcement and renewal), service advertisements and advertisement-based routing, retries, the topology endpoint and page, datastore selection (`modular.store.type`), plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
 | `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, registers the dispatcher in servlet web applications behind the `modular.server.enabled` property gate, ships configuration metadata for IDE completion of `modular.*`, and — when Spring Security is present — adds the dedicated security chain for `/_modular` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
 | `modular-redis` | `RedisEphemeralDatastore`: a `SystemEphemeralDatastore` on Redis 7.4+ (hash-field TTLs, one Lua script per operation, so `claim` is atomic across nodes). Needs Lettuce; no Spring. Add the module and set `modular.store.type=redis` and `modular.store.redis.uri`. |
 | `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn(2)` method. |
@@ -526,6 +526,7 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.transport.retry.backoff` | `50ms` | Wait before each retry; same duration format as the timeouts, `0` retries at once. |
 | `modular.transport.retry.on` | `connect,not-served` | Which failures are retried: `connect`, `not-served`, or both. |
 | `modular.advertise.url` | unset | Base URL (`http://host:port`) other processes reach this one's `/_modular` at, published in its service advertisements. Unset: the advertisement says this process hosts a service but gives no address. |
+| `modular.topology.enabled` | `false` | Serve the topology as JSON at `<path-prefix>/topology` and as a page at `<path-prefix>/topology/ui`. See "Seeing the topology". Needs `modular.server.enabled` (the default) in Boot. |
 | `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all (a non-web application never does). |
 | `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. Must start with `/` and not end with one. |
 | `modular.transport.secret` | unset | Optional shared secret sent as `Modular-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
@@ -649,6 +650,43 @@ curl http://localhost:8082/api/audit         # -> ["greeted:Alice"], recorded by
 Stop the audit process and it withdraws its advertisements at once; start it again, on any port, and
 the greeting process picks it up within one refresh interval, with nothing reconfigured.
 
+## Seeing the topology
+
+Config decides the topology, so the resolved result should be visible. Set `modular.topology.enabled=true`
+and the process serves it under the `/_modular` prefix: `GET /_modular/topology` as JSON, and
+`GET /_modular/topology/ui`, a page that draws it (no build step, nothing loaded from elsewhere).
+
+```bash
+java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --modular.topology.enabled=true
+open http://localhost:8080/_modular/topology/ui
+```
+
+It is off by default, since it lists every service's host. When it is on it follows the same model as
+dispatch: network isolation, and where `modular.transport.secret` is set the JSON requires it as the
+`Modular-Internal-Secret` header. The page itself holds no data, so it is always served; it asks for the
+secret and sends it with its own requests. With Spring Security the Boot starter extends its `/_modular`
+chain to cover both paths.
+
+The JSON has three parts:
+
+- **`services`**: every version of every service, each with how it was configured (`mode`, and
+  `modeSource`: `explicit`, `serve` or `default`), its `state` here (`hosted`; `remote`; or
+  `lease-refused`, embedded by configuration but remote because its lease went elsewhere), the
+  `route` a call would take (`configured-url`, `template` or `advertised`, with the urls, or `none`),
+  the leases it declares, and `advertisedBy`: who currently advertises it on the datastore.
+- **`dependencies`** and **`consumers`**: which beans inject which service version, read from what
+  Spring actually wired. A service is a node, and so is each of your own beans that injects one
+  (`bean:<name>`). An edge to a service that isn't hosted here is `remote`: that call crosses the network.
+  Only what this process wired is known; a service hosted elsewhere has dependencies of its own that
+  appear on that process's page, not this one.
+- **`leases`** and the datastore itself: for each lease its capacity, how much is claimed and by whom,
+  read fresh from the datastore rather than from the routing cache, so it is what the cluster sees now.
+  A datastore that can't be read doesn't fail the report: those parts come back empty and `store.error`
+  says why.
+
+The view is this process's, plus what the shared datastore says about the others. The page doesn't
+fetch from peers; open each process's own page to see its side.
+
 ## Using this without Spring Boot
 
 `modular-spring-boot-starter` is a convenience layer, not a requirement — the actual mechanism
@@ -660,7 +698,7 @@ A plain-Spring consumer does three things Boot users get for free:
   unconditionally wires `ModularTransportConfiguration` (the `ServiceTransport` and
   `ModularProperties` beans needed to *call* other services) and, unless `modular.server.enabled=false`,
   `ModularDispatcherConfiguration` (the controller needed to *serve* embedded ones). Without Boot,
-  import them yourself — `ModularConfiguration` imports both at once, or import
+  import them yourself — `ModularConfiguration` imports them all at once, or import
   `ModularTransportConfiguration` alone if this process never serves any requests. "Should this
   process serve requests" becomes a code-level choice (which class you import) instead of a
   runtime property.
@@ -720,9 +758,9 @@ Deliberately out of scope for now, to keep the core mechanism small and correct:
 What's actually planned next, roughly in priority order (as opposed to "Not in v1" above, which is
 scope deliberately excluded rather than deferred):
 
-- **Topology visibility.** The framework's entire value proposition is "config decides the
-  topology" — right now the resolved result is invisible. Log a `service@version → mode → url`
-  table at startup, and expose the same table from the Boot starter via an actuator endpoint.
+- **Topology, further.** The endpoint and page are built (see "Seeing the topology"). Still to do:
+  log the `service@version → mode → url` table at startup, expose it through Actuator, and
+  aggregate the view across processes instead of one at a time.
 - **Tracing/metrics propagation on the transport.** The hand-built `RestClient` bypasses Boot's
   observation instrumentation today, so traces stop dead exactly at the process boundary that
   matters most. Build it from Boot's auto-configured `RestClient.Builder` when available instead.
