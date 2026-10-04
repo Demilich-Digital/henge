@@ -40,13 +40,15 @@ public class ModularTransportConfiguration {
      * doesn't use {@link EnableModularServices}) there is nothing to look in.
      */
     @Bean
-    public ServiceTransport internalRestTransport(
-            ModularProperties modularProperties, ObjectProvider<SystemEphemeralDatastore> datastore) {
+    public ServiceTransport internalRestTransport(ModularProperties modularProperties,
+            ObjectProvider<SystemEphemeralDatastore> datastore, ObjectProvider<SystemMetrics> systemMetrics) {
+        SystemMetrics metrics = systemMetrics.getIfAvailable(() -> SystemMetrics.NONE);
         SystemEphemeralDatastore available = datastore.getIfAvailable();
         AdvertisedEndpoints advertised = available == null ? null
-                : new AdvertisedEndpoints(available, ModularLeaseKeeper.DEFAULT_TTL.dividedBy(3), InstantSource.system());
+                : new AdvertisedEndpoints(metrics.measured(available, "routing"), ModularLeaseKeeper.DEFAULT_TTL.dividedBy(3),
+                        InstantSource.system());
         return new InternalRestTransport(
                 ModularTransportSupport.restClient(modularProperties), ModularTransportSupport.objectMapper(), modularProperties,
-                advertised);
+                advertised, metrics);
     }
 }

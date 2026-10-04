@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.lang.Nullable;
 
 /**
  * Tells the cluster which services this process hosts: for every service version {@code /_modular}
@@ -31,13 +32,17 @@ class ModularServiceAdvertiser implements SmartLifecycle {
     private final ModularServiceRegistry registry;
     private final ServiceAdvertisement advertisement;
     private final Duration ttl;
+    private final SystemMetrics metrics;
 
     private List<ModularServiceDescriptor> advertised = List.of();
     private ScheduledExecutorService heartbeat;
     private boolean running;
 
-    ModularServiceAdvertiser(SystemEphemeralDatastore datastore, ModularServiceRegistry registry, String advertiseUrl, Duration ttl) {
-        this.datastore = datastore;
+    /** @param metrics null (there are none to report to) is as good as {@link SystemMetrics#NONE} */
+    ModularServiceAdvertiser(SystemEphemeralDatastore datastore, ModularServiceRegistry registry, String advertiseUrl, Duration ttl,
+            @Nullable SystemMetrics metrics) {
+        this.metrics = metrics == null ? SystemMetrics.NONE : metrics;
+        this.datastore = this.metrics.measured(datastore, "advertisement");
         this.registry = registry;
         this.advertisement = new ServiceAdvertisement(advertiseUrl);
         this.ttl = ttl;
@@ -68,7 +73,9 @@ class ModularServiceAdvertiser implements SmartLifecycle {
         for (ModularServiceDescriptor service : advertised) {
             try {
                 datastore.put(ServiceAdvertisement.key(service.name(), service.version()), MEMBER, value, ttl);
+                metrics.advertisementRenewed(service.name(), service.version(), true);
             } catch (RuntimeException e) {
+                metrics.advertisementRenewed(service.name(), service.version(), false);
                 log.warn("Advertising " + service.name() + "@" + service.version() + " failed; will retry on the next heartbeat", e);
             }
         }

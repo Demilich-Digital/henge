@@ -1,3 +1,4 @@
 digital.demilich.henge.spring.ModularAutoConfiguration
 digital.demilich.henge.spring.ModularSecurityAutoConfiguration
 digital.demilich.henge.spring.ModularObservationAutoConfiguration
+digital.demilich.henge.spring.ModularMetricsAutoConfiguration

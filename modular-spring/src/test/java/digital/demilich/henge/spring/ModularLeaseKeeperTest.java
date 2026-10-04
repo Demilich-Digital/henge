@@ -19,7 +19,7 @@ class ModularLeaseKeeperTest {
 
     private final AtomicReference<Instant> now = new AtomicReference<>(Instant.parse("2026-01-01T00:00:00Z"));
     private final InProcessEphemeralDatastore store = new InProcessEphemeralDatastore(now::get);
-    private final ModularLeaseKeeper keeper = new ModularLeaseKeeper(store, Duration.ofSeconds(30));
+    private final ModularLeaseKeeper keeper = new ModularLeaseKeeper(store, Duration.ofSeconds(30), null);
 
     @AfterEach
     void close() {

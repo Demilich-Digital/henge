@@ -693,7 +693,27 @@ method. `henge.mode` is read per call, so it stays right when a service is reach
 lease was refused. The call is the current observation while it runs, so anything it calls in turn is
 its child.
 
-Not observed yet: leases, advertisements, retries as their own counts, and the datastore. See the roadmap.
+### The system's own meters
+
+What the framework does on its own account (claiming leases, keeping advertisements alive, retrying a
+call, talking to the datastore) is reported as plain meters, on a `MeterRegistry`. In Spring Boot they
+switch on when the application has a `MeterRegistry` bean, the same way. Without Boot, declare
+`MicrometerSystemMetrics` and `ModularHostedGauges` as beans over your registry.
+
+| Meter | Kind | Tags | Tells you |
+|---|---|---|---|
+| `henge.lease.claims` | counter | `lease`, `outcome` (`granted`, `refused`) | This node asked the cluster for a lease. A refusal holds nothing, so each leased service that asks after one is a refusal too. |
+| `henge.lease.renewals` | counter | `lease`, `outcome` (`renewed`, `over-capacity`, `error`) | The heartbeat that keeps a held lease. `over-capacity` is the cluster holding more than its capacity (nothing evicts yet); `error` is the datastore failing. |
+| `henge.lease.held` | gauge | `lease` | The amount this node holds; `0` once it hands it back. |
+| `henge.service.hosted` | gauge | `service`, `version`, `mode` (as configured) | `1` if this process serves the version, `0` if it is reached remotely. A `0` on an `embedded` version is a lease refusal. |
+| `henge.advertisement.renewals` | counter | `service`, `version`, `outcome` (`success`, `error`) | This node keeping its advertisements alive. A run of `error` is a node about to disappear from the cluster. |
+| `henge.transport.retries` | counter | `service`, `version`, `reason` (`connect`, `not-served`) | A call that provably never ran, being tried again. |
+| `henge.transport.giveups` | counter | `service`, `version`, `reason` | Such a call, abandoned: the attempts ran out, or retries are off. |
+| `henge.transport.endpoint.failures` | counter | `service`, `version` | An advertised host failed a call, so it isn't offered again for a while (see "Retries"). |
+| `henge.store.operations` | timer | `purpose` (`lease`, `advertisement`, `routing`), `operation` (`put`, `remove`, `read`, `claim`), `outcome` (`success`, `error`) | The datastore every one of the above stands on: its latency, and its errors, by who asked. A refused `claim` is a `success`. |
+
+A call that is retried is one `henge.call` observation (above) and as many `henge.transport.retries`
+as it took. Every tag is bounded by your interfaces and configuration, never by the traffic.
 
 ## Seeing the topology
 
@@ -806,10 +826,9 @@ scope deliberately excluded rather than deferred):
 - **Topology, further.** The endpoint and page are built (see "Seeing the topology"). Still to do:
   log the `service@version → mode → url` table at startup, expose it through Actuator, and
   aggregate the view across processes instead of one at a time.
-- **Metrics, further.** Calls and dispatches are built (see "Metrics"). Still to do: meters for the
-  system's own behavior: lease grants, refusals and renewal failures, advertisement renewals and
-  failovers, retries and give-ups as counts, datastore latency and errors, and gauges for what a
-  process hosts.
+- **Metrics, further.** Calls, dispatches and the system's own meters are built (see "Metrics").
+  Still to do: the number of nodes advertising each service version (a datastore read per scrape, so
+  it needs thought), and the dependency graph's remote edges as a gauge.
 - **Trace propagation on the transport.** The hand-built `RestClient` bypasses Boot's observation
   instrumentation today, so a trace's context stops dead exactly at the process boundary that
   matters most (the `henge.call` span is there; nothing carries it across the wire). Build it from

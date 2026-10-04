@@ -28,7 +28,7 @@ class ModularServiceAdvertiserTest {
     private final GenericApplicationContext hosting = hostingBothVersions();
     private final ModularServiceRegistry registry = registryOver(hosting);
     private final ModularServiceAdvertiser advertiser =
-            new ModularServiceAdvertiser(store, registry, "http://10.0.0.7:8080", Duration.ofSeconds(30));
+            new ModularServiceAdvertiser(store, registry, "http://10.0.0.7:8080", Duration.ofSeconds(30), null);
 
     /** A context in which this process embeds both versions of the counter service. */
     private static GenericApplicationContext hostingBothVersions() {
@@ -117,7 +117,7 @@ class ModularServiceAdvertiserTest {
 
     @Test
     void aProcessHostingNothingAdvertisesNothing() {
-        var empty = new ModularServiceAdvertiser(store, new ModularServiceRegistry(List.of()), null, Duration.ofSeconds(30));
+        var empty = new ModularServiceAdvertiser(store, new ModularServiceRegistry(List.of()), null, Duration.ofSeconds(30), null);
 
         empty.start();
 
@@ -128,7 +128,7 @@ class ModularServiceAdvertiserTest {
 
     @Test
     void withoutAnAdvertiseUrlTheAdvertisementSaysNoUrl() {
-        var noUrl = new ModularServiceAdvertiser(store, registry, null, Duration.ofSeconds(30));
+        var noUrl = new ModularServiceAdvertiser(store, registry, null, Duration.ofSeconds(30), null);
 
         noUrl.start();
 

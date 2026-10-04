@@ -20,6 +20,7 @@ import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.lang.Nullable;
 
 /**
  * Acquires, holds and releases this process's leases. A lease is a claim on the datastore key
@@ -68,13 +69,16 @@ class ModularLeaseKeeper implements DisposableBean, BeanFactoryAware {
 
     private final SystemEphemeralDatastore datastore;
     private final Duration ttl;
+    private final SystemMetrics metrics;
     private final Map<String, Held> heldByLease = new LinkedHashMap<>();
     private final Map<String, List<String>> leasesByService = new LinkedHashMap<>();
     private ScheduledExecutorService heartbeat;
     private BeanFactory beanFactory;
 
-    ModularLeaseKeeper(SystemEphemeralDatastore datastore, Duration ttl) {
-        this.datastore = datastore;
+    /** @param metrics null (there are none to report to) is as good as {@link SystemMetrics#NONE} */
+    ModularLeaseKeeper(SystemEphemeralDatastore datastore, Duration ttl, @Nullable SystemMetrics metrics) {
+        this.metrics = metrics == null ? SystemMetrics.NONE : metrics;
+        this.datastore = this.metrics.measured(datastore, "lease");
         this.ttl = ttl;
     }
 
@@ -95,11 +99,14 @@ class ModularLeaseKeeper implements DisposableBean, BeanFactoryAware {
             if (heldByLease.containsKey(need.name())) {
                 continue;
             }
-            if (!datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl)) {
+            boolean granted = datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl);
+            metrics.leaseClaimed(need.name(), granted);
+            if (!granted) {
                 claimedHere.forEach(claimed -> drop(claimed.name()));
                 return need;
             }
             heldByLease.put(need.name(), new Held(need));
+            metrics.leaseHeld(need.name(), need.amount());
             claimedHere.add(need);
         }
         // Only once everything is granted, so a refusal never builds a resource just to close it.
@@ -166,6 +173,9 @@ class ModularLeaseKeeper implements DisposableBean, BeanFactoryAware {
 
     private void drop(String lease) {
         Held held = heldByLease.remove(lease);
+        if (held != null) {
+            metrics.leaseHeld(lease, 0);
+        }
         if (held != null && held.resource != null) {
             try {
                 held.provider.close(held.resource);
@@ -195,11 +205,15 @@ class ModularLeaseKeeper implements DisposableBean, BeanFactoryAware {
         }
         for (LeaseNeed need : held) {
             try {
-                if (!datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl)) {
+                if (datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl)) {
+                    metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.RENEWED);
+                } else {
+                    metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.OVER_CAPACITY);
                     log.warn("Lease '" + need.name() + "' could not be renewed: the cluster now holds more of it than its "
                             + "capacity of " + need.capacity() + ". Its services keep running here, since nothing evicts yet.");
                 }
             } catch (RuntimeException e) {
+                metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.ERROR);
                 log.warn("Renewing lease '" + need.name() + "' failed", e);
             }
         }

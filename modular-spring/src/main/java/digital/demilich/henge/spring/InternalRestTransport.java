@@ -50,6 +50,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
     private volatile ClassLoader beanClassLoader = ClassUtils.getDefaultClassLoader();
 
     private final AdvertisedEndpoints advertisedEndpoints;
+    private final SystemMetrics metrics;
     private final RetryPolicy retryPolicy;
 
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties) {
@@ -59,10 +60,17 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
     /** @param advertisedEndpoints where to look for a service with no configured url; null to not look */
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties,
             AdvertisedEndpoints advertisedEndpoints) {
+        this(restClient, objectMapper, properties, advertisedEndpoints, SystemMetrics.NONE);
+    }
+
+    /** @param metrics told when a call is retried, given up on, or its advertised host fails */
+    InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties,
+            AdvertisedEndpoints advertisedEndpoints, SystemMetrics metrics) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.advertisedEndpoints = advertisedEndpoints;
+        this.metrics = metrics;
         this.retryPolicy = properties.getRetryPolicy(); // validated at startup, not on the first failure
         requireKnownPlaceholders(properties.getRemoteUrlTemplate());
         properties.getServerPathPrefix(); // validated at startup, not on the first call
@@ -94,7 +102,16 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
     private record Endpoint(String baseUrl, boolean advertised) {
     }
 
-    private enum Undelivered { CONNECT, NOT_SERVED }
+    private enum Undelivered {
+        CONNECT("connect"), NOT_SERVED("not-served");
+
+        /** As the meters tag it. */
+        private final String reason;
+
+        Undelivered(String reason) {
+            this.reason = reason;
+        }
+    }
 
     /** A call that never ran on the remote, carrying the failure to throw if it isn't retried. */
     private static final class NotDelivered extends RuntimeException {
@@ -121,10 +138,13 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
             } catch (NotDelivered notDelivered) {
                 if (endpoint.advertised()) {
                     advertisedEndpoints.failed(invocation.serviceName(), invocation.serviceVersion(), endpoint.baseUrl());
+                    metrics.endpointFailed(invocation.serviceName(), invocation.serviceVersion());
                 }
                 if (attempt >= retryPolicy.maxAttempts() || !retries(notDelivered.kind)) {
+                    metrics.callGaveUp(invocation.serviceName(), invocation.serviceVersion(), notDelivered.kind.reason);
                     throw attempt == 1 ? notDelivered.failure : gaveUp(notDelivered, attempt);
                 }
+                metrics.callRetried(invocation.serviceName(), invocation.serviceVersion(), notDelivered.kind.reason);
                 log.debug("Retrying " + invocation.serviceName() + "#" + invocation.methodName() + " after attempt " + attempt
                         + " (" + notDelivered.kind + " at " + endpoint.baseUrl() + ")");
                 pause(retryPolicy.backoff(), notDelivered.failure);
