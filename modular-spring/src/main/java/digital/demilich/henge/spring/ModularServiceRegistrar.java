@@ -13,6 +13,7 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -111,6 +112,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         Map<String, ProviderDeclaration> providers = discoverLeasedResources(basePackages, classLoader);
         ModularProperties properties = new ModularProperties(environment);
         ServeSpec serveSpec = ServeSpec.parse(properties.getServe());
+        int recentVersions = properties.getRecentVersions();
 
         List<ModularServiceDescriptor> embedded = new ArrayList<>();
         List<ModularTopologyCatalog.Entry> catalogEntries = new ArrayList<>();
@@ -141,6 +143,11 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             versions.addAll(config.explicitVersions());
             versions.addAll(serveSpec.versionsFor(name));
             versions.add(defaultVersion);
+
+            Set<Integer> named = new LinkedHashSet<>(config.explicitVersions());
+            named.addAll(serveSpec.versionsFor(name));
+            named.add(defaultVersion);
+            versions = recentVersions(name, versions, named, recentVersions);
 
             for (int version : versions) {
                 String qualifiedName = name + "@" + version;
@@ -268,6 +275,27 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 .getBeanDefinition();
         registryDefinition.setAttribute(IMPORTED_BY_ATTRIBUTE, importingClassMetadata.getClassName());
         registry.registerBeanDefinition(REGISTRY_BEAN_NAME, registryDefinition);
+    }
+
+    /**
+     * The {@code limit} highest of {@code versions}: an implementation older than that is left on the
+     * classpath but not run. A version the configuration, {@code modular.serve} or the interface's
+     * {@code defaultVersion()} names ({@code named}) can't be quietly dropped, so one outside the window
+     * fails startup naming the property that widens it.
+     */
+    static Set<Integer> recentVersions(String name, Set<Integer> versions, Set<Integer> named, int limit) {
+        Set<Integer> recent = new LinkedHashSet<>(versions.stream()
+                .sorted(Comparator.reverseOrder())
+                .limit(limit)
+                .toList());
+        for (int version : named) {
+            if (!recent.contains(version)) {
+                throw new IllegalStateException("Modular service '" + name + "' version " + version + " is named by its "
+                        + "configuration, --modular.serve or defaultVersion(), but only the " + limit + " most recent versions "
+                        + "run (" + recent + "). Raise modular.recent-versions, or drop the version.");
+            }
+        }
+        return recent;
     }
 
     /** Every lease {@code implClass} declares, with whatever the configuration says about it; none if there is no implementation. */

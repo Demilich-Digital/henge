@@ -182,4 +182,15 @@ class ModularPropertiesTest {
                 .unknownServiceProperties(Set.of("audit-service")))
                 .singleElement().asString().startsWith("MODULAR_SERVICES_AUDIT_SERVICE_MDOE: doesn't match");
     }
+
+    @Test
+    void recentVersionsDefaultsToTwoAndReadsAPositiveInteger() {
+        assertThat(new ModularProperties(new org.springframework.mock.env.MockEnvironment()).getRecentVersions()).isEqualTo(2);
+        assertThat(new ModularProperties(new org.springframework.mock.env.MockEnvironment()
+                .withProperty("modular.recent-versions", "3")).getRecentVersions()).isEqualTo(3);
+        assertThatThrownBy(() -> new ModularProperties(new org.springframework.mock.env.MockEnvironment()
+                .withProperty("modular.recent-versions", "0")).getRecentVersions())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("modular.recent-versions");
+    }
 }

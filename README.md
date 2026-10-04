@@ -523,6 +523,7 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.services.<name>.url` | — | Base URL of the process hosting the service; used when the mode is `internal-rest`. |
 | `modular.services.<name>.versions.<n>.mode` / `.url` | inherit the service-level value | Per-version override; `<n>` is an integer. |
 | `modular.serve` | unset | `name[@version]` entries, comma-separated or as a YAML list, naming what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
+| `modular.recent-versions` | `2` | How many of the most recent versions of each service this process runs; older `@ServiceVersion` implementations stay on the classpath, unrun. Two covers a deploy from the previous version to the latest, and a rollback of one; raise it for more overlap. A version that `defaultVersion()`, `modular.serve` or `modular.services` names outside the window fails startup. A positive integer. |
 | `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`; any other placeholder fails startup) used for any `internal-rest` service without an explicit `url`. |
 | `modular.leases.<lease>.capacity` | — | Cluster-wide capacity of a resource that services claim shares of with `@RequiresLease`. A positive integer; required for every declared lease. |
 | `modular.leases.<lease>.amount` | — | How much of the lease one node claims, however many services on it declare it. A positive integer, at most the capacity; required for every declared lease. |

@@ -78,6 +78,19 @@ public class ModularProperties {
         return environment.getProperty("modular.topology.enabled", Boolean.class, false);
     }
 
+    /** {@link #getRecentVersions()} when {@code modular.recent-versions} is unset. */
+    static final int DEFAULT_RECENT_VERSIONS = 2;
+
+    /**
+     * {@code modular.recent-versions}, default 2: how many of the most recent versions of each service
+     * this process runs. Two is a deploy from the previous version to the latest, or a rollback of one;
+     * raise it to run more at once. A positive integer.
+     */
+    public int getRecentVersions() {
+        Integer configured = positiveInt(environment, "modular.recent-versions");
+        return configured != null ? configured : DEFAULT_RECENT_VERSIONS;
+    }
+
     /** {@code modular.remote-url-template}; {@code null} if unset. */
     public String getRemoteUrlTemplate() {
         return environment.getProperty("modular.remote-url-template");

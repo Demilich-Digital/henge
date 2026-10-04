@@ -36,6 +36,12 @@
       "description": "name[@version] entries naming what this process hosts; every other discovered service defaults to internal-rest. Names that match no @ModularService fail startup."
     },
     {
+      "name": "modular.recent-versions",
+      "type": "java.lang.Integer",
+      "defaultValue": 2,
+      "description": "How many of the most recent versions of each service this process runs; older implementations on the classpath are not run. A version named by defaultVersion(), modular.serve or modular.services outside the window fails startup."
+    },
+    {
       "name": "modular.remote-url-template",
       "type": "java.lang.String",
       "description": "URL for any internal-rest service without an explicit url, with {service} and {version} substituted, e.g. http://{service}.default.svc.cluster.local:8080. Other placeholders fail startup."
