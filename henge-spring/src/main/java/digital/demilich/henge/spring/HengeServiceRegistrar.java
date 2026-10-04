@@ -3,6 +3,9 @@ package digital.demilich.henge.spring;
 import digital.demilich.henge.core.Lease;
 import digital.demilich.henge.core.LeasedResource;
 import digital.demilich.henge.core.HengeService;
+import digital.demilich.henge.core.RateLimit;
+import digital.demilich.henge.core.RateLimited;
+import digital.demilich.henge.core.RateLimiter;
 import digital.demilich.henge.core.RequiresLease;
 import digital.demilich.henge.core.ResourceProvider;
 import digital.demilich.henge.core.ServiceNames;
@@ -23,6 +26,7 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.beans.factory.support.AbstractBeanDefinition;
 import org.springframework.beans.factory.support.AutowireCandidateQualifier;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
@@ -111,6 +115,7 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
         Map<Class<?>, Map<Integer, Class<?>>> localImpls = discoverServiceVersionImpls(basePackages, serviceInterfaces, classLoader);
         Map<String, ProviderDeclaration> providers = discoverLeasedResources(basePackages, classLoader);
         HengeProperties properties = new HengeProperties(environment);
+        Map<String, RateLimit> rateLimits = properties.rateLimits();
         ServeSpec serveSpec = ServeSpec.parse(properties.getServe());
         int recentVersions = properties.getRecentVersions();
 
@@ -181,6 +186,7 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
                                 + "henge.services." + name + ".versions." + version + ".mode=internal-rest with a matching "
                                 + ".url pointing at the process that hosts it.");
                     }
+                    checkRateLimits(implClass, rateLimits.keySet());
                     if (!declaresLeases(implClass)) {
                         bindingSpec = ServiceBindingSpec.embedded(serviceInterface, name, version, implClass);
                     } else {
@@ -252,6 +258,19 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
             registry.registerBeanDefinition(HengeLeaseKeeper.providerBeanName(lease), provider);
         }
 
+        rateLimits.forEach((name, limit) -> {
+            // The datastore and the metrics (arguments 2 and 3) are autowired; the qualifier is what
+            // @RateLimited(name) at an injection point matches.
+            RootBeanDefinition limiter = new RootBeanDefinition(RateLimiters.class);
+            limiter.setFactoryMethodName("create");
+            limiter.setAutowireMode(AbstractBeanDefinition.AUTOWIRE_CONSTRUCTOR);
+            limiter.setTargetType(RateLimiter.class);
+            limiter.getConstructorArgumentValues().addIndexedArgumentValue(0, name);
+            limiter.getConstructorArgumentValues().addIndexedArgumentValue(1, limit);
+            limiter.addQualifier(new AutowireCandidateQualifier(RateLimited.class, name));
+            registry.registerBeanDefinition("hengeRateLimiter." + name, limiter);
+        });
+
         if (anyLeased) {
             // The datastore (constructor argument 0) is autowired; only the TTL is given.
             BeanDefinition keeper = BeanDefinitionBuilder.genericBeanDefinition(HengeLeaseKeeper.class).getBeanDefinition();
@@ -319,6 +338,25 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
     }
 
     /** Whether any constructor of {@code implClass} takes a leased parameter. */
+    /**
+     * A service that asks for a limiter nobody configured would otherwise fail on Spring's generic "no
+     * qualifying bean"; this says which properties make it. Other beans can take a limiter too, but only a
+     * service's constructor is known here.
+     */
+    private static void checkRateLimits(Class<?> implClass, Set<String> configured) {
+        for (Constructor<?> constructor : implClass.getDeclaredConstructors()) {
+            for (Parameter parameter : constructor.getParameters()) {
+                RateLimited rateLimited = parameter.getAnnotation(RateLimited.class);
+                if (rateLimited != null && !configured.contains(rateLimited.value())) {
+                    String prefix = "henge.rate-limits." + rateLimited.value();
+                    throw new IllegalStateException(implClass.getName() + " takes @RateLimited(\"" + rateLimited.value()
+                            + "\"), which isn't configured: set " + prefix + ".permits and " + prefix + ".period"
+                            + (configured.isEmpty() ? "" : " (configured: " + configured + ")"));
+                }
+            }
+        }
+    }
+
     private static boolean declaresLeases(Class<?> implClass) {
         for (Constructor<?> constructor : implClass.getDeclaredConstructors()) {
             for (Parameter parameter : constructor.getParameters()) {

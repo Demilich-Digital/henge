@@ -22,7 +22,10 @@ interface SystemMetrics {
         RENEWED, OVER_CAPACITY, ERROR
     }
 
-    /** {@code datastore}, timing each operation as made for {@code purpose} ({@code lease}, {@code advertisement}, {@code routing}). */
+    /**
+     * {@code datastore}, timing each operation as made for {@code purpose} ({@code lease}, {@code advertisement},
+     * {@code routing}, {@code rate-limit}).
+     */
     default SystemEphemeralDatastore measured(SystemEphemeralDatastore datastore, String purpose) {
         return datastore;
     }
@@ -63,5 +66,9 @@ interface SystemMetrics {
 
     /** An advertised host failed a call to {@code service@version}, and isn't offered again for a while. */
     default void endpointFailed(String service, int version) {
+    }
+
+    /** The rate limiter {@code limit} granted or refused permits, for its whole bucket or a subject's. */
+    default void rateLimitAcquired(String limit, boolean granted) {
     }
 }

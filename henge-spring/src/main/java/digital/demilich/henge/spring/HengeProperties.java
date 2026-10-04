@@ -1,11 +1,16 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.RateLimit;
+import digital.demilich.henge.core.ServiceNames;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.EnumerablePropertySource;
@@ -373,6 +378,90 @@ public class HengeProperties {
             }
         }
         return List.copyOf(problems);
+    }
+
+    private static final Set<String> RATE_LIMIT_KEYS = Set.of("permits", "period", "capacity");
+    private static final String RATE_LIMITS = "henge.rate-limits.";
+    private static final String ENV_RATE_LIMITS = toEnvVarStyle(RATE_LIMITS);
+
+    /**
+     * Every limiter configured under {@code henge.rate-limits.<name>}, by name: {@code permits} drain
+     * every {@code period} (both required), from a bucket holding at most {@code capacity} (the burst;
+     * default {@code permits}). The configuration is the declaration, so the names are found by scanning
+     * the enumerable property sources, in the dotted form and as {@code HENGE_RATE_LIMITS_<NAME>_<KEY>}
+     * environment variables (a name is lowercase kebab case, so its {@code _} can only have been a
+     * {@code -}). A malformed name, an unknown key, or a missing or invalid value fails, naming the property.
+     */
+    public Map<String, RateLimit> rateLimits() {
+        Set<String> names = new TreeSet<>();
+        Set<String> problems = new LinkedHashSet<>();
+        if (environment instanceof ConfigurableEnvironment configurable) {
+            for (PropertySource<?> source : configurable.getPropertySources()) {
+                if (!(source instanceof EnumerablePropertySource<?> enumerable)) {
+                    continue;
+                }
+                for (String propertyName : enumerable.getPropertyNames()) {
+                    String name;
+                    String key;
+                    if (propertyName.startsWith(RATE_LIMITS)) {
+                        String rest = propertyName.substring(RATE_LIMITS.length());
+                        int dot = rest.indexOf('.');
+                        name = dot < 0 ? rest : rest.substring(0, dot);
+                        key = dot < 0 ? "" : rest.substring(dot + 1);
+                    } else if (propertyName.startsWith(ENV_RATE_LIMITS)) {
+                        String rest = propertyName.substring(ENV_RATE_LIMITS.length());
+                        int underscore = rest.lastIndexOf('_');
+                        name = underscore < 0 ? "" : rest.substring(0, underscore).toLowerCase(Locale.ROOT).replace('_', '-');
+                        key = rest.substring(underscore + 1).toLowerCase(Locale.ROOT);
+                    } else {
+                        continue;
+                    }
+                    if (!ServiceNames.isValidServiceName(name)) {
+                        problems.add(propertyName + ": a rate limit's name must be lowercase kebab case, e.g. "
+                                + "henge.rate-limits.notifications.permits");
+                    } else if (!RATE_LIMIT_KEYS.contains(key)) {
+                        problems.add(propertyName + ": not a known key (permits, period, capacity)");
+                    } else {
+                        names.add(name);
+                    }
+                }
+            }
+        }
+        Map<String, RateLimit> limits = new LinkedHashMap<>();
+        for (String name : names) {
+            try {
+                limits.put(name, rateLimit(name));
+            } catch (IllegalStateException e) {
+                problems.add(e.getMessage());
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new IllegalStateException("Invalid henge.rate-limits configuration:\n  " + String.join("\n  ", problems));
+        }
+        return limits;
+    }
+
+    private RateLimit rateLimit(String name) {
+        String prefix = RATE_LIMITS + name + ".";
+        Integer permits = positiveInt(environment, prefix + "permits");
+        String rawPeriod = environment.getProperty(prefix + "period");
+        if (permits == null || rawPeriod == null || rawPeriod.isBlank()) {
+            throw new IllegalStateException(prefix + "permits and " + prefix + "period are both required: permits drain "
+                    + "every period, e.g. permits=10 and period=1s");
+        }
+        Duration period;
+        try {
+            period = DurationFormatterUtils.detectAndParse(rawPeriod.trim(), DurationFormat.Unit.MILLIS);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(prefix + "period=" + rawPeriod + " is not a duration; use milliseconds (1000), "
+                    + "a unit suffix (1s, 500ms) or ISO-8601 (PT1S)");
+        }
+        Integer capacity = positiveInt(environment, prefix + "capacity");
+        try {
+            return new RateLimit(capacity != null ? capacity : permits, permits, period);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(prefix + "period=" + rawPeriod + ": " + e.getMessage());
+        }
     }
 
     private static Integer positiveInt(Environment environment, String key) {

@@ -17,6 +17,10 @@
       "description": "Per lease, by name: henge.leases.<lease>.capacity, the cluster-wide capacity services share out with @RequiresLease, and henge.leases.<lease>.amount, what one node claims of it."
     },
     {
+      "name": "henge.rate-limits",
+      "description": "Per cluster-wide rate limiter, by name, injected with @RateLimited(\"<name>\"): henge.rate-limits.<name>.permits drain every henge.rate-limits.<name>.period (both required; the period at most 1h), from a bucket of henge.rate-limits.<name>.capacity (the burst; defaults to permits)."
+    },
+    {
       "name": "henge.server",
       "description": "The /_henge dispatch endpoint this process serves."
     },

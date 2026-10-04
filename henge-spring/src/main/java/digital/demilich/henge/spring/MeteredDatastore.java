@@ -13,7 +13,7 @@ import java.util.function.Supplier;
  * {@value #NAME}. The datastore is where every cluster-wide fact lives, so its latency and errors are
  * what a lease that can't be renewed, or an advertisement that lapses, come down to.
  *
- * <p>Tags: {@code purpose} (who asked: the leases, the advertisements, or the routing of calls),
+ * <p>Tags: {@code purpose} (who asked: the leases, the advertisements, the routing of calls, or a rate limiter),
  * {@code operation} ({@code put}, {@code remove}, {@code read}, {@code claim}, {@code tryAcquire}) and
  * {@code outcome} ({@code success} or {@code error}). A {@code claim} or {@code tryAcquire} the
  * cluster refuses is a success: the store did its job.

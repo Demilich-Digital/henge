@@ -52,6 +52,17 @@ class RateLimiterTest {
     }
 
     @Test
+    void eachSubjectHasItsOwnBucketApartFromTheWholeLimiters() {
+        var limiter = limiter("api");
+
+        assertThat(limiter.tryAcquire("alice", 5)).isTrue();
+        assertThat(limiter.tryAcquire("alice")).isFalse();
+
+        assertThat(limiter.tryAcquire("bob", 5)).isTrue();
+        assertThat(limiter.tryAcquire(5)).isTrue();
+    }
+
+    @Test
     void aRefusedRequestChangesNothing() {
         var limiter = limiter("api");
         limiter.tryAcquire(4);

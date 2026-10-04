@@ -1,11 +1,12 @@
 # Design: self-orchestration
 
-Status: phases 1-4 are built on branch `self-management`; phases 5-8 are design only.
+Status: phases 1-4 are built; phases 5-8 are design only.
 
 Built: the datastore contract with its in-process and Redis adapters (phases 1 and 4), `@RequiresLease`
 (phase 2), advertisement-based routing (phase 3, minus load-weighted choice and withdrawal when
 overloaded: calls rotate over what's advertised), and retries of calls that provably never ran (failed
-connection, "not served here"), with failover to the next advertised host.
+connection, "not served here"), with failover to the next advertised host. Cluster-wide rate limiters
+(`tryAcquire`, exposed as `@RateLimited` beans configured under `henge.rate-limits`) are built too.
 
 Not built: the built-in DHT, switchable proxies with a child context per service, eviction, and
 self-organized role selection (phases 5-8). Those are gated on a simulation of the decision loop.
@@ -109,9 +110,9 @@ public interface SystemEphemeralDatastore {
 `MemberId` is `(nodeId, localName)`; a claimed member's value is its amount (a 4-byte `int`). `localName` lets one node own several members under a key
 (two services on one node each claiming the same lease, say) without breaking single-writer.
 
-Everything above the store is built from `put`/`read`: advertisements, rate limiters, demand and
-pressure signals. `claim` exists for exactly one purpose, leases, and it is the only operation
-that must be **atomic per key**. It is still not consensus: each node writes only its own member,
+Everything else above the store is built from `put`/`read`: advertisements, demand and pressure
+signals. `claim` (leases) and `tryAcquire` (rate limiters, below) are the only operations that must be
+**atomic per key**. It is still not consensus: each node writes only its own member,
 and atomicity is only ever required of whoever serializes operations on that one key (see the
 adapters, and the DHT's single-owner placement for claim keys). Where that serialization is
 briefly doubled or lost, the damage is bounded overshoot, which the lease capacity margin absorbs.
@@ -248,12 +249,16 @@ Embedded callers on the same node are unaffected (they never route through adver
 
 ### Rate limiters
 
-A limiter window is key `rl:<name>:<window>`, member = node, value = that node's count in the
-window, TTL = the window. The limiter's value is the sum across members — a grow-only counter that
-converges no matter how replicas diverge. Nodes count and decide locally (last read sum + own
-unflushed count) and flush periodically: no network round trip per request. Overshoot is bounded by
-flush interval × request rate across nodes, a tuning knob rather than a correctness issue. A
-partition degrades gracefully: each side enforces the limit against what it can see.
+User-facing, not internal-only: `henge.rate-limits.<name>` (`permits` per `period`, `capacity`) is the
+declaration, and `@RateLimited("<name>")` injects the `RateLimiter` over bucket `rate:<name>` into any
+bean; `tryAcquire(subject)` uses `rate:<name>:<subject>`. Configuration rather than code holds the
+constants because every caller of a key must agree on them (see `tryAcquire` above). Each call is one
+store operation; there is no local counting.
+
+An earlier sketch counted per node in windows (`rl:<name>:<window>`, member = node, summed by readers,
+flushed periodically) to avoid a round trip per request. It was replaced by the bucket because "is
+there room?" has to be answered and applied at once (see `tryAcquire` above): lagging per-node counts
+overshoot by flush interval × request rate in normal operation, not only when serialization fails.
 
 ### Demand and pressure signals (later phases)
 
@@ -563,6 +568,5 @@ Each phase is independently useful and testable.
 - **How the DHT sizes the claim-path margin**: a fixed documented multiple, or derived from
   observed view instability.
 - **Valkey hash-field TTL support** — verify before choosing the Redis mapping.
-- **Rate limiter as a user-facing API**, or internal-only until self-organization needs it?
 - **Does `Lease` support partial grants later?** The API (`amount()`) leaves room; v1 is
   all-or-nothing.

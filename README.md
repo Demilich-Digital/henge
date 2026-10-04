@@ -342,7 +342,7 @@ pattern for any module that calls into a `@HengeService`.
 
 | Module | Contents |
 |---|---|
-| `henge-core` | `@HengeService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, `@RequiresLease` / `Lease`, `@LeasedResource` / `ResourceProvider`, the `ServiceTransport` seam, the `SystemEphemeralDatastore` contract and its `InProcessEphemeralDatastore`, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `henge-core` | `@HengeService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, `@RequiresLease` / `Lease`, `@LeasedResource` / `ResourceProvider`, `@RateLimited` / `RateLimiter` / `RateLimit`, the `ServiceTransport` seam, the `SystemEphemeralDatastore` contract and its `InProcessEphemeralDatastore`, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for the `@Qualifier` meta-annotation on `@ServiceVersion` and `@RateLimited` — nothing else. |
 | `henge-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges and names). Declared to Gradle as an aggregating incremental processor. Depends only on `henge-core` — no Spring. |
 | `henge-spring` | The actual mechanism, and Boot-free: `@EnableHengeServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, leases (`@RequiresLease` enforcement, renewal and their resources), service advertisements and advertisement-based routing, retries, the topology endpoint and page, datastore selection (`henge.store.type`), plus `HengeTransportConfiguration`/`HengeDispatcherConfiguration`/`HengeConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
 | `henge-spring-boot-starter` | A thin classpath-autodetection layer on top of `henge-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, registers the dispatcher in servlet web applications behind the `henge.server.enabled` property gate, ships configuration metadata for IDE completion of `henge.*`, and — when Spring Security is present — adds the dedicated security chain for `/_henge` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
@@ -527,6 +527,8 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `henge.remote-url-template` | unset | URL template (`{service}`, `{version}`; any other placeholder fails startup) used for any `internal-rest` service without an explicit `url`. |
 | `henge.leases.<lease>.capacity` | — | Cluster-wide capacity of a resource that services claim shares of with `@RequiresLease`. A positive integer; required for every declared lease. |
 | `henge.leases.<lease>.amount` | — | How much of the lease one node claims, however many services on it declare it. A positive integer, at most the capacity; required for every declared lease. |
+| `henge.rate-limits.<name>.permits` / `.period` | — | A cluster-wide rate limiter, injected with `@RateLimited("<name>")`: `permits` (a positive integer) drain every `period` (a duration, 1ms to 1h). Both required. See "Rate limits". |
+| `henge.rate-limits.<name>.capacity` | `permits` | The most the bucket holds: the burst a quiet limiter lets through at once. |
 | `henge.store.type` | `in-process` | Which `SystemEphemeralDatastore` holds this process's shared state (leases, service advertisements): `in-process`, or the type of an adapter on the classpath (`redis`, from `henge-redis`). Setting it while also defining a datastore bean fails startup. |
 | `henge.store.redis.uri` | — | For `type=redis`: a Lettuce URI, e.g. `redis://host:6379/0`; `rediss://` for TLS, `redis://:password@host` for a password, options as query parameters (`?timeout=5s`). Required. |
 | `henge.store.redis.cluster-nodes` | — | For `type=redis` on a Redis Cluster, instead of `uri`: comma-separated seed URIs, e.g. `redis://node1:6379,redis://node2:6379`. The other nodes are discovered and the topology is refreshed on failover or resharding. Exactly one of `uri` and `cluster-nodes` is required. |
@@ -607,6 +609,52 @@ What Henge does and doesn't do:
   single node always grants what fits). To share it across nodes, add `henge-redis` and set
   `henge.store.type=redis` with `henge.store.redis.uri`, or define your own bean of that type
   (not both). See `docs/design/self-orchestration.md`.
+
+## Rate limits
+
+A limit that has to hold across the cluster, however many nodes serve the traffic (a third-party API
+that allows 10 calls a second, an SMS gateway billed per message), is a leaky bucket in the shared
+datastore. Configure it by name and inject it anywhere, a service or any other bean:
+
+```yaml
+henge:
+  rate-limits:
+    sms:
+      permits: 10        # drain 10 permits...
+      period: 1s         # ...every second: the sustained rate
+      capacity: 20       # the burst a quiet bucket absorbs; defaults to permits
+```
+
+```java
+@ServiceVersion(value = NotificationService.class, version = 1)
+public class NotificationServiceImpl implements NotificationService {
+    private final RateLimiter sms;
+
+    public NotificationServiceImpl(@RateLimited("sms") RateLimiter sms) { this.sms = sms; }
+
+    public boolean notify(String customer, String text) {
+        if (!sms.tryAcquire(customer)) {   // each customer's own bucket; tryAcquire() for the whole limit
+            return false;                  // throttled: what that means is the caller's call
+        }
+        // ... send
+        return true;
+    }
+}
+```
+
+- **One bucket per name across the cluster.** Every node that configures `sms` draws on the same
+  bucket, so every node has to configure it the same way. With the default in-process datastore that is
+  one node's limit; with `henge.store.type=redis` it is the cluster's.
+- **Per subject.** `tryAcquire(subject)` gives each subject (a customer, a tenant, an API key) its own
+  bucket under the same constants. A drained bucket is forgotten, so idle subjects cost nothing.
+- **One store operation per call**, and no state on the node: nothing to renew or clean up.
+- **Refusing is up to you.** `tryAcquire` returns `false`; Henge throws nothing. If a refusal should
+  reach a remote caller as an exception, give it an `@ErrorStatus` (`429` reads naturally); it is not
+  retried, since only a `404` or a failed connection is.
+- **Mistakes fail startup**: a service asking for a name with no configuration, an unknown key, a
+  name that isn't lowercase kebab case, a missing `permits` or `period`, a period over an hour.
+- **The limit is soft.** Like a lease's cap, it can overshoot briefly and by a bounded amount if the
+  store's serialization of one key briefly fails, e.g. during a Redis failover.
 
 ## Service advertisements
 
@@ -732,7 +780,8 @@ switch on when the application has a `MeterRegistry` bean, the same way. Without
 | `henge.transport.retries` | counter | `service`, `version`, `reason` (`connect`, `not-served`) | A call that provably never ran, being tried again. |
 | `henge.transport.giveups` | counter | `service`, `version`, `reason` | Such a call, abandoned: the attempts ran out, or retries are off. |
 | `henge.transport.endpoint.failures` | counter | `service`, `version` | An advertised host failed a call, so it isn't offered again for a while (see "Retries"). |
-| `henge.store.operations` | timer | `purpose` (`lease`, `advertisement`, `routing`), `operation` (`put`, `remove`, `read`, `claim`), `outcome` (`success`, `error`) | The datastore every one of the above stands on: its latency, and its errors, by who asked. A refused `claim` is a `success`. |
+| `henge.rate-limit.acquisitions` | counter | `limit`, `outcome` (`granted`, `refused`) | A rate limiter's answers, for its whole bucket and its subjects' together; the subject is never a tag. |
+| `henge.store.operations` | timer | `purpose` (`lease`, `advertisement`, `routing`, `rate-limit`), `operation` (`put`, `remove`, `read`, `claim`, `tryAcquire`), `outcome` (`success`, `error`) | The datastore every one of the above stands on: its latency, and its errors, by who asked. A refused `claim` or `tryAcquire` is a `success`. |
 
 A call that is retried is one `henge.call` observation (above) and as many `henge.transport.retries`
 as it took. Every tag is bounded by your interfaces and configuration, never by the traffic.

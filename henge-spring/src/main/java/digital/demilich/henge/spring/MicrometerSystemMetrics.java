@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <tr><td>{@code henge.transport.retries}</td><td>counter: {@code service}, {@code version}, {@code reason} ({@code connect} or {@code not-served})</td></tr>
  *   <tr><td>{@code henge.transport.giveups}</td><td>counter: {@code service}, {@code version}, {@code reason}</td></tr>
  *   <tr><td>{@code henge.transport.endpoint.failures}</td><td>counter: {@code service}, {@code version}</td></tr>
+ *   <tr><td>{@code henge.rate-limit.acquisitions}</td><td>counter: {@code limit}, {@code outcome} ({@code granted} or {@code refused})</td></tr>
  *   <tr><td>{@value MeteredDatastore#NAME}</td><td>timer: {@code purpose}, {@code operation}, {@code outcome}</td></tr>
  * </table>
  *
@@ -90,5 +91,10 @@ public class MicrometerSystemMetrics implements SystemMetrics {
     @Override
     public void endpointFailed(String service, int version) {
         registry.counter("henge.transport.endpoint.failures", "service", service, "version", String.valueOf(version)).increment();
+    }
+
+    @Override
+    public void rateLimitAcquired(String limit, boolean granted) {
+        registry.counter("henge.rate-limit.acquisitions", "limit", limit, "outcome", granted ? "granted" : "refused").increment();
     }
 }
