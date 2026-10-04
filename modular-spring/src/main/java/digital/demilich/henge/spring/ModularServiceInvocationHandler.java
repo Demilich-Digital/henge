@@ -1,28 +1,23 @@
 package digital.demilich.henge.spring;
 
-import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
-import digital.demilich.henge.core.ServiceTransport;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 
+/** The proxy at every injection point of a {@code @ModularService}: hands each call to its {@link ServiceBinding}. */
 class ModularServiceInvocationHandler implements InvocationHandler {
 
-    private final String serviceName;
-    private final int serviceVersion;
-    private final ServiceTransport transport;
+    private final ServiceBinding binding;
 
-    ModularServiceInvocationHandler(String serviceName, int serviceVersion, ServiceTransport transport) {
-        this.serviceName = serviceName;
-        this.serviceVersion = serviceVersion;
-        this.transport = transport;
+    ModularServiceInvocationHandler(ServiceBinding binding) {
+        this.binding = binding;
     }
 
     @Override
-    public Object invoke(Object proxy, Method method, Object[] args) {
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         if (method.getDeclaringClass() == Object.class) {
             return switch (method.getName()) {
-                case "toString" -> "ModularServiceProxy[" + serviceName + "/" + serviceVersion + "]";
+                case "toString" -> "ModularServiceProxy[" + binding.serviceName() + "/" + binding.serviceVersion() + "]";
                 case "hashCode" -> System.identityHashCode(proxy);
                 case "equals" -> proxy == args[0];
                 default -> throw new UnsupportedOperationException(method.getName());
@@ -31,20 +26,6 @@ class ModularServiceInvocationHandler implements InvocationHandler {
 
         String methodName = ModularServiceDescriptor.rpcName(method);
         Object[] callArgs = args == null ? new Object[0] : args;
-        ServiceInvocation invocation = new ServiceInvocation(serviceName, serviceVersion, methodName, method, callArgs);
-
-        try {
-            return transport.invoke(invocation);
-        } catch (RuntimeException e) {
-            // Passes through unchanged -- not just RemoteServiceException itself, but also
-            // whatever original exception type RemoteExceptionReconstructor managed to
-            // reconstruct from the remote failure. Only checked exceptions from a transport
-            // still get wrapped below, since those can't be reconstructed reliably anyway (see
-            // RemoteExceptionReconstructor's Javadoc).
-            throw e;
-        } catch (Exception e) {
-            throw new RemoteServiceException(
-                    "Failed to invoke modular service '" + serviceName + "#" + methodName + "'", e);
-        }
+        return binding.call(new ServiceInvocation(binding.serviceName(), binding.serviceVersion(), methodName, method, callArgs));
     }
 }

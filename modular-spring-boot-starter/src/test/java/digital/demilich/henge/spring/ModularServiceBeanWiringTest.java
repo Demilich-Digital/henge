@@ -12,8 +12,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 /**
  * Verifies the "prune or proxy" bean-definition wiring performed by {@link ModularServiceRegistrar}:
- * embedded mode keeps the real implementation, internal-rest mode replaces it with a dynamic proxy,
- * and a misconfigured embedded service with no implementation fails startup with a clear error.
+ * every injection point gets a dynamic proxy; embedded mode calls the real implementation behind it,
+ * internal-rest mode leaves none, and a misconfigured embedded service with no implementation fails
+ * startup with a clear error.
  */
 class ModularServiceBeanWiringTest {
 
@@ -21,11 +22,12 @@ class ModularServiceBeanWiringTest {
             new ApplicationContextRunner().withUserConfiguration(EchoTestApp.class);
 
     @Test
-    void embeddedModeKeepsRealImplementation() {
+    void embeddedModeInjectsTheProxyAndKeepsTheImplementationHidden() {
         contextRunner.run(ctx -> {
-            assertThat(ctx).hasSingleBean(EchoService.class);
+            // What a caller gets by type is the proxy: the implementation is a hidden bean, not an autowire candidate.
             EchoService service = ctx.getBean(EchoService.class);
-            assertThat(Proxy.isProxyClass(service.getClass())).isFalse();
+            assertThat(Proxy.isProxyClass(service.getClass())).isTrue();
+            assertThat(ctx.getBean("echo-service-1.impl")).isInstanceOf(EchoServiceImpl.class).isNotSameAs(service);
             assertThat(service.echo("x")).isEqualTo("echo:x");
         });
     }

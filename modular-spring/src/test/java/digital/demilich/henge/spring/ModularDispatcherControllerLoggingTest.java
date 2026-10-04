@@ -50,12 +50,14 @@ class ModularDispatcherControllerLoggingTest {
     void setUp() {
         logger.addHandler(capture);
         context = new GenericApplicationContext();
-        context.registerBean("echo-service-1", EchoServiceImpl.class);
+        context.registerBean("echo-service-1", ModularServiceBindingFactoryBean.class,
+                () -> new ModularServiceBindingFactoryBean(ServiceBindingSpec.embedded(EchoService.class, "echo-service", 1, EchoServiceImpl.class)));
         context.refresh();
         ModularServiceRegistry registry = new ModularServiceRegistry(
                 List.of(ModularServiceDescriptor.of("echo-service", 1, EchoService.class, "echo-service-1")));
+        registry.setBeanFactory(context);
         controller = new ModularDispatcherController(
-                context, registry, ModularTransportSupport.objectMapper(), new ModularProperties(new MockEnvironment()));
+                registry, ModularTransportSupport.objectMapper(), new ModularProperties(new MockEnvironment()));
         records.clear(); // the controller's own startup line ("modular.transport.secret is not set ...")
     }
 

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
 import java.lang.reflect.Proxy;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class ModularServiceInvocationHandlerTest {
@@ -34,7 +35,7 @@ class ModularServiceInvocationHandlerTest {
         ExtendedService proxy = (ExtendedService) Proxy.newProxyInstance(
                 ExtendedService.class.getClassLoader(),
                 new Class<?>[] {ExtendedService.class},
-                new ModularServiceInvocationHandler("extended-service", 1, capturingTransport));
+                new ModularServiceInvocationHandler(ServiceBinding.remote("extended-service", 1, capturingTransport, List::of)));
 
         proxy.base("hi");
 

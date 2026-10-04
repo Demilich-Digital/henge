@@ -62,7 +62,6 @@ class ModularLeaseKeeperTest {
         assertThat(refused.name()).isEqualTo("db");
         // 'cache' was claimed first (names are claimed in order) and handed back.
         assertThat(store.read("lease:cache").members()).isEmpty();
-        assertThat(keeper.hosts("b@1")).isFalse();
     }
 
     @Test
@@ -86,8 +85,6 @@ class ModularLeaseKeeperTest {
 
         keeper.release("a@1");
         assertThat(store.read("lease:db").members()).hasSize(1);
-        assertThat(keeper.hosts("a@1")).isFalse();
-        assertThat(keeper.hosts("b@1")).isTrue();
 
         keeper.release("b@1");
         assertThat(store.read("lease:db").members()).isEmpty();
@@ -102,8 +99,6 @@ class ModularLeaseKeeperTest {
         LeaseNeed refused = keeper.acquireAll("c@1", List.of(new LeaseNeed("db", 10, 10), new LeaseNeed("cache", 5, 10)));
 
         assertThat(refused.name()).isEqualTo("cache");
-        assertThat(keeper.hosts("c@1")).isFalse();
-        assertThat(keeper.hosts("a@1")).isTrue();
         assertThat(store.read("lease:db").members()).hasSize(1);
 
         // Letting go of a@1 now frees it: c never held it.
@@ -112,12 +107,11 @@ class ModularLeaseKeeperTest {
     }
 
     @Test
-    void releaseFreesTheCapacityAndForgetsTheService() {
+    void releaseFreesTheCapacity() {
         keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 10, 10)));
 
         keeper.release("a@1");
 
-        assertThat(keeper.hosts("a@1")).isFalse();
         assertThat(store.read("lease:db").members()).isEmpty();
     }
 
@@ -199,6 +193,5 @@ class ModularLeaseKeeperTest {
         assertThat(good.closed).hasValue(good.opened.get());
         assertThat(store.read("lease:a-db").members()).isEmpty();
         assertThat(store.read("lease:b-db").members()).isEmpty();
-        assertThat(keeper.hosts("a@1")).isFalse();
     }
 }

@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * What {@link ModularLeasedServiceFactoryBean} needs to know about one embedded implementation that
+ * What {@link ModularServiceBindingFactoryBean} needs to know about one embedded implementation that
  * declares leases: what it is, which leases it needs, which constructor parameter takes which
  * {@code Lease}, and which takes which lease's resource.
  */

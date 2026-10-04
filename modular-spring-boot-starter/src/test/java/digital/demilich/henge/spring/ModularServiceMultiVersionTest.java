@@ -44,7 +44,8 @@ class ModularServiceMultiVersionTest {
     @Test
     void bothVersionsAreRegisteredAsDistinctBeans() {
         contextRunner.run(ctx -> {
-            assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);
+            assertThat(ctx.getBeansOfType(CounterService.class).values())
+                    .filteredOn(bean -> Proxy.isProxyClass(bean.getClass())).hasSize(2);
             assertThat(ctx.getBean(CounterServiceV1.class)).isNotNull();
             assertThat(ctx.getBean(CounterServiceV2.class)).isNotNull();
         });

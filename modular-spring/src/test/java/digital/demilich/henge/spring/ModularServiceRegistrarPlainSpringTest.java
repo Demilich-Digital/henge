@@ -49,7 +49,7 @@ class ModularServiceRegistrarPlainSpringTest {
     @Test
     void bothVersionsAreRegisteredAsDistinctBeans() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(CounterTestConfig.class)) {
-            assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);
+            assertThat(ctx.getBeansOfType(CounterService.class).values()).filteredOn(bean -> Proxy.isProxyClass(bean.getClass())).hasSize(2);
             assertThat(ctx.getBean(CounterServiceV1.class)).isNotNull();
             assertThat(ctx.getBean(CounterServiceV2.class)).isNotNull();
         }
@@ -178,7 +178,7 @@ class ModularServiceRegistrarPlainSpringTest {
     @Test
     void overlappingBasePackagesDoNotReportADuplicateImplementation() {
         try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext(OverlappingPackagesConfig.class)) {
-            assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);
+            assertThat(ctx.getBeansOfType(CounterService.class).values()).filteredOn(bean -> Proxy.isProxyClass(bean.getClass())).hasSize(2);
         }
     }
 
@@ -208,7 +208,7 @@ class ModularServiceRegistrarPlainSpringTest {
         ctx.register(ScanOnlyConfig.class);
         ctx.refresh();
         try {
-            assertThat(ctx.getBeansOfType(CounterService.class)).hasSize(2);
+            assertThat(ctx.getBeansOfType(CounterService.class).values()).filteredOn(bean -> Proxy.isProxyClass(bean.getClass())).hasSize(2);
             assertThat(resourceLookups.get()).isPositive();
         } finally {
             ctx.close();

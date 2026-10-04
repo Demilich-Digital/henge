@@ -33,9 +33,9 @@ import org.springframework.beans.factory.DisposableBean;
  * <p>A lease with a provider ({@code @LeasedResource}) has its resource opened when the claim is first
  * granted, shared by every service that holds it, and closed when the claim is handed back.
  *
- * <p>It also remembers which services this process was granted, because that decides what
- * {@code /_modular} may serve: a service whose lease was refused here is reached remotely, and
- * must not answer here. See {@link ModularServiceRegistry}.
+ * <p>A service whose lease was refused here is reached remotely, and must not answer here: the
+ * caller of {@link #acquireAll} makes that its {@link ServiceBinding}'s target, and
+ * {@link ModularServiceRegistry} follows the binding.
  */
 class ModularLeaseKeeper implements DisposableBean, BeanFactoryAware {
 
@@ -147,11 +147,6 @@ class ModularLeaseKeeper implements DisposableBean, BeanFactoryAware {
         }
         held.provider = provider;
         held.resource = resource;
-    }
-
-    /** Whether {@code localName} ({@code service@version}) was granted its leases by this process. */
-    synchronized boolean hosts(String localName) {
-        return leasesByService.containsKey(localName);
     }
 
     /** {@code localName} lets go of its leases; each one nobody else here holds is handed back. */

@@ -441,7 +441,9 @@ ordinary beans in the shared context, and everything is constructed eagerly. Evi
 
 1. **A stable proxy at every injection point, embedded included**, whose target can switch between
    local, remote and draining. Callers can't hold direct references into something that may be
-   destroyed.
+   destroyed. Built as the *service binding*, described below, because metrics, strict-mode
+   round-tripping and this switching all want the same interception point and must not each add
+   their own proxy.
 2. **A child application context per service version**, holding the resources the service owns.
    Closing it is real deallocation: Spring runs every bean's destroy logic in reverse dependency
    order (pools close, executors stop). This is the same mechanism the README roadmap's "isolated"
@@ -450,6 +452,40 @@ ordinary beans in the shared context, and everything is constructed eagerly. Evi
 4. Limits that remain: resources outside Spring's lifecycle (hand-started threads, static caches,
    `ThreadLocal`s, global JDBC driver registration) leak; class metadata stays loaded; activating a
    child context costs tens to hundreds of milliseconds plus warmup, so roles must not thrash.
+
+### The service binding (built; retargeting and draining are not)
+
+One `ServiceBinding` per `service@version`, and one JDK proxy over it registered under the version's
+bean name, as primary and qualifier exactly as before. Every injection point holds that proxy:
+an embedded implementation, a leased one, and a remote one are all a binding that differs only in
+its target.
+
+- **Target.** Either *local* (the implementation, which is now always the hidden, non-autowire
+  `<name>.impl` bean, the shape leased services already had) or *remote* (the `ServiceTransport`). A
+  lease refused at startup is just a binding whose target is remote.
+- **Two paths in.** A caller goes `proxy → interceptors → target`. The dispatcher goes through
+  `invokeLocal`, which skips the caller-side interceptors (the call already went through them on the
+  calling node). Between them these are the only two places a call enters, so retargeting and
+  draining add their in-flight accounting there and nowhere else.
+- **Interceptors** run over the existing `ServiceInvocation`, in a fixed order: observation
+  (metrics and spans) outermost, then strict round-tripping, then the target. Observation reads the
+  current target's mode at call time, so its `mode` tag stays right after a switch.
+- **Exceptions** from a local target are unwrapped, so a caller sees what the implementation threw.
+- **Hosting follows the target.** A version is hosted here when its binding's target is local, so
+  the advertiser, the topology report and the dispatcher's registry follow a switch with no further
+  wiring.
+
+Built: the binding, its proxy, the hidden implementation bean for every embedded service, the
+interceptor chain, and the dispatcher going through `invokeLocal`. Not built until eviction needs
+them: retargeting (a target that can change, so a mutable field where there is a final one now),
+draining and its in-flight counting, and strict mode, each an addition to the binding and not a new
+proxy. Retargeting away from local must destroy the implementation before it releases the version's
+lease holding, since the implementation stands on the lease's resource.
+
+Callers hold the interface, so an implementation is no longer something to inject by its concrete
+class: it is the hidden bean `<name>-<version>.impl`. It is still the only bean of its class, so
+`getBean(Impl.class)` finds it, but nothing autowires it, and `getBeansOfType` of the interface lists
+it beside the proxy (a `List<Interface>` injection sees only the proxy).
 
 ## Risks
 
@@ -489,6 +525,8 @@ Each phase is independently useful and testable.
 4. **Redis / Valkey adapter** (built) — proves the contract against a store Henge doesn't control.
 5. **Built-in DHT** — membership, XOR placement, redundancy, handoff, versioned protocol.
 6. **Switchable proxies + child context per service** — also unblocks the roadmap's isolated tier.
+   The stable proxy (the service binding, above) is built; retargeting, draining and the child
+   contexts are not.
 7. **Eviction** — memory pressure and misbehavior, drain, remembered evictions.
 8. **Self-organized role selection** — preceded by a discrete-event simulation of the decision loop
    with injected slow dependencies and partitions, before any of it touches a real cluster.

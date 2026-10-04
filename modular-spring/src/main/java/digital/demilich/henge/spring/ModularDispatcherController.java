@@ -14,7 +14,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.springframework.context.ApplicationContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -45,14 +44,11 @@ class ModularDispatcherController {
 
     private static final Log log = LogFactory.getLog(ModularDispatcherController.class);
 
-    private final ApplicationContext applicationContext;
     private final ModularServiceRegistry registry;
     private final ObjectMapper objectMapper;
     private final SharedSecret secret;
 
-    ModularDispatcherController(
-            ApplicationContext applicationContext, ModularServiceRegistry registry, ObjectMapper objectMapper, ModularProperties properties) {
-        this.applicationContext = applicationContext;
+    ModularDispatcherController(ModularServiceRegistry registry, ObjectMapper objectMapper, ModularProperties properties) {
         this.registry = registry;
         this.objectMapper = objectMapper;
         this.secret = SharedSecret.from(properties);
@@ -86,14 +82,15 @@ class ModularDispatcherController {
                     "Modular service '" + service + "' has no method '" + method + "'");
         }
 
-        // Looked up by bean name, not just type: multiple versions of the same interface may be
-        // embedded in this process simultaneously, which would make a type-only lookup ambiguous.
-        Object bean = applicationContext.getBean(descriptor.beanName(), descriptor.interfaceType());
+        // The binding of this exact version, not looked up by type: multiple versions of the same
+        // interface may be embedded in this process simultaneously. It hands the call to the
+        // implementation without the interceptors, which the calling node already ran.
+        ServiceBinding binding = registry.binding(descriptor);
         Object[] args = readArguments(targetMethod, requestBody);
 
         Object result;
         try {
-            result = targetMethod.invoke(bean, args);
+            result = binding.invokeLocal(targetMethod, args);
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
             HttpStatusCode status = statusFor(cause);

@@ -104,9 +104,15 @@ health- or load-aware routing, circuit breaking, and tracing across the process 
   classpath (implementations are registered directly by the framework, not by `@ComponentScan` —
   `@ServiceVersion` carries no `@Component` meta-annotation). For every (interface, version) pair
   in play:
-  - **embedded** (default): registers the local implementation class directly. Fails fast at
+  - **embedded** (default): the local implementation class is constructed as a hidden bean
+    (`<service>-<version>.impl`, not an autowire candidate) and the proxy calls it. Fails fast at
     startup if no implementation exists for a version configured/expected as embedded.
-  - **internal-rest**: registers a JDK dynamic proxy in its place that dispatches calls over HTTP.
+  - **internal-rest**: the proxy dispatches calls over HTTP instead.
+  - Either way, what a caller injects is a JDK dynamic proxy, never the implementation: callers hold
+    the interface, and every call, embedded or remote, passes through the same point. Beans of type
+    `ServiceCallInterceptor` wrap each call there, in `@Order`; a call arriving over `/_modular` goes
+    straight to the implementation, since the calling node already ran them. An application that
+    injected an implementation by its concrete class has to take the interface instead.
   - Whichever version matches the interface's `defaultVersion()` is marked `@Primary`, and every
     registered bean carries `@ServiceVersion` qualifier metadata — together these are what let
     Spring's own autowiring resolve an unqualified dependency to the default version and a

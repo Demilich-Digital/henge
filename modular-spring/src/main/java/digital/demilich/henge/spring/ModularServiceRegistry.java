@@ -3,7 +3,6 @@ package digital.demilich.henge.spring;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.beans.BeansException;
@@ -15,25 +14,17 @@ import org.springframework.beans.factory.BeanFactoryAware;
  * THIS process hosts an {@link ModularMode#EMBEDDED} implementation of. Consulted by
  * {@link ModularDispatcherController} to decide whether an incoming dispatch request is
  * actually servable here.
+ *
+ * <p>Whether a version is hosted is its {@link ServiceBinding}'s answer: a leased service is only hosted
+ * if its leases were granted here, which isn't known until its binding has been created.
  */
 public class ModularServiceRegistry implements BeanFactoryAware {
 
     private final Map<String, ModularServiceDescriptor> byKey;
-    private final Set<String> leasedBeanNames;
     private BeanFactory beanFactory;
 
     ModularServiceRegistry(List<ModularServiceDescriptor> descriptors) {
-        this(descriptors, Set.of());
-    }
-
-    /**
-     * @param leasedBeanNames the beans among {@code descriptors} whose implementation declares leases:
-     *     they are only embedded here if this process was granted them, which isn't known until the
-     *     bean has been created.
-     */
-    ModularServiceRegistry(List<ModularServiceDescriptor> descriptors, Set<String> leasedBeanNames) {
         this.byKey = descriptors.stream().collect(Collectors.toMap(ModularServiceRegistry::key, Function.identity()));
-        this.leasedBeanNames = leasedBeanNames;
     }
 
     @Override
@@ -50,14 +41,14 @@ public class ModularServiceRegistry implements BeanFactoryAware {
         return byKey.values().stream().filter(this::hostedHere).toList();
     }
 
-    private boolean hostedHere(ModularServiceDescriptor descriptor) {
-        return !leasedBeanNames.contains(descriptor.beanName()) || grantedHere(descriptor);
+    /** The binding of {@code descriptor}'s service version, created if it hasn't been. */
+    ServiceBinding binding(ModularServiceDescriptor descriptor) {
+        return beanFactory.getBean(BeanFactory.FACTORY_BEAN_PREFIX + descriptor.beanName(), ModularServiceBindingFactoryBean.class)
+                .binding();
     }
 
-    /** Creating the bean decides it (a lazily initialized one may not have been yet). */
-    private boolean grantedHere(ModularServiceDescriptor descriptor) {
-        beanFactory.getBean(descriptor.beanName());
-        return beanFactory.getBean(ModularLeaseKeeper.class).hosts(descriptor.name() + "@" + descriptor.version());
+    private boolean hostedHere(ModularServiceDescriptor descriptor) {
+        return binding(descriptor).isLocal();
     }
 
     private static String key(ModularServiceDescriptor descriptor) {

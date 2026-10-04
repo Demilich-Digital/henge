@@ -43,15 +43,17 @@ import org.springframework.util.ClassUtils;
  * Discovers {@code @ModularService} interfaces and their {@code @ServiceVersion}-annotated
  * implementations on startup, and for every (interface, version) pair in play — whether declared
  * by a local impl class, by explicit {@code modular.services.<name>.versions.<version>.*} config,
- * or implicitly via the interface's {@code defaultVersion()} — registers exactly one bean:
+ * or implicitly via the interface's {@code defaultVersion()} — registers exactly one bean, a
+ * {@link ModularServiceBindingFactoryBean} whose product is a dynamic proxy over that version's
+ * {@link ServiceBinding}. What the binding calls depends on the mode:
  *
  * <ul>
  *   <li><b>embedded</b> (default) — the local {@code @ServiceVersion}-annotated implementation
- *       class, registered directly (impls are no longer picked up by plain {@code @ComponentScan}
- *       at all, since {@code @ServiceVersion} carries no {@code @Component} meta-annotation).
- *       Fails fast if no local implementation exists for a version configured/expected as
- *       embedded.</li>
- *   <li><b>internal-rest</b> — a dynamic proxy that dispatches calls over HTTP.</li>
+ *       class, which the factory bean constructs as a hidden bean of its own (impls are no longer
+ *       picked up by plain {@code @ComponentScan} at all, since {@code @ServiceVersion} carries no
+ *       {@code @Component} meta-annotation). Fails fast if no local implementation exists for a
+ *       version configured/expected as embedded.</li>
+ *   <li><b>internal-rest</b> — the transport, which dispatches calls over HTTP.</li>
  * </ul>
  *
  * Every registered bean carries {@code @ServiceVersion} qualifier metadata (so a dependency can
@@ -113,7 +115,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         List<ModularServiceDescriptor> embedded = new ArrayList<>();
         List<ModularTopologyCatalog.Entry> catalogEntries = new ArrayList<>();
         List<String> serviceBeanNames = new ArrayList<>();
-        Set<String> leasedBeanNames = new LinkedHashSet<>();
+        boolean anyLeased = false;
         Set<String> declaredLeaseNames = new LinkedHashSet<>(providers.keySet());
         Set<String> providersInUse = new LinkedHashSet<>();
         Map<String, Class<?>> namesToInterfaces = new LinkedHashMap<>();
@@ -163,7 +165,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 String beanName = name + "-" + version;
                 boolean isDefault = version == defaultVersion;
 
-                RootBeanDefinition definition;
+                ServiceBindingSpec bindingSpec;
                 if (mode == ModularMode.EMBEDDED) {
                     if (implClass == null) {
                         throw new IllegalStateException("Modular service '" + name + "' version '" + version
@@ -173,23 +175,24 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                                 + ".url pointing at the process that hosts it.");
                     }
                     if (!declaresLeases(implClass)) {
-                        definition = new RootBeanDefinition(implClass);
+                        bindingSpec = ServiceBindingSpec.embedded(serviceInterface, name, version, implClass);
                     } else {
-                        definition = new RootBeanDefinition(ModularLeasedServiceFactoryBean.class);
                         LeasedImplementation leased =
                                 leasedImplementation(properties, serviceInterface, name, version, implClass, providers);
-                        definition.getConstructorArgumentValues().addIndexedArgumentValue(0, leased);
-                        definition.setDependsOn(LEASE_KEEPER_BEAN_NAME);
-                        leasedBeanNames.add(beanName);
+                        bindingSpec = ServiceBindingSpec.leased(leased);
+                        anyLeased = true;
                         leased.needs().forEach(need -> declaredLeaseNames.add(need.name()));
                         providersInUse.addAll(leased.resourceParameters().values());
                     }
                     embedded.add(ModularServiceDescriptor.of(name, version, serviceInterface, beanName));
                 } else {
-                    definition = new RootBeanDefinition(ModularServiceProxyFactoryBean.class);
-                    definition.getConstructorArgumentValues().addIndexedArgumentValue(0, serviceInterface);
-                    definition.getConstructorArgumentValues().addIndexedArgumentValue(1, name);
-                    definition.getConstructorArgumentValues().addIndexedArgumentValue(2, version);
+                    bindingSpec = ServiceBindingSpec.remote(serviceInterface, name, version);
+                }
+
+                RootBeanDefinition definition = new RootBeanDefinition(ModularServiceBindingFactoryBean.class);
+                definition.getConstructorArgumentValues().addIndexedArgumentValue(0, bindingSpec);
+                if (bindingSpec.leased() != null) {
+                    definition.setDependsOn(LEASE_KEEPER_BEAN_NAME);
                 }
 
                 catalogEntries.add(new ModularTopologyCatalog.Entry(name, version, serviceInterface.getName(), isDefault, mode,
@@ -242,7 +245,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             registry.registerBeanDefinition(ModularLeaseKeeper.providerBeanName(lease), provider);
         }
 
-        if (!leasedBeanNames.isEmpty()) {
+        if (anyLeased) {
             // The datastore (constructor argument 0) is autowired; only the TTL is given.
             BeanDefinition keeper = BeanDefinitionBuilder.genericBeanDefinition(ModularLeaseKeeper.class).getBeanDefinition();
             keeper.getConstructorArgumentValues().addIndexedArgumentValue(1, ModularLeaseKeeper.DEFAULT_TTL);
@@ -262,7 +265,6 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
         BeanDefinition registryDefinition = BeanDefinitionBuilder.genericBeanDefinition(ModularServiceRegistry.class)
                 .addConstructorArgValue(embedded)
-                .addConstructorArgValue(leasedBeanNames)
                 .getBeanDefinition();
         registryDefinition.setAttribute(IMPORTED_BY_ATTRIBUTE, importingClassMetadata.getClassName());
         registry.registerBeanDefinition(REGISTRY_BEAN_NAME, registryDefinition);

@@ -13,7 +13,7 @@ import java.lang.reflect.Constructor;
  * instead of always getting a generic {@link RemoteServiceException}.
  *
  * <p>Deliberately scoped to {@link RuntimeException} subtypes with a {@code (String)}
- * constructor: Java's dynamic proxies ({@link ModularServiceProxyFactoryBean}) can only let a
+ * constructor: Java's dynamic proxies ({@link ModularServiceInvocationHandler}) can only let a
  * checked exception through to the caller if it's declared on the interface method's {@code
  * throws} clause, and there's no reliable way to check that here -- reconstructing one would
  * either fail unpredictably or surface as an opaque {@link
