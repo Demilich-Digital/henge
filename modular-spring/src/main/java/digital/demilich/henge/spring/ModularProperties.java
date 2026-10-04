@@ -50,6 +50,26 @@ public class ModularProperties {
         return prefix;
     }
 
+    /**
+     * {@code modular.advertise.url}: the base URL other processes reach this one's {@code /_modular} at,
+     * published in its service advertisements; {@code null} if unset. Must be an absolute http(s) URL.
+     */
+    public String getAdvertiseUrl() {
+        String url = environment.getProperty("modular.advertise.url");
+        if (url == null || url.isBlank()) {
+            return null;
+        }
+        url = url.trim();
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            throw new IllegalStateException("modular.advertise.url '" + url + "' must be an absolute http:// or https:// URL, "
+                    + "e.g. http://10.0.0.7:8080");
+        }
+        while (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
+        return url;
+    }
+
     /** {@code modular.remote-url-template}; {@code null} if unset. */
     public String getRemoteUrlTemplate() {
         return environment.getProperty("modular.remote-url-template");

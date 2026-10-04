@@ -65,6 +65,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
     private static final String REGISTRY_BEAN_NAME = "modularServiceRegistry";
     private static final String DATASTORE_INSTALLER_BEAN_NAME = "modularDatastoreInstaller";
+    private static final String ADVERTISER_BEAN_NAME = "modularServiceAdvertiser";
     static final String LEASE_KEEPER_BEAN_NAME = "modularLeaseKeeper";
     private static final String IMPORTED_BY_ATTRIBUTE = ModularServiceRegistrar.class.getName() + ".importedBy";
 
@@ -233,6 +234,12 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             keeper.getConstructorArgumentValues().addIndexedArgumentValue(1, ModularLeaseKeeper.DEFAULT_TTL);
             registry.registerBeanDefinition(LEASE_KEEPER_BEAN_NAME, keeper);
         }
+
+        // The datastore and the registry (arguments 0 and 1) are autowired.
+        BeanDefinition advertiser = BeanDefinitionBuilder.genericBeanDefinition(ModularServiceAdvertiser.class).getBeanDefinition();
+        advertiser.getConstructorArgumentValues().addIndexedArgumentValue(2, properties.getAdvertiseUrl(), String.class.getName());
+        advertiser.getConstructorArgumentValues().addIndexedArgumentValue(3, ModularLeaseKeeper.DEFAULT_TTL);
+        registry.registerBeanDefinition(ADVERTISER_BEAN_NAME, advertiser);
 
         BeanDefinition registryDefinition = BeanDefinitionBuilder.genericBeanDefinition(ModularServiceRegistry.class)
                 .addConstructorArgValue(embedded)

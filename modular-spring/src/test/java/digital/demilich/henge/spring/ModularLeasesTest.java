@@ -219,7 +219,9 @@ class ModularLeasesTest {
         @Override
         public Snapshot read(String key) {
             Map<MemberId, byte[]> members = new HashMap<>(delegate.read(key).members());
-            members.put(new MemberId("another-node", "x"), ByteBuffer.allocate(Integer.BYTES).putInt(foreign).array());
+            if (key.startsWith("lease:")) {
+                members.put(new MemberId("another-node", "x"), ByteBuffer.allocate(Integer.BYTES).putInt(foreign).array());
+            }
             return new Snapshot(members, delegate.read(key).epoch());
         }
 
@@ -251,6 +253,11 @@ class ModularLeasesTest {
             assertThat(ledgerHere ^ reportHere).isTrue();
             assertThat(reportHere).isTrue();
             assertThat(java.lang.reflect.Proxy.isProxyClass(ctx.getBean(LedgerService.class).getClass())).isTrue();
+
+            // Only what is actually hosted here is advertised.
+            var datastore = ctx.getBean(SystemEphemeralDatastore.class);
+            assertThat(datastore.read("adv:ledger-service@1").members()).isEmpty();
+            assertThat(datastore.read("adv:report-service@1").members()).hasSize(1);
         }
     }
 

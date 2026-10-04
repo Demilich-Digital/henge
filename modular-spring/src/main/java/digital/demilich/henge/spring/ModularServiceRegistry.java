@@ -42,11 +42,16 @@ public class ModularServiceRegistry implements BeanFactoryAware {
     }
 
     public Optional<ModularServiceDescriptor> find(String name, int version) {
-        ModularServiceDescriptor descriptor = byKey.get(key(name, version));
-        if (descriptor != null && leasedBeanNames.contains(descriptor.beanName()) && !grantedHere(descriptor)) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(descriptor);
+        return Optional.ofNullable(byKey.get(key(name, version))).filter(this::hostedHere);
+    }
+
+    /** Every service version this process serves: all the embedded ones, minus leased ones it wasn't granted. */
+    List<ModularServiceDescriptor> hosted() {
+        return byKey.values().stream().filter(this::hostedHere).toList();
+    }
+
+    private boolean hostedHere(ModularServiceDescriptor descriptor) {
+        return !leasedBeanNames.contains(descriptor.beanName()) || grantedHere(descriptor);
     }
 
     /** Creating the bean decides it (a lazily initialized one may not have been yet). */

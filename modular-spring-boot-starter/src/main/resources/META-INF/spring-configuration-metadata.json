@@ -33,6 +33,11 @@
       "description": "URL for any internal-rest service without an explicit url, with {service} and {version} substituted, e.g. http://{service}.default.svc.cluster.local:8080. Other placeholders fail startup."
     },
     {
+      "name": "modular.advertise.url",
+      "type": "java.lang.String",
+      "description": "Base URL other processes reach this one's /_modular at, published in its service advertisements, e.g. http://10.0.0.7:8080. Must be absolute http(s). Unset: advertisements give no address."
+    },
+    {
       "name": "modular.server.enabled",
       "type": "java.lang.Boolean",
       "defaultValue": true,

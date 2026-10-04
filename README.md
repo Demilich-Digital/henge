@@ -510,6 +510,7 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`; any other placeholder fails startup) used for any `internal-rest` service without an explicit `url`. |
 | `modular.leases.<lease>.capacity` | — | Cluster-wide capacity of a resource that services claim shares of with `@RequiresLease`. A positive integer; required for every declared lease. |
 | `modular.services.<name>.leases.<lease>` | — | How much of the lease one instance of the service claims. A positive integer, at most the capacity; required for every lease the implementation declares. |
+| `modular.advertise.url` | unset | Base URL (`http://host:port`) other processes reach this one's `/_modular` at, published in its service advertisements. Unset: the advertisement says this process hosts a service but gives no address. |
 | `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all (a non-web application never does). |
 | `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. Must start with `/` and not end with one. |
 | `modular.transport.secret` | unset | Optional shared secret sent as `Modular-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
@@ -564,6 +565,15 @@ What Henge does and doesn't do:
 - **The cap is soft.** Shared state lives in a `SystemEphemeralDatastore` (in-process by default, so a
   single node always grants what fits); declare your own bean of that type to share it across nodes.
   See `docs/design/self-orchestration.md`.
+
+## Service advertisements
+
+Once a process is fully started it advertises every service version it actually hosts on the
+`SystemEphemeralDatastore`, as `adv:<service>@<version>` with its `modular.advertise.url`: a leased
+service only if its lease was granted, never one that's `internal-rest` here. The entry is renewed
+every 10 seconds and expires after 30, so a crashed process disappears on its own; a graceful stop
+withdraws first. In a monolith this is redundant (nothing else reads it), but it runs the same
+way. Nothing routes by these yet.
 
 ## Using this without Spring Boot
 
