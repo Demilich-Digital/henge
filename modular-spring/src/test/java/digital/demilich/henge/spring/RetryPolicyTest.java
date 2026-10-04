@@ -53,7 +53,7 @@ class RetryPolicyTest {
         MockEnvironment environment = new MockEnvironment().withProperty("modular.transport.retry.on", "everything");
         ModularProperties properties = new ModularProperties(environment);
 
-        assertThatThrownBy(() -> new InternalRestTransport(ModularTransportSupport.restClient(properties),
+        assertThatThrownBy(() -> new InternalRestTransport(ModularTransportSupport.restClient(properties, io.micrometer.observation.ObservationRegistry.NOOP),
                 ModularTransportSupport.objectMapper(), properties)).hasMessageContaining("modular.transport.retry.on=everything");
     }
 

@@ -118,7 +118,8 @@ class InternalRestTransportTest {
                     .withProperty("modular.transport.read-timeout", "200");
             ModularProperties properties = new ModularProperties(environment);
             InternalRestTransport transport = new InternalRestTransport(
-                    ModularTransportSupport.restClient(properties), ModularTransportSupport.objectMapper(), properties);
+                    ModularTransportSupport.restClient(properties, io.micrometer.observation.ObservationRegistry.NOOP),
+                    ModularTransportSupport.objectMapper(), properties);
 
             Method echoMethod = EchoService.class.getMethod("echo", String.class);
             ServiceInvocation invocation =

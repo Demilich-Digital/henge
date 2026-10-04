@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
@@ -56,11 +57,22 @@ final class ModularTransportSupport {
      * {@code RestClient.builder().build()}'s defaults are infinite, which lets one hung remote
      * service pin a caller thread forever. Timeouts come from {@code modular.transport.connect-timeout}
      * / {@code modular.transport.read-timeout} ({@link ModularProperties}).
+     *
+     * <p>Built by hand, and not from the application's {@code RestClient.Builder}, so that nothing the
+     * application configured for its own HTTP calls (message converters, interceptors, a request factory)
+     * reaches an internal call. The one thing it takes from the application is its
+     * {@code observationRegistry}: each attempt is observed as {@code http.client.requests} (see
+     * {@link HengeClientRequestObservationConvention}), and wherever the registry has a tracing handler the
+     * trace context goes out in the request's headers, so a trace continues in the process that serves the call.
      */
-    static RestClient restClient(ModularProperties properties) {
+    static RestClient restClient(ModularProperties properties, ObservationRegistry observationRegistry) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(properties.getConnectTimeout());
         factory.setReadTimeout(properties.getReadTimeout());
-        return RestClient.builder().requestFactory(factory).build();
+        return RestClient.builder()
+                .requestFactory(factory)
+                .observationRegistry(observationRegistry)
+                .observationConvention(new HengeClientRequestObservationConvention())
+                .build();
     }
 }

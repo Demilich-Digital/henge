@@ -2,6 +2,7 @@ package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.ServiceTransport;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
+import io.micrometer.observation.ObservationRegistry;
 import java.time.InstantSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
@@ -41,14 +42,16 @@ public class ModularTransportConfiguration {
      */
     @Bean
     public ServiceTransport internalRestTransport(ModularProperties modularProperties,
-            ObjectProvider<SystemEphemeralDatastore> datastore, ObjectProvider<SystemMetrics> systemMetrics) {
+            ObjectProvider<SystemEphemeralDatastore> datastore, ObjectProvider<SystemMetrics> systemMetrics,
+            ObjectProvider<ObservationRegistry> observationRegistry) {
         SystemMetrics metrics = systemMetrics.getIfAvailable(() -> SystemMetrics.NONE);
         SystemEphemeralDatastore available = datastore.getIfAvailable();
         AdvertisedEndpoints advertised = available == null ? null
                 : new AdvertisedEndpoints(metrics.measured(available, "routing"), ModularLeaseKeeper.DEFAULT_TTL.dividedBy(3),
                         InstantSource.system(), metrics);
         return new InternalRestTransport(
-                ModularTransportSupport.restClient(modularProperties), ModularTransportSupport.objectMapper(), modularProperties,
+                ModularTransportSupport.restClient(modularProperties, observationRegistry.getIfAvailable(() -> ObservationRegistry.NOOP)),
+                ModularTransportSupport.objectMapper(), modularProperties,
                 advertised, metrics);
     }
 }

@@ -693,6 +693,25 @@ method. `henge.mode` is read per call, so it stays right when a service is reach
 lease was refused. The call is the current observation while it runs, so anything it calls in turn is
 its child.
 
+### Traces across the transport
+
+A trace that starts in the process making a call continues in the process that serves it. The
+transport's `RestClient` is given the application's `ObservationRegistry`, so each HTTP attempt is an
+`http.client.requests` observation, and wherever the registry has a tracing handler (Boot with Actuator
+and a Micrometer Tracing bridge) the trace context goes out in the request's headers; the host's own
+request observation continues it, and `henge.dispatch` nests inside that. A call reads as
+`henge.call` → one `http.client.requests` per attempt (a retried call shows each of its attempts) →
+the host's request → `henge.dispatch`, all one trace.
+
+- **Henge brings no tracer.** Whether the registry has tracing handlers is the application's choice; with
+  none, the attempts are still timed and nothing is propagated.
+- **`http.client.requests` from the transport has `client.name=henge`**, not the host. An advertised
+  host is a node's own address, so as nodes came and went the usual host tag would mint a new series for
+  each; which node a call went to is on the span.
+- **The transport's `RestClient` stays its own.** It takes only the registry from the application, not
+  its `RestClient.Builder`: message converters, interceptors and request-factory settings configured
+  for the application's own HTTP calls do not reach an internal call.
+
 ### The system's own meters
 
 What the framework does on its own account (claiming leases, keeping advertisements alive, retrying a
@@ -829,10 +848,6 @@ scope deliberately excluded rather than deferred):
   aggregate the view across processes instead of one at a time.
 - **Metrics, further.** Calls, dispatches and the system's own meters are built (see "Metrics").
   Still to do: the dependency graph's remote edges as a gauge.
-- **Trace propagation on the transport.** The hand-built `RestClient` bypasses Boot's observation
-  instrumentation today, so a trace's context stops dead exactly at the process boundary that
-  matters most (the `henge.call` span is there; nothing carries it across the wire). Build it from
-  Boot's auto-configured `RestClient.Builder` when available instead.
 - **Shared-singleton detection.** Two services that both inject the same stateful singleton (a
   cache, a mutable holder bean) share one instance in the monolith and get silently independent
   copies the moment they're split — nothing surfaces this today. A startup-time bean-graph walk,
