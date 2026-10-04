@@ -9,6 +9,10 @@ dependencies {
     // Only to deserialize Guava's immutable collections when an application already has Guava;
     // never forced on one (see HengeCollectionsModule).
     compileOnly(libs.guava)
+    // Only for the observation of calls and dispatches (ObservationServiceCallInterceptor and
+    // ObservationServiceDispatchObserver); an application without it never loads either class.
+    compileOnly("io.micrometer:micrometer-observation")
+    testImplementation("io.micrometer:micrometer-observation")
 
     // The end-to-end test that selects Redis with modular.store.type, against a real one.
     testImplementation(project(":modular-redis"))

@@ -47,10 +47,13 @@ class ModularDispatcherController {
     private final ModularServiceRegistry registry;
     private final ObjectMapper objectMapper;
     private final SharedSecret secret;
+    private final ServiceDispatchObserver observer;
 
-    ModularDispatcherController(ModularServiceRegistry registry, ObjectMapper objectMapper, ModularProperties properties) {
+    ModularDispatcherController(ModularServiceRegistry registry, ObjectMapper objectMapper, ModularProperties properties,
+            ServiceDispatchObserver observer) {
         this.registry = registry;
         this.objectMapper = objectMapper;
+        this.observer = observer;
         this.secret = SharedSecret.from(properties);
         properties.getServerPathPrefix(); // validates it; the @RequestMapping above reads the same property
         if (!secret.isRequired()) {
@@ -67,6 +70,23 @@ class ModularDispatcherController {
             @RequestHeader(value = SECRET_HEADER, required = false) String providedSecret,
             InputStream requestBody) {
 
+        ServiceDispatchObserver.Scope scope = observer.start();
+        try {
+            ResponseEntity<?> response = serve(scope, service, version, method, providedSecret, requestBody);
+            scope.stop(response.getStatusCode().value(), null);
+            return response;
+        } catch (ModularDispatchException e) {
+            scope.stop(e.getStatus().value(), e.getRemoteExceptionType());
+            throw e;
+        } catch (RuntimeException e) {
+            scope.stop(HttpStatus.INTERNAL_SERVER_ERROR.value(), e.getClass().getName());
+            throw e;
+        }
+    }
+
+    private ResponseEntity<?> serve(ServiceDispatchObserver.Scope scope, String service, int version, String method,
+            String providedSecret, InputStream requestBody) {
+
         // The body is taken as a raw stream, not @RequestBody JsonNode: Spring would parse a
         // @RequestBody before this method runs, letting an unauthenticated caller make the server
         // parse arbitrary JSON (and answer 400 instead of 403) before the secret is ever checked.
@@ -81,6 +101,7 @@ class ModularDispatcherController {
             throw new ModularDispatchException(HttpStatus.NOT_FOUND,
                     "Modular service '" + service + "' has no method '" + method + "'");
         }
+        scope.resolved(service, version, method);
 
         // The binding of this exact version, not looked up by type: multiple versions of the same
         // interface may be embedded in this process simultaneously. It hands the call to the

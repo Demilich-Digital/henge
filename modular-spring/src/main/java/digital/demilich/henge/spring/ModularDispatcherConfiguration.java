@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
@@ -24,7 +25,9 @@ import org.springframework.core.env.Environment;
 public class ModularDispatcherConfiguration {
 
     @Bean
-    public ModularDispatcherController modularDispatcherController(ModularServiceRegistry registry, Environment environment) {
-        return new ModularDispatcherController(registry, ModularTransportSupport.objectMapper(), new ModularProperties(environment));
+    public ModularDispatcherController modularDispatcherController(
+            ModularServiceRegistry registry, Environment environment, ObjectProvider<ServiceDispatchObserver> observer) {
+        return new ModularDispatcherController(registry, ModularTransportSupport.objectMapper(), new ModularProperties(environment),
+                observer.getIfAvailable(() -> ServiceDispatchObserver.NONE));
     }
 }

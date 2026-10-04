@@ -672,6 +672,29 @@ curl http://localhost:8082/api/audit         # -> ["greeted:Alice"], recorded by
 Stop the audit process and it withdraws its advertisements at once; start it again, on any port, and
 the greeting process picks it up within one refresh interval, with nothing reconfigured.
 
+## Metrics
+
+Henge observes what your services can't observe about themselves, through Micrometer's Observation API,
+so one instrumentation point gives timers wherever a `MeterRegistry` is connected and trace spans
+wherever a tracer is. In Spring Boot it switches on when the application has an `ObservationRegistry`
+bean (Actuator provides one); without Micrometer, or without a registry, nothing is observed and
+nothing is loaded. Without Boot, declare `ObservationServiceCallInterceptor` and
+`ObservationServiceDispatchObserver` as beans over your registry.
+
+| Observation | Where | Key values |
+|---|---|---|
+| `henge.call` | Every call a caller in this process makes to a service, embedded or remote: the whole of it, including the retries and failover of a remote one. | `henge.service`, `henge.version`, `henge.method`, `henge.mode` (`embedded` or `internal-rest`); a call that throws carries the error. |
+| `henge.dispatch` | Every request to `/_modular` on the serving side, rejected ones included. | `henge.status` (the HTTP status answered), `henge.exception` (the class of the business exception, else `none`), and `henge.service`, `henge.version`, `henge.method`. |
+
+Every key value is bounded by your interfaces, not by the traffic: a request that names a service or
+method this process doesn't serve has `none` for those three, never the caller's text. Compare the two
+to see the network: `henge.call` on the caller against `henge.dispatch` on the host, for the same
+method. `henge.mode` is read per call, so it stays right when a service is reached remotely because its
+lease was refused. The call is the current observation while it runs, so anything it calls in turn is
+its child.
+
+Not observed yet: leases, advertisements, retries as their own counts, and the datastore. See the roadmap.
+
 ## Seeing the topology
 
 Config decides the topology, so the resolved result should be visible. Set `modular.topology.enabled=true`
@@ -783,9 +806,14 @@ scope deliberately excluded rather than deferred):
 - **Topology, further.** The endpoint and page are built (see "Seeing the topology"). Still to do:
   log the `service@version → mode → url` table at startup, expose it through Actuator, and
   aggregate the view across processes instead of one at a time.
-- **Tracing/metrics propagation on the transport.** The hand-built `RestClient` bypasses Boot's
-  observation instrumentation today, so traces stop dead exactly at the process boundary that
-  matters most. Build it from Boot's auto-configured `RestClient.Builder` when available instead.
+- **Metrics, further.** Calls and dispatches are built (see "Metrics"). Still to do: meters for the
+  system's own behavior: lease grants, refusals and renewal failures, advertisement renewals and
+  failovers, retries and give-ups as counts, datastore latency and errors, and gauges for what a
+  process hosts.
+- **Trace propagation on the transport.** The hand-built `RestClient` bypasses Boot's observation
+  instrumentation today, so a trace's context stops dead exactly at the process boundary that
+  matters most (the `henge.call` span is there; nothing carries it across the wire). Build it from
+  Boot's auto-configured `RestClient.Builder` when available instead.
 - **Shared-singleton detection.** Two services that both inject the same stateful singleton (a
   cache, a mutable holder bean) share one instance in the monolith and get silently independent
   copies the moment they're split — nothing surfaces this today. A startup-time bean-graph walk,

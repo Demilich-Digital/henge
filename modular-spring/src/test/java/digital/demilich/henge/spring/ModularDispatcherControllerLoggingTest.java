@@ -57,7 +57,8 @@ class ModularDispatcherControllerLoggingTest {
                 List.of(ModularServiceDescriptor.of("echo-service", 1, EchoService.class, "echo-service-1")));
         registry.setBeanFactory(context);
         controller = new ModularDispatcherController(
-                registry, ModularTransportSupport.objectMapper(), new ModularProperties(new MockEnvironment()));
+                registry, ModularTransportSupport.objectMapper(), new ModularProperties(new MockEnvironment()),
+                ServiceDispatchObserver.NONE);
         records.clear(); // the controller's own startup line ("modular.transport.secret is not set ...")
     }
 
