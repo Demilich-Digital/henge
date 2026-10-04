@@ -1,7 +1,6 @@
 package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.Lease;
-import java.util.stream.Collectors;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.BeansException;
@@ -26,9 +25,10 @@ import org.springframework.context.ConfigurableApplicationContext;
  * and lifecycle. It is created eagerly ({@link #isEagerInit()}), so a refusal or a configuration
  * mistake fails startup rather than the first call.
  *
- * <p>A refusal that nothing else in the cluster could explain, because this process holds the whole
- * of what is claimed, means the process's own services over-allocate the lease. That is a
- * configuration error, reported with who holds what.
+ * <p>A refusal means other processes hold the lease, so the service has to be reached remotely, which
+ * needs a configured url: without one startup fails here rather than on the first call. (Services that
+ * over-allocate a lease between them are rejected before anything is constructed, see
+ * {@link ModularServiceRegistrar}.)
  */
 class ModularLeasedServiceFactoryBean implements SmartFactoryBean<Object>, ApplicationContextAware, BeanNameAware, DisposableBean {
 
@@ -59,8 +59,8 @@ class ModularLeasedServiceFactoryBean implements SmartFactoryBean<Object>, Appli
     public synchronized Object getObject() {
         if (product == null) {
             keeper = applicationContext.getBean(ModularLeaseKeeper.class);
-            LeaseRefusal refusal = keeper.acquireAll(leased.localName(), leased.needs());
-            product = refusal == null ? constructImplementation() : remoteInstead(refusal);
+            LeaseNeed refused = keeper.acquireAll(leased.localName(), leased.needs());
+            product = refused == null ? constructImplementation() : remoteInstead(refused);
         }
         return product;
     }
@@ -88,17 +88,7 @@ class ModularLeasedServiceFactoryBean implements SmartFactoryBean<Object>, Appli
         }
     }
 
-    private Object remoteInstead(LeaseRefusal refusal) {
-        LeaseNeed need = refusal.need();
-        if (refusal.heldOnlyByThisProcess()) {
-            throw new IllegalStateException("Lease '" + need.name() + "' (capacity " + need.capacity() + ") can't be granted to "
-                    + leased.localName() + ", which needs " + need.amount() + ": this process's own services already hold "
-                    + describeHolders(refusal) + ", and nothing else holds it, so no other process could host "
-                    + leased.localName() + " either. The services in this process claim more of '" + need.name()
-                    + "' than its capacity. Raise modular.leases." + need.name() + ".capacity, lower the amounts under "
-                    + "modular.services.<service>.leases." + need.name() + ", or host fewer of these services here "
-                    + "(--modular.serve).");
-        }
+    private Object remoteInstead(LeaseNeed need) {
         if (!leased.remoteUrlConfigured()) {
             throw new IllegalStateException("Lease '" + need.name() + "' (capacity " + need.capacity() + ") is held by other "
                     + "processes, so " + leased.localName() + " must be reached remotely from here, but no url is "
@@ -110,14 +100,6 @@ class ModularLeasedServiceFactoryBean implements SmartFactoryBean<Object>, Appli
                 new ModularServiceProxyFactoryBean(leased.serviceInterface(), leased.serviceName(), leased.version());
         proxy.setApplicationContext(applicationContext);
         return proxy.getObject();
-    }
-
-    private static String describeHolders(LeaseRefusal refusal) {
-        int total = refusal.heldByThisProcess().values().stream().mapToInt(Integer::intValue).sum();
-        String holders = refusal.heldByThisProcess().entrySet().stream()
-                .map(holder -> holder.getKey() + " " + holder.getValue())
-                .collect(Collectors.joining(", "));
-        return total + " of " + refusal.need().capacity() + " (" + holders + ")";
     }
 
     @Override

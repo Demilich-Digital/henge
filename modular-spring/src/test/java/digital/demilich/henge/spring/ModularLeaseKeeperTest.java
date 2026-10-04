@@ -50,12 +50,10 @@ class ModularLeaseKeeperTest {
     void severalLeasesAreAllOrNothing() {
         assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 8, 10)))).isNull();
 
-        LeaseRefusal refusal = keeper.acquireAll("b@1", List.of(new LeaseNeed("cache", 5, 10), new LeaseNeed("db", 5, 10)));
+        LeaseNeed refused = keeper.acquireAll("b@1", List.of(new LeaseNeed("cache", 5, 10), new LeaseNeed("db", 5, 10)));
 
-        assertThat(refusal).isNotNull();
-        assertThat(refusal.need().name()).isEqualTo("db");
-        assertThat(refusal.heldByThisProcess()).containsExactly(java.util.Map.entry("a@1", 8));
-        assertThat(refusal.heldOnlyByThisProcess()).isTrue();
+        assertThat(refused).isNotNull();
+        assertThat(refused.name()).isEqualTo("db");
         // 'cache' was claimed first (names are claimed in order) and handed back.
         assertThat(store.read("lease:cache").members()).isEmpty();
         assertThat(keeper.hosts("b@1")).isFalse();

@@ -1,14 +1,12 @@
 package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.SystemEphemeralDatastore;
-import digital.demilich.henge.core.SystemEphemeralDatastore.MemberId;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -47,15 +45,15 @@ class ModularLeaseKeeper implements DisposableBean {
         this.ttl = ttl;
     }
 
-    /** Claims every lease in {@code needs} for {@code localName}; {@code null} if granted, else why not (nothing is kept). */
-    LeaseRefusal acquireAll(String localName, List<LeaseNeed> needs) {
+    /** Claims every lease in {@code needs} for {@code localName}; {@code null} if granted, else the lease that was refused (nothing is kept). */
+    LeaseNeed acquireAll(String localName, List<LeaseNeed> needs) {
         List<LeaseNeed> ordered = needs.stream().sorted(Comparator.comparing(LeaseNeed::name)).toList();
         List<Claim> acquired = new ArrayList<>();
         for (LeaseNeed need : ordered) {
             Claim claim = new Claim(key(need.name()), localName, need);
             if (!datastore.claim(claim.key(), localName, need.amount(), need.capacity(), ttl)) {
                 acquired.forEach(this::release);
-                return refusal(need);
+                return need;
             }
             acquired.add(claim);
         }
@@ -78,19 +76,6 @@ class ModularLeaseKeeper implements DisposableBean {
 
     private void release(Claim claim) {
         datastore.remove(claim.key(), claim.localName());
-    }
-
-    private LeaseRefusal refusal(LeaseNeed need) {
-        Map<String, Integer> mine = new TreeMap<>();
-        int others = 0;
-        for (Map.Entry<MemberId, byte[]> member : datastore.read(key(need.name())).members().entrySet()) {
-            if (member.getKey().nodeId().equals(datastore.nodeId())) {
-                mine.put(member.getKey().localName(), SystemEphemeralDatastore.claimedAmount(member.getValue()));
-            } else {
-                others++;
-            }
-        }
-        return new LeaseRefusal(need, mine, others);
     }
 
     private synchronized void startHeartbeat() {
