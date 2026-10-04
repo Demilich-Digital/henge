@@ -161,7 +161,7 @@ class ModularStoreSelectionTest {
     @Test
     void redisWithoutAUriFailsStartupNamingTheProperty() {
         try (var ctx = context(Map.of("modular.store.type", "redis"), LeasedConfig.class)) {
-            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("needs modular.store.redis.uri");
+            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("needs exactly one of modular.store.redis.uri");
         }
     }
 
