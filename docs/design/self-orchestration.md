@@ -84,21 +84,37 @@ public interface SharedStore {
     Snapshot read(String key);
 
     record Snapshot(Map<MemberId, byte[]> members, Epoch epoch) {}
+
+    /**
+     * Atomically: if the sum of the live members' amounts under {@code key} plus {@code amount}
+     * is at most {@code capacity}, write (or renew) this node's member and return true; else
+     * write nothing and return false. A member that already exists counts as its own old
+     * amount, not twice, so renewing never fails against itself.
+     */
+    boolean claim(String key, String localName, int amount, int capacity, Duration ttl);
 }
 ```
 
 `MemberId` is `(nodeId, localName)`. `localName` lets one node own several members under a key
 (two services on one node each claiming the same lease, say) without breaking single-writer.
 
-Everything above the store is built from this primitive: advertisements, leases, rate limiters,
-demand and pressure signals. There is no second primitive.
+Everything above the store is built from `put`/`read`: advertisements, rate limiters, demand and
+pressure signals. `claim` exists for exactly one purpose, leases, and it is the only operation
+that must be **atomic per key**. It is still not consensus: each node writes only its own member,
+and atomicity is only ever required of whoever serializes operations on that one key (see the
+adapters, and the DHT's single-owner placement for claim keys). Where that serialization is
+briefly doubled or lost, the damage is bounded overshoot, which the lease capacity margin absorbs.
 
 ### Why not "a subset of Redis"
 
 The first sketch was a Redis command subset (`GET`/`SET NX`/`INCR`/`MULTI`). Each of those needs a
-single owner per key to be meaningful, which a redundant, rollout-tolerant DHT can't provide without
-consensus. Replicated counters with independent increments don't converge — they drift toward k×
-the true value. The single-writer map does converge, and it covers every use case on the table.
+single owner per key to be meaningful, which a *redundant* DHT can't provide without consensus.
+Replicated counters with independent increments don't converge — they drift toward k× the true
+value. The single-writer map does converge, and it covers every use case on the table except one:
+a capped claim (leases) can't be expressed as a merge, because "is there room?" depends on the
+other members at the moment of writing. That one operation is `claim`, and rather than generalize
+back toward a Redis subset it is kept as a single purpose-built atomic operation, served from a
+single owner per key. Everything else stays on the converging map.
 
 ### Adapters
 
@@ -106,13 +122,14 @@ The contract is Henge-owned; each adapter owns its own topology and config.
 
 | Adapter | Use | Mapping |
 |---|---|---|
-| **In-process** | Monolith; tests | `ConcurrentHashMap` per key, lazy expiry on read + periodic sweep. |
-| **Redis / Valkey** | Teams that already run Redis | Member = hash field with per-field TTL (`HSETEX`/`HGETALL`, Redis 7.4+; Valkey support to verify). Version check on write is a small Lua script. Older Redis: sorted set scored by expiry + value hash, two Lua scripts, server `TIME`. Static client-side sharding; no replicas, no persistence needed. |
-| **Hazelcast** | Teams that already run it | Composite `(key, member)` entries, partition-aware on `key`, per-entry TTL; read is a single-partition query. |
+| **In-process** | Monolith; tests | `ConcurrentHashMap` per key, lazy expiry on read + periodic sweep. `claim` runs under the key's lock. |
+| **Redis / Valkey** | Teams that already run Redis | Member = hash field with per-field TTL (`HSETEX`/`HGETALL`, Redis 7.4+; Valkey support to verify). Version check on write is a small Lua script; `claim` is another (sum live fields, compare, write), atomic because Redis is single-threaded. Older Redis: sorted set scored by expiry + value hash, Lua scripts, server `TIME`. Static client-side sharding; no replicas, no persistence needed. |
+| **Hazelcast** | Teams that already run it | Composite `(key, member)` entries, partition-aware on `key`, per-entry TTL; read is a single-partition query. `claim` is an entry processor, run serially on the key's partition. |
 | **Built-in DHT** | Henge nodes are the store | See below. |
 
 Every adapter satisfies the contract trivially except the DHT, which is the only one where
-replicas can actually disagree — and the merge rule is what makes that fine.
+replicas can actually disagree — and the merge rule is what makes that fine for `put`/`read`. For
+`claim`, the DHT does what Redis does: one owner per key serializes it.
 
 ### The built-in DHT
 
@@ -132,6 +149,20 @@ nodes are trying to read bootstrap state from them**.
   cheap to revisit.)
 - **Redundant writes**: every `put` goes to the k closest nodes in the writer's view.
 - **Union reads**: a read asks several of the k closest and merges.
+- **Single-owner claims**: `claim` goes to exactly one node, the closest live node to `hash(key)`
+  in the writer's view, which applies it serially (the DHT's version of "Redis is
+  single-threaded"). So the DHT has two placement modes: k closest with merge for ordinary keys,
+  k = 1 for claim keys. Making that safe without redundancy rests on three things:
+  - **Loss is fine.** Holders re-assert on heartbeat, so a lost owner's state rebuilds within one
+    heartbeat. A node that takes ownership of a claim key (new key owner, or its first boot)
+    refuses claims for one heartbeat interval first, so a wipe doesn't look like free capacity.
+  - **Graceful handoff carries claim state** to the next-closest node on SIGTERM, which keeps
+    ordinary rolling deploys from ever hitting the grace period.
+  - **Doubled ownership is bounded.** During churn two nodes with different views can both
+    believe they own the key, each granting up to the full capacity, so the worst-case overshoot
+    is a multiple of capacity, not just the margin. A claimant that sees its view change
+    mid-claim, or can't reach the owner, **fails closed** (refused) rather than guessing. The
+    capacity margin must still be sized for this case, and that is documented.
 - **Trusting writes and reads outside responsibility**: a node accepts a write for a key it doesn't
   think it's responsible for (the writer's view may differ during churn) and answers reads from
   whatever it holds. Misplaced data simply ages out. This is safe only because the cluster is
@@ -254,22 +285,29 @@ modular:
   crash. Once constructed, a service keeps its lease for the life of the process (no eviction in
   this phase).
 
-### Acquisition without consensus
+### Acquisition: speculative read, then one atomic claim
 
-1. Write a **pending** claim as this node's member of `lease:<resource>`.
-2. Wait a settle interval longer than the store's propagation lag.
-3. Read all claims. Let H = the sum of **held** claims; order pending claims by member ID.
-4. This claim is granted if H + (pending claims ordered before it) + its own amount ≤ capacity.
-   Every node evaluating the same view reaches the same answer, so racing claimants agree on who
-   backs off without coordinating.
-5. Granted → rewrite the member as **held**. Refused → remove the member.
+1. **Speculative read** of `lease:<resource>`. If the live members already leave less than this
+   claim's amount, give up without writing anything. This is a pure optimization: it keeps a full
+   lease from turning every starting node into a write.
+2. **`claim`** (see the store contract): the key's serializer sums the live members, and either
+   writes this node's member and grants, or refuses. There are no intermediate states and no
+   settle interval; acquisition costs one round trip per lease. Racing claimants are ordered by
+   whoever the serializer sees first, and the loser is simply refused.
+3. A multi-lease service acquires each lease in turn and, on any refusal, `remove`s the ones it
+   already holds (all-or-nothing, as above). A rollback leaves capacity briefly claimed by a node
+   that then declined; callers that lost a race to it are refused for that moment. Claim in a
+   fixed order (by lease name) so two services never deadlock-refuse each other.
 
-After an epoch change (the lease key may have been wiped), a claimant waits one heartbeat interval
-before evaluating, so existing holders re-assert first and a wipe doesn't look like free capacity.
+After the key's serializer changes (the lease key may have been wiped), the new owner refuses
+claims for one heartbeat interval so existing holders re-assert first (see the DHT's claim
+ownership). Other adapters surface this through the epoch: a claimant that sees an epoch change
+waits one heartbeat before claiming.
 
-Overshoot is still possible when claimants see different views (partition, heavy churn); that is
-what the capacity margin is for. In monolith mode the in-process store always grants, unless a
-single claim exceeds capacity — a startup config error.
+Overshoot is still possible when two nodes briefly both act as the serializer (DHT churn); that is
+what the capacity margin is for, and the claim path fails closed under an unstable view. In
+monolith mode the in-process store always grants, unless a single claim exceeds capacity — a
+startup config error.
 
 ### Decided constraints
 
@@ -356,7 +394,8 @@ plausible scale.
 
 Each phase is independently useful and testable.
 
-1. **Store contract + in-process adapter** (`modular-core` contract, `modular-spring` wiring).
+1. **Store contract + in-process adapter** (`modular-core` contract including `claim`,
+   `modular-spring` wiring).
 2. **`@RequiresLease`** — factory-bean decision, late dispatcher registry, `Lease` injection,
    startup rejection of leases + URL template. Fully testable in monolith mode.
 3. **Advertisements + advertisement-based routing** — the "Not in v1: service discovery" item,
@@ -376,8 +415,17 @@ Each phase is independently useful and testable.
   binary protocol.
 - **Store selection config**: e.g. `modular.store.type=in-process|redis|hazelcast|dht`, and how a
   node declares it does or doesn't hold DHT data (a storage-member vs client-only role).
-- **Settle interval and heartbeat defaults** for leases; whether they derive from the adapter
-  (Redis has negligible propagation lag; the DHT doesn't).
+- **Heartbeat defaults** for leases, and the post-ownership-change grace period; whether they
+  derive from the adapter.
+- **Where a refused lease routes before advertisements exist.** Phase 2 ships before phase 3, and
+  URL-template routing is incompatible with leases, so a refusing node has no target for its
+  `internal-rest` fallback. Either allow an explicit `url` on leased services in phase 2, or ship
+  leases and advertisements together.
+- **Is a refusal retried?** v1 treats it as permanent for the process's life; a periodic retry
+  would let a node pick up capacity freed later, at the cost of switching a service from remote to
+  embedded at runtime, which needs the switchable proxies of phase 6.
+- **How the DHT sizes the claim-path margin**: a fixed documented multiple, or derived from
+  observed view instability.
 - **Valkey hash-field TTL support** — verify before choosing the Redis mapping.
 - **Rate limiter as a user-facing API**, or internal-only until self-organization needs it?
 - **Does `Lease` support partial grants later?** The API (`amount()`) leaves room; v1 is
