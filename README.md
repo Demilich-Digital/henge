@@ -34,13 +34,15 @@ code-organization discipline alone doesn't:
    migration if you want v1 of a service embedded while v2 is already split out.
 
 That combination — monolith development ergonomics plus microservice deployment flexibility,
-without a rewrite or a redeploy to move between them — is the actual goal. It's honestly not
-fully there yet: Henge itself still tracks nothing about which instances are alive or
-where (see "Not in v1" below) — `--modular.serve` and `--modular.remote-url-template` let the
-binary lean on an existing orchestrator's own discovery (k8s DNS, Consul DNS, ...) rather than
-requiring hand-configured hosts, but there's still no health-aware routing or retries on
-the internal transport. The versioning-in-the-binary and deploy-time-topology mechanics are
-solid; the operational maturity for scaling like a "real" microservice fleet isn't built yet.
+without a rewrite or a redeploy to move between them — is the actual goal. The
+versioning-in-the-binary and deploy-time-topology mechanics are solid, and processes can find each
+other without configured addresses: each advertises what it hosts on a shared datastore (see
+"Service advertisements"), calls rotate over what's advertised, and a call that provably never ran is
+retried on the next host (see "Retries"). `--modular.serve` and `--modular.remote-url-template`
+still let the binary lean on an existing orchestrator's own discovery (k8s DNS, Consul DNS, ...)
+instead. What isn't built is the rest of the operational maturity of a "real" microservice fleet:
+health- or load-aware routing, circuit breaking, and tracing across the process boundary (see
+"Not in v1" and the Roadmap).
 
 ## Concept
 
@@ -74,7 +76,7 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
     services:
       audit-service:
         mode: internal-rest        # embedded (default) | internal-rest -- applies to every version unless overridden below
-        url: http://localhost:8082 # required when mode=internal-rest
+        url: http://localhost:8082 # where to call it; optional, see "Service advertisements"
         versions:
           "2":
             mode: embedded          # per-version override; inherits mode/url above when unset
@@ -334,9 +336,9 @@ pattern for any module that calls into a `@ModularService`.
 
 | Module | Contents |
 |---|---|
-| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, the `ServiceTransport` seam, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, `@RequiresLease` / `Lease`, the `ServiceTransport` seam, the `SystemEphemeralDatastore` contract and its `InProcessEphemeralDatastore`, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
 | `modular-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges and names). Declared to Gradle as an aggregating incremental processor. Depends only on `modular-core` — no Spring. |
-| `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
+| `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, leases (`@RequiresLease` enforcement and renewal), service advertisements and advertisement-based routing, retries, datastore selection (`modular.store.type`), plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
 | `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, registers the dispatcher in servlet web applications behind the `modular.server.enabled` property gate, ships configuration metadata for IDE completion of `modular.*`, and — when Spring Security is present — adds the dedicated security chain for `/_modular` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
 | `modular-redis` | `RedisEphemeralDatastore`: a `SystemEphemeralDatastore` on Redis 7.4+ (hash-field TTLs, one Lua script per operation, so `claim` is atomic across nodes). Needs Lettuce; no Spring. Add the module and set `modular.store.type=redis` and `modular.store.redis.uri`. |
 | `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn(2)` method. |
@@ -349,6 +351,11 @@ pattern for any module that calls into a `@ModularService`.
 ```bash
 ./gradlew build
 ```
+
+The Redis-backed tests (`modular-redis`, and the Redis case in `modular-spring`) run against a
+Redis container through Testcontainers, so they need Docker. Without it they are skipped, unless the
+`CI` environment variable is set, in which case the build fails instead of passing without having
+tested Redis.
 
 ### Run as a monolith (one process, both services embedded)
 
@@ -415,7 +422,8 @@ one declares itself to *be*, not a growing list of everything it isn't.
 
 Precedence, per service: an explicit `modular.services.<name>.url` always wins (the escape hatch
 for anything that doesn't fit the convention) → else derived from `--modular.remote-url-template`
-→ else the call fails, naming exactly which config key is missing. Mode works the same way:
+→ else whichever process advertises the service on the shared datastore (see "Service advertisements") → else the
+call fails, saying that no url is configured and nobody advertises it. Mode works the same way:
 explicit `modular.services.<name>.mode` always wins → else `embedded` if `--modular.serve` names
 this (service, version) or `--modular.serve` is empty → else `internal-rest`. Declaring a service
 in `--modular.serve` while also explicitly setting its mode to `internal-rest` is a contradiction
@@ -428,10 +436,10 @@ equivalent to terminal 2 above, just via the template instead of an explicit `.u
 --modular.serve=greeting-service --modular.remote-url-template=http://localhost:8082
 ```
 
-This is deliberately *not* service discovery — Henge never tracks "who is currently
-running where." It just makes the binary a well-behaved, single-purpose replica so whatever's
-already scheduling and load-balancing containers can do that job, instead of this framework
-reinventing it. See "Why this isn't just a 'modulith'" above.
+Using the template (or an explicit url) means Henge tracks nothing about who is running where: the
+orchestrator's DNS and load balancer do that. To have Henge track it instead, let the processes
+advertise on a shared datastore; see "Service advertisements". See also "Why this isn't just a
+'modulith'" above.
 
 **Connect/read timeouts:** the `internal-rest` transport defaults to a 2s connect timeout and a
 10s read timeout — a single hung remote service can't pin a caller thread forever. Override with
@@ -588,8 +596,8 @@ it**. Callers cache the advertisers per service version and re-read them at most
 the datastore sees a read per service per interval however many calls are made, and calls rotate
 through everything advertised. If a read comes back empty from a *different* storage (the store was
 restarted and hosts haven't re-advertised yet) the previous answer is kept one more interval; an empty
-read from the same storage is believed. With nobody advertising, the call fails saying so. There are
-no retries yet: a call that reaches a host that has just died fails, and the next one tries the next.
+read from the same storage is believed. With nobody advertising, the call fails saying so. A call that
+reaches a host that has just died is retried on the next advertised host; see "Retries".
 
 ### Retries
 
@@ -685,11 +693,12 @@ another over `/_modular/**`, entirely Boot-free), see `modular-spring`'s
 
 Deliberately out of scope for now, to keep the core mechanism small and correct:
 
-- Service discovery/registry — `--modular.serve` + `--modular.remote-url-template` (see "Fitting
-  into an existing orchestrator") let the binary lean on whatever discovery an existing
-  orchestrator already provides (k8s DNS, Consul DNS, ...), but modular-spring itself still tracks
-  nothing about which instances are actually alive or where — no health-aware routing, no dynamic
-  membership.
+- Health-aware routing and load-weighted host choice. Hosts find each other through advertisements on
+  the shared datastore (see "Service advertisements"), and a host that stops renewing drops out
+  after its TTL, but calls simply rotate over whatever is advertised: nothing measures a host's
+  health or load, and there is no circuit breaking. `--modular.serve` + `--modular.remote-url-template`
+  (see "Fitting into an existing orchestrator") still lets the binary lean on an orchestrator's own
+  discovery (k8s DNS, Consul DNS, ...) instead.
 - Additional transports (e.g. gRPC) — more than a `ServiceTransport` implementation: the serving side and the
   bean wiring are REST-specific too, so this is a design exercise rather than a drop-in.
 - mTLS between internal services — `/_modular/**` is expected to sit behind a network boundary

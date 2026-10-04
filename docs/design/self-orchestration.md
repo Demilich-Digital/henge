@@ -1,9 +1,14 @@
 # Design: self-orchestration
 
-Status: draft, branch `self-management`. Implemented so far: the datastore contract with its in-process
-and Redis adapters (phase 1, and phase 4's adapter), `@RequiresLease` (phase 2), and
-advertisement-based routing (phase 3, minus load-weighted choice and withdrawal when overloaded: calls
-rotate over what's advertised) and retries of calls that provably never ran (failed connection, "not served here"), with failover to the next advertised host. Everything else is design only.
+Status: phases 1-4 are built on branch `self-management`; phases 5-8 are design only.
+
+Built: the datastore contract with its in-process and Redis adapters (phases 1 and 4), `@RequiresLease`
+(phase 2), advertisement-based routing (phase 3, minus load-weighted choice and withdrawal when
+overloaded: calls rotate over what's advertised), and retries of calls that provably never ran (failed
+connection, "not served here"), with failover to the next advertised host.
+
+Not built: the built-in DHT, switchable proxies with a child context per service, eviction, and
+self-organized role selection (phases 5-8). Those are gated on a simulation of the decision loop.
 
 ## Summary
 
@@ -400,13 +405,14 @@ plausible scale.
 
 Each phase is independently useful and testable.
 
-1. **Store contract + in-process adapter** (`modular-core` contract including `claim`,
+1. **Store contract + in-process adapter** (built) (`modular-core` contract including `claim`,
    `modular-spring` wiring).
-2. **`@RequiresLease`** — factory-bean decision, late dispatcher registry, `Lease` injection,
+2. **`@RequiresLease`** (built) — factory-bean decision, late dispatcher registry, `Lease` injection,
    startup rejection of leases + URL template. Fully testable in monolith mode.
 3. **Advertisements + advertisement-based routing** — the "Not in v1: service discovery" item,
-   resolved — including load-weighted endpoint choice and withdrawal when overloaded.
-4. **Redis / Valkey adapter** — proves the contract against a store Henge doesn't control.
+   resolved — including load-weighted endpoint choice and withdrawal when overloaded. Built, except
+   those last two (calls rotate over what's advertised), plus retries with failover.
+4. **Redis / Valkey adapter** (built) — proves the contract against a store Henge doesn't control.
 5. **Built-in DHT** — membership, XOR placement, redundancy, handoff, versioned protocol.
 6. **Switchable proxies + child context per service** — also unblocks the roadmap's isolated tier.
 7. **Eviction** — memory pressure and misbehavior, drain, remembered evictions.
@@ -425,10 +431,10 @@ Each phase is independently useful and testable.
   holds data.
 - **Heartbeat defaults** for leases, and the post-ownership-change grace period; whether they
   derive from the adapter.
-- **Where a refused lease routes before advertisements exist.** Phase 2 ships before phase 3, and
-  URL-template routing is incompatible with leases, so a refusing node has no target for its
-  `internal-rest` fallback. Either allow an explicit `url` on leased services in phase 2, or ship
-  leases and advertisements together.
+- **Where a refused lease routes.** Phase 2 shipped with an explicit `url` required on a leased
+  service (startup fails without one), because URL-template routing is incompatible with leases.
+  Advertisements now exist (phase 3), so a refusing node could find the holder through them instead,
+  with no `url`. Decide whether to relax that requirement.
 - **Is a refusal retried?** v1 treats it as permanent for the process's life; a periodic retry
   would let a node pick up capacity freed later, at the cost of switching a service from remote to
   embedded at runtime, which needs the switchable proxies of phase 6.
