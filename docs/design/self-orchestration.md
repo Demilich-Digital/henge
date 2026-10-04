@@ -1,7 +1,8 @@
 # Design: self-orchestration
 
 Status: draft, branch `self-management`. Implemented so far: the datastore contract with its in-process
-adapter (phase 1) and `@RequiresLease` (phase 2). Everything else is design only.
+and Redis adapters (phase 1, and phase 4's adapter), `@RequiresLease` (phase 2), and service advertisements
+(the first half of phase 3). Everything else is design only.
 
 ## Summary
 

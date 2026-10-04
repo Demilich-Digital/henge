@@ -5,6 +5,7 @@ include(
     "modular-processor",
     "modular-spring",
     "modular-spring-boot-starter",
+    "modular-redis",
     "examples:example-contracts",
     "examples:example-services",
     "examples:example-app",
