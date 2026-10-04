@@ -11,11 +11,13 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinition;
@@ -109,6 +111,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         List<ModularTopologyCatalog.Entry> catalogEntries = new ArrayList<>();
         List<String> serviceBeanNames = new ArrayList<>();
         Set<String> leasedBeanNames = new LinkedHashSet<>();
+        Map<String, Map<Integer, LeasedBean>> leasedVersions = new LinkedHashMap<>();
         Set<String> declaredLeaseNames = new LinkedHashSet<>();
         Map<String, List<LeaseNeed>> allLeasedServices = new LinkedHashMap<>();
         Map<String, Class<?>> namesToInterfaces = new LinkedHashMap<>();
@@ -184,6 +187,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                         definition.getConstructorArgumentValues().addIndexedArgumentValue(0, leased);
                         definition.setDependsOn(LEASE_KEEPER_BEAN_NAME);
                         leasedBeanNames.add(beanName);
+                        leasedVersions.computeIfAbsent(name, k -> new TreeMap<>(Comparator.reverseOrder()))
+                                .put(version, new LeasedBean(beanName, definition));
                         declaredLeases.forEach(lease -> declaredLeaseNames.add(lease.value()));
                     }
                     embedded.add(ModularServiceDescriptor.of(name, version, serviceInterface, beanName));
@@ -213,6 +218,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         }
 
         requireStaticallyGrantable(allLeasedServices);
+        claimNewestVersionsFirst(leasedVersions);
 
         List<String> unknownLeaseProperties = properties.unknownLeaseProperties(declaredLeaseNames);
         if (!unknownLeaseProperties.isEmpty()) {
@@ -299,6 +305,39 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
      * known at boot, from the configuration alone, so it's refused at boot, counting every leased
      * implementation on the classpath whether or not this process hosts it.
      */
+    private record LeasedBean(String beanName, RootBeanDefinition definition) {
+    }
+
+    /**
+     * Decides who is refused when a lease can't cover everyone. Leased implementations are constructed
+     * eagerly, so left alone the order they claim in is an accident of scanning, and a node short of
+     * capacity would refuse whichever version happened to come last. Instead they claim in rounds: the
+     * newest version of every service, then the second newest of every service, and so on, so a
+     * shortfall lands on the old versions, which are reached remotely. Spring creates a bean's
+     * {@code depends-on} first, so each round depends on the one before it.
+     */
+    private static void claimNewestVersionsFirst(Map<String, Map<Integer, LeasedBean>> leasedVersions) {
+        List<LeasedBean> previousRound = List.of();
+        for (int rank = 0; ; rank++) {
+            List<LeasedBean> round = new ArrayList<>();
+            for (Map<Integer, LeasedBean> versions : leasedVersions.values()) {
+                if (versions.size() > rank) {
+                    round.add(new ArrayList<>(versions.values()).get(rank));
+                }
+            }
+            if (round.isEmpty()) {
+                return;
+            }
+            String[] after = previousRound.stream().map(LeasedBean::beanName).toArray(String[]::new);
+            for (LeasedBean bean : round) {
+                Set<String> dependsOn = new LinkedHashSet<>(Arrays.asList(bean.definition().getDependsOn()));
+                dependsOn.addAll(Arrays.asList(after));
+                bean.definition().setDependsOn(dependsOn.toArray(String[]::new));
+            }
+            previousRound = round;
+        }
+    }
+
     private static void requireStaticallyGrantable(Map<String, List<LeaseNeed>> leasedServices) {
         Map<String, List<String>> claimants = new LinkedHashMap<>();
         Map<String, Integer> totals = new LinkedHashMap<>();

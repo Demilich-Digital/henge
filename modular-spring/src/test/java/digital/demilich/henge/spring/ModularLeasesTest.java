@@ -26,6 +26,11 @@ class ModularLeasesTest {
     }
 
     @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.versioned")
+    static class VersionedConfig {
+    }
+
+    @Configuration
     @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.two")
     static class TwoLeaseConfig {
     }
@@ -270,6 +275,47 @@ class ModularLeasesTest {
             assertThat(java.lang.reflect.Proxy.isProxyClass(ledger.getClass())).isTrue();
             // Nobody advertises it in this test, and the call says so rather than naming a missing url.
             assertThatThrownBy(() -> ledger.grant()).hasMessageContaining("no process advertises it");
+        }
+    }
+
+    @Configuration
+    static class ForeignHolderOf80Config {
+        @Bean
+        SystemEphemeralDatastore datastore() {
+            return new ForeignHolderDatastore(80);
+        }
+    }
+
+    @Test
+    void whenTheLeaseCantCoverEveryVersionTheNewestVersionOfEachServiceClaimsFirst() {
+        // 20 of 100 is left: room for two claims of 10, and four versions want one. Every version of
+        // both services is scanned oldest first, so only claiming newest first leaves v2 of each.
+        try (var ctx = context(Map.of(
+                "modular.leases.shared-db.capacity", 100,
+                "modular.services.alpha-service.leases.shared-db", 10,
+                "modular.services.beta-service.leases.shared-db", 10),
+                VersionedConfig.class, ForeignHolderOf80Config.class, ModularTransportConfiguration.class)) {
+            ctx.refresh();
+
+            var registry = ctx.getBean(ModularServiceRegistry.class);
+            assertThat(registry.find("alpha-service", 2)).isPresent();
+            assertThat(registry.find("beta-service", 2)).isPresent();
+            assertThat(registry.find("alpha-service", 1)).isEmpty();
+            assertThat(registry.find("beta-service", 1)).isEmpty();
+        }
+    }
+
+    @Test
+    void everyVersionIsHostedWhenTheLeaseCoversThemAll() {
+        try (var ctx = context(Map.of(
+                "modular.leases.shared-db.capacity", 100,
+                "modular.services.alpha-service.leases.shared-db", 10,
+                "modular.services.beta-service.leases.shared-db", 10),
+                VersionedConfig.class)) {
+            ctx.refresh();
+
+            var registry = ctx.getBean(ModularServiceRegistry.class);
+            assertThat(registry.hosted()).hasSize(4);
         }
     }
 }
