@@ -10,6 +10,12 @@ dependencies {
     // never forced on one (see HengeCollectionsModule).
     compileOnly(libs.guava)
 
+    // The end-to-end test that selects Redis with modular.store.type, against a real one.
+    testImplementation(project(":modular-redis"))
+    testImplementation("org.testcontainers:junit-jupiter")
+    // Testcontainers brings slf4j-api, which makes Spring's logging shim route to SLF4J (no binding: it
+    // drops everything). The logging tests capture java.util.logging, so bind SLF4J back to it.
+    testRuntimeOnly("org.slf4j:slf4j-jdk14")
     testImplementation("org.springframework:spring-webmvc")
     testImplementation(libs.guava)
     // Puts an XML message converter ahead of JSON in plain Spring MVC: the dispatch tests then prove

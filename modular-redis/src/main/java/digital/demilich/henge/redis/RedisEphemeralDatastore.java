@@ -92,7 +92,20 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     /** Connects to the Redis at {@code uri}, e.g. {@code redis://host:6379/0}; {@link #close()} disconnects. */
     public static RedisEphemeralDatastore connect(String uri) {
-        return new RedisEphemeralDatastore(RedisClient.create(RedisURI.create(Objects.requireNonNull(uri, "uri"))));
+        RedisURI redisUri;
+        try {
+            redisUri = RedisURI.create(Objects.requireNonNull(uri, "uri"));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("'" + uri + "' is not a Redis URI, e.g. redis://localhost:6379/0", e);
+        }
+        RedisClient client = RedisClient.create(redisUri);
+        try {
+            return new RedisEphemeralDatastore(client);
+        } catch (RuntimeException e) {
+            client.shutdown();
+            // RedisURI's toString() masks the password.
+            throw new IllegalStateException("Can't connect to Redis at " + redisUri + ": " + e.getMessage(), e);
+        }
     }
 
     @Override

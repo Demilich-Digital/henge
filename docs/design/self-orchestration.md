@@ -418,8 +418,10 @@ Each phase is independently useful and testable.
   k-buckets from the start? Decides whether XOR or rendezvous placement is preferable.
 - **DHT transport**: HTTP under the dispatcher prefix (inherits security, simplest) vs a dedicated
   binary protocol.
-- **Store selection config**: e.g. `modular.store.type=in-process|redis|hazelcast|dht`, and how a
-  node declares it does or doesn't hold DHT data (a storage-member vs client-only role).
+- **Declaring a node a storage member vs client-only for the DHT.** Store selection itself is
+  `modular.store.type` (`in-process` default, or an adapter found with `ServiceLoader`) with each
+  adapter's settings under `modular.store.<type>.*`; the DHT still needs a way to say whether a node
+  holds data.
 - **Heartbeat defaults** for leases, and the post-ownership-change grace period; whether they
   derive from the adapter.
 - **Where a refused lease routes before advertisements exist.** Phase 2 ships before phase 3, and

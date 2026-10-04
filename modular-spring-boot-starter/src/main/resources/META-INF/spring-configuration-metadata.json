@@ -9,6 +9,10 @@
       "description": "Per service, by name: modular.services.<name>.mode (embedded | internal-rest) and .url, overridable per version as modular.services.<name>.versions.<n>.mode / .url. Unrecognized keys or service names fail startup."
     },
     {
+      "name": "modular.store",
+      "description": "The datastore for Henge's shared state: modular.store.type picks it, modular.store.<type>.* configures it."
+    },
+    {
       "name": "modular.leases",
       "description": "Per lease, by name: modular.leases.<lease>.capacity, the cluster-wide capacity services share out with @RequiresLease. What one instance of a service claims is modular.services.<name>.leases.<lease>."
     },
@@ -31,6 +35,17 @@
       "name": "modular.remote-url-template",
       "type": "java.lang.String",
       "description": "URL for any internal-rest service without an explicit url, with {service} and {version} substituted, e.g. http://{service}.default.svc.cluster.local:8080. Other placeholders fail startup."
+    },
+    {
+      "name": "modular.store.type",
+      "type": "java.lang.String",
+      "defaultValue": "in-process",
+      "description": "Which datastore holds this process's shared state (leases, service advertisements): in-process, or the type of an adapter module on the classpath, e.g. redis. Setting it while also defining a SystemEphemeralDatastore bean fails startup."
+    },
+    {
+      "name": "modular.store.redis.uri",
+      "type": "java.lang.String",
+      "description": "For modular.store.type=redis: a Lettuce URI such as redis://host:6379/0 (rediss:// for TLS, redis://:password@host for a password). Required."
     },
     {
       "name": "modular.advertise.url",

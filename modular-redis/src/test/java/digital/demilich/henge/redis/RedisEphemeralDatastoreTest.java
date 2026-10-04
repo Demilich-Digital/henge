@@ -240,6 +240,36 @@ class RedisEphemeralDatastoreTest {
         assertThat(store.read(key).members()).hasSize(10);
     }
 
+    @Test
+    void theProviderIsRegisteredAsRedisAndConnectsToTheConfiguredUri() {
+        var providers = java.util.ServiceLoader.load(digital.demilich.henge.core.SystemEphemeralDatastoreProvider.class).stream()
+                .map(java.util.ServiceLoader.Provider::get).toList();
+        assertThat(providers).singleElement().isInstanceOf(RedisDatastoreProvider.class);
+        var provider = providers.get(0);
+        assertThat(provider.type()).isEqualTo("redis");
+
+        String uri = "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379);
+        try (var made = (RedisEphemeralDatastore) provider.create(key -> key.equals("modular.store.redis.uri") ? " " + uri + " " : null)) {
+            String key = freshKey();
+            made.put(key, "a", new byte[] {1}, Duration.ofSeconds(30));
+            assertThat(store.read(key).members()).containsOnlyKeys(new MemberId(made.nodeId(), "a"));
+        }
+    }
+
+    @Test
+    void theProviderNeedsAUriAndSaysWhichProperty() {
+        assertThatThrownBy(() -> new RedisDatastoreProvider().create(key -> null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("modular.store.redis.uri");
+    }
+
+    @Test
+    void aMalformedUriIsReportedAsSuch() {
+        assertThatThrownBy(() -> RedisEphemeralDatastore.connect("not a uri"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("is not a Redis URI");
+    }
+
     private static int i2(String name) {
         return Integer.parseInt(name.substring(1));
     }
