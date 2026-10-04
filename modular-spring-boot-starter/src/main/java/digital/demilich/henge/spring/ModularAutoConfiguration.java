@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 /**
@@ -31,6 +32,23 @@ public class ModularAutoConfiguration {
     @ConditionalOnMissingBean
     ModularServiceRegistry modularServiceRegistry() {
         return new ModularServiceRegistry(List.of());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    ModularTopologyCatalog modularTopologyCatalog() {
+        return new ModularTopologyCatalog(List.of());
+    }
+
+    /**
+     * The topology endpoint and page, when {@code modular.topology.enabled=true} (the imported
+     * configuration checks that), in a servlet web application that serves {@code /_modular} at all.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+    @ConditionalOnProperty(prefix = "modular.server", name = "enabled", havingValue = "true", matchIfMissing = true)
+    @Import(ModularTopologyConfiguration.class)
+    static class Topology {
     }
 
     /**

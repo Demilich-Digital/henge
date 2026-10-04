@@ -313,7 +313,11 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
      * so it's directly, deterministically testable without needing a real HTTP call.
      */
     String resolveFromTemplate(String serviceName, int serviceVersion) {
-        String template = properties.getRemoteUrlTemplate();
+        return expandTemplate(properties.getRemoteUrlTemplate(), serviceName, serviceVersion);
+    }
+
+    /** {@code template} with its placeholders filled in; {@code null} if there is no template. */
+    static String expandTemplate(String template, String serviceName, int serviceVersion) {
         if (template == null || template.isBlank()) {
             return null;
         }

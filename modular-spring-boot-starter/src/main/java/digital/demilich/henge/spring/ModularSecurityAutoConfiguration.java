@@ -27,6 +27,8 @@ import org.springframework.security.web.authentication.AuthenticationFilter;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 
 /**
  * Makes internal dispatch work in an application that uses Spring Security, and makes the
@@ -35,7 +37,10 @@ import org.springframework.security.web.servlet.util.matcher.PathPatternRequestM
  * <p>Without this, Spring Security's default chain demands a user session and a CSRF token on every
  * POST, so every remote dispatch fails with 401 before it reaches {@link ModularDispatcherController}.
  * With Spring Security present this adds a dedicated {@link SecurityFilterChain} matching only
- * {@code POST {modular.server.path-prefix}/**}, ordered ahead of the application's own chains:
+ * {@code POST {modular.server.path-prefix}/**}, ordered ahead of the application's own chains. With
+ * {@code modular.topology.enabled} it also covers {@code GET {prefix}/topology} and
+ * {@code GET {prefix}/topology/ui}: the JSON is held to the same secret as dispatch, the page
+ * (which holds no data, and asks for the secret itself) is always open:
  *
  * <ul>
  *   <li><b>A secret is configured</b> -- the {@code Modular-Internal-Secret} header is verified (by
@@ -92,14 +97,21 @@ public class ModularSecurityAutoConfiguration {
             paths = paths.basePath(servletPath.getPrefix());
         }
 
-        http.securityMatcher(paths.matcher(HttpMethod.POST, modularProperties.getServerPathPrefix() + "/**"))
+        String prefix = modularProperties.getServerPathPrefix();
+        RequestMatcher dispatch = paths.matcher(HttpMethod.POST, prefix + "/**");
+        RequestMatcher topologyPage = paths.matcher(HttpMethod.GET, prefix + "/topology/ui");
+        RequestMatcher covered = modularProperties.isTopologyEnabled()
+                ? new OrRequestMatcher(dispatch, paths.matcher(HttpMethod.GET, prefix + "/topology"), topologyPage)
+                : dispatch;
+
+        http.securityMatcher(covered)
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sessions -> sessions.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(rejectWith403));
 
         if (secret.isRequired()) {
             http.addFilterBefore(secretAuthenticationFilter(secret, rejectWith403), AuthorizationFilter.class)
-                    .authorizeHttpRequests(requests -> requests.anyRequest().authenticated());
+                    .authorizeHttpRequests(requests -> requests.requestMatchers(topologyPage).permitAll().anyRequest().authenticated());
         } else {
             http.authorizeHttpRequests(requests -> requests.anyRequest().permitAll());
         }

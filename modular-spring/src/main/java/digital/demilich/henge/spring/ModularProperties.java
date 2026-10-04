@@ -70,6 +70,14 @@ public class ModularProperties {
         return url;
     }
 
+    /**
+     * {@code modular.topology.enabled}: whether this process serves its topology (as JSON and as a page)
+     * under the {@code /_modular} prefix. Off unless set, since it lists every service's host.
+     */
+    public boolean isTopologyEnabled() {
+        return environment.getProperty("modular.topology.enabled", Boolean.class, false);
+    }
+
     /** {@code modular.remote-url-template}; {@code null} if unset. */
     public String getRemoteUrlTemplate() {
         return environment.getProperty("modular.remote-url-template");

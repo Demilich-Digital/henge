@@ -4,12 +4,12 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 /**
- * Convenience: imports both {@link ModularTransportConfiguration} and
+ * Convenience: imports {@link ModularTransportConfiguration}, {@link ModularTopologyConfiguration} and
  * {@link ModularDispatcherConfiguration} — the plain-Spring equivalent of what
  * {@code modular-spring-boot-starter}'s autoconfiguration wires up automatically. Pair with
  * {@link EnableModularServices} on your own {@code @Configuration} class.
  */
 @Configuration
-@Import({ModularTransportConfiguration.class, ModularDispatcherConfiguration.class})
+@Import({ModularTransportConfiguration.class, ModularDispatcherConfiguration.class, ModularTopologyConfiguration.class})
 public class ModularConfiguration {
 }

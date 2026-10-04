@@ -10,6 +10,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -66,6 +67,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
     private static final String REGISTRY_BEAN_NAME = "modularServiceRegistry";
     private static final String DATASTORE_INSTALLER_BEAN_NAME = "modularDatastoreInstaller";
     private static final String ADVERTISER_BEAN_NAME = "modularServiceAdvertiser";
+    private static final String TOPOLOGY_CATALOG_BEAN_NAME = "modularTopologyCatalog";
     static final String LEASE_KEEPER_BEAN_NAME = "modularLeaseKeeper";
     private static final String IMPORTED_BY_ATTRIBUTE = ModularServiceRegistrar.class.getName() + ".importedBy";
 
@@ -104,6 +106,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         ServeSpec serveSpec = ServeSpec.parse(properties.getServe());
 
         List<ModularServiceDescriptor> embedded = new ArrayList<>();
+        List<ModularTopologyCatalog.Entry> catalogEntries = new ArrayList<>();
         List<String> serviceBeanNames = new ArrayList<>();
         Set<String> leasedBeanNames = new LinkedHashSet<>();
         Set<String> declaredLeaseNames = new LinkedHashSet<>();
@@ -136,6 +139,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 String qualifiedName = name + "@" + version;
                 String explicitMode = config.resolveMode(version);
                 boolean servedHere = serveSpec.isEmpty() || serveSpec.matches(name, version);
+                ModularTopologyCatalog.ModeSource modeSource = explicitMode != null ? ModularTopologyCatalog.ModeSource.EXPLICIT
+                        : !serveSpec.isEmpty() ? ModularTopologyCatalog.ModeSource.SERVE : ModularTopologyCatalog.ModeSource.DEFAULT;
                 ModularMode mode = ModularMode.parse(explicitMode != null ? explicitMode : (servedHere ? "embedded" : "internal-rest"), qualifiedName);
 
                 if (explicitMode != null && mode == ModularMode.INTERNAL_REST && serveSpec.matches(name, version)) {
@@ -189,6 +194,10 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                     definition.getConstructorArgumentValues().addIndexedArgumentValue(2, version);
                 }
 
+                catalogEntries.add(new ModularTopologyCatalog.Entry(name, version, serviceInterface.getName(), isDefault, mode,
+                        modeSource, implClass == null ? null : implClass.getName(), beanName,
+                        leaseDeclarations(properties, name, implClass), config.resolveUrl(version)));
+
                 addServiceVersionQualifier(definition, serviceInterface, version);
                 definition.setPrimary(isDefault);
                 registry.registerBeanDefinition(beanName, definition);
@@ -241,12 +250,29 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         advertiser.getConstructorArgumentValues().addIndexedArgumentValue(3, ModularLeaseKeeper.DEFAULT_TTL);
         registry.registerBeanDefinition(ADVERTISER_BEAN_NAME, advertiser);
 
+        registry.registerBeanDefinition(TOPOLOGY_CATALOG_BEAN_NAME, BeanDefinitionBuilder
+                .genericBeanDefinition(ModularTopologyCatalog.class)
+                .addConstructorArgValue(catalogEntries)
+                .getBeanDefinition());
+
         BeanDefinition registryDefinition = BeanDefinitionBuilder.genericBeanDefinition(ModularServiceRegistry.class)
                 .addConstructorArgValue(embedded)
                 .addConstructorArgValue(leasedBeanNames)
                 .getBeanDefinition();
         registryDefinition.setAttribute(IMPORTED_BY_ATTRIBUTE, importingClassMetadata.getClassName());
         registry.registerBeanDefinition(REGISTRY_BEAN_NAME, registryDefinition);
+    }
+
+    /** Every lease {@code implClass} declares, with whatever the configuration says about it; none if there is no implementation. */
+    private static List<ModularTopologyCatalog.LeaseDeclaration> leaseDeclarations(
+            ModularProperties properties, String name, Class<?> implClass) {
+        if (implClass == null) {
+            return List.of();
+        }
+        return Arrays.stream(implClass.getAnnotationsByType(RequiresLease.class))
+                .map(declared -> new ModularTopologyCatalog.LeaseDeclaration(declared.value(),
+                        properties.service(name).leaseAmount(declared.value()), properties.leaseCapacity(declared.value())))
+                .toList();
     }
 
     /**

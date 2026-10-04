@@ -21,6 +21,10 @@
       "description": "The /_modular dispatch endpoint this process serves."
     },
     {
+      "name": "modular.topology",
+      "description": "The topology endpoint and page this process can serve."
+    },
+    {
       "name": "modular.transport",
       "description": "The internal-rest client and its shared secret."
     }
@@ -69,6 +73,12 @@
       "name": "modular.advertise.url",
       "type": "java.lang.String",
       "description": "Base URL other processes reach this one's /_modular at, published in its service advertisements, e.g. http://10.0.0.7:8080. Must be absolute http(s). Unset: advertisements give no address."
+    },
+    {
+      "name": "modular.topology.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether this process serves its topology (services, modes, routes, the dependency graph, advertisements and leases) as JSON at <modular.server.path-prefix>/topology and as a page at /topology/ui. Off by default: it lists every service's host. With modular.transport.secret set, the JSON requires it; the page asks for it."
     },
     {
       "name": "modular.server.enabled",

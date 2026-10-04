@@ -114,7 +114,7 @@ class ModularLeaseKeeper implements DisposableBean {
         Set.copyOf(heldByService.keySet()).forEach(this::release);
     }
 
-    private static String key(String lease) {
+    static String key(String lease) {
         return "lease:" + lease;
     }
 }
