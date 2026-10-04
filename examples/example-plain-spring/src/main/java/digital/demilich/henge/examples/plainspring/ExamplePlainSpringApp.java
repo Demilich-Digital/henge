@@ -2,18 +2,18 @@ package digital.demilich.henge.examples.plainspring;
 
 import digital.demilich.henge.examples.contracts.AuditService;
 import digital.demilich.henge.examples.contracts.GreetingService;
-import digital.demilich.henge.spring.EnableModularServices;
+import digital.demilich.henge.spring.EnableHengeServices;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Smallest possible proof that modular-spring's core wiring mechanism — discovery, embedded-mode
+ * Smallest possible proof that henge-spring's core wiring mechanism — discovery, embedded-mode
  * bean registration, default-version resolution via {@code @Primary} — works under plain Spring
  * Framework, with no {@code @SpringBootApplication}/{@code SpringApplication} and no
- * {@code modular-spring-boot-starter} anywhere in the call stack. Reuses the exact same
+ * {@code henge-spring-boot-starter} anywhere in the call stack. Reuses the exact same
  * {@code example-contracts}/{@code example-services} the Boot-based {@code examples/example-app}
- * does. This deliberately doesn't serve HTTP — see {@code modular-spring}'s
- * {@code ModularDispatchPlainSpringTest} for the Boot-free embedded-Tomcat round trip that does.
+ * does. This deliberately doesn't serve HTTP — see {@code henge-spring}'s
+ * {@code HengeDispatchPlainSpringTest} for the Boot-free embedded-Tomcat round trip that does.
  */
 public class ExamplePlainSpringApp {
 
@@ -28,7 +28,7 @@ public class ExamplePlainSpringApp {
     }
 
     @Configuration
-    @EnableModularServices(basePackages = "digital.demilich.henge.examples")
+    @EnableHengeServices(basePackages = "digital.demilich.henge.examples")
     static class AppConfig {
     }
 }

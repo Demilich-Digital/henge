@@ -9,7 +9,7 @@ boundary.
 
 A Spring Boot add-on for building these services: define one once as a Java interface plus a
 `@ServiceVersion`-annotated implementation, and deployment config — not code — decides whether it
-runs in-process or gets dispatched over HTTP, per `--modular.services.<name>.mode=...` flag.
+runs in-process or gets dispatched over HTTP, per `--henge.services.<name>.mode=...` flag.
 Multiple implementations of the same interface can run side by side — each dependency pins which
 version it wants, or gets the default automatically, so a version change never requires the whole
 deployment to move in lockstep.
@@ -30,7 +30,7 @@ code-organization discipline alone doesn't:
 2. **The monolith-vs-microservice topology is a deployment-time decision, not a build-time one.**
    The exact same jar you run as a single local process (direct method calls, one thing to debug)
    is the exact same jar you split across machines (independent scaling, independent failure
-   domains) — switched entirely by `--modular.services.*` flags, including per-version, mid
+   domains) — switched entirely by `--henge.services.*` flags, including per-version, mid
    migration if you want v1 of a service embedded while v2 is already split out.
 
 That combination — monolith development ergonomics plus microservice deployment flexibility,
@@ -38,7 +38,7 @@ without a rewrite or a redeploy to move between them — is the actual goal. The
 versioning-in-the-binary and deploy-time-topology mechanics are solid, and processes can find each
 other without configured addresses: each advertises what it hosts on a shared datastore (see
 "Service advertisements"), calls rotate over what's advertised, and a call that provably never ran is
-retried on the next host (see "Retries"). `--modular.serve` and `--modular.remote-url-template`
+retried on the next host (see "Retries"). `--henge.serve` and `--henge.remote-url-template`
 still let the binary lean on an existing orchestrator's own discovery (k8s DNS, Consul DNS, ...)
 instead. What isn't built is the rest of the operational maturity of a "real" microservice fleet:
 health- or load-aware routing, circuit breaking, and tracing across the process boundary (see
@@ -46,7 +46,7 @@ health- or load-aware routing, circuit breaking, and tracing across the process 
 
 ## Concept
 
-- **`@ModularService`** marks an *internal* service boundary interface. It is never used for a
+- **`@HengeService`** marks an *internal* service boundary interface. It is never used for a
   project's public-facing HTTP API — that stays plain Spring MVC (`@RestController`,
   `@GetMapping`, ...), fully developer-owned, and the framework never touches it.
 - **`@ServiceVersion(value = TheInterface.class, version = 1)`** stands in for `@Service` on an
@@ -72,7 +72,7 @@ health- or load-aware routing, circuit breaking, and tracing across the process 
   per-process, by config:
 
   ```yaml
-  modular:
+  henge:
     services:
       audit-service:
         mode: internal-rest        # embedded (default) | internal-rest -- applies to every version unless overridden below
@@ -82,11 +82,11 @@ health- or load-aware routing, circuit breaking, and tracing across the process 
             mode: embedded          # per-version override; inherits mode/url above when unset
   ```
 
-  or the CLI-flag equivalent: `--modular.services.audit-service.mode=internal-rest --modular.services.audit-service.url=http://localhost:8082`.
+  or the CLI-flag equivalent: `--henge.services.audit-service.mode=internal-rest --henge.services.audit-service.url=http://localhost:8082`.
   Single-version services never need the `versions` block at all.
 - For deployments with more than a couple of services, spelling out `mode`/`url` for every
-  service *other* than the one(s) a given process hosts gets old fast — **`--modular.serve`** and
-  **`--modular.remote-url-template`** exist so a process can instead just declare what it *is* and
+  service *other* than the one(s) a given process hosts gets old fast — **`--henge.serve`** and
+  **`--henge.remote-url-template`** exist so a process can instead just declare what it *is* and
   let an existing orchestrator (Kubernetes, ECS, Nomad, ...) handle the rest. See "Fitting into an
   existing orchestrator" below.
 - Callers always just `@Autowired` the interface (optionally qualified with `@ServiceVersion`).
@@ -99,8 +99,8 @@ health- or load-aware routing, circuit breaking, and tracing across the process 
 
 ## How it works
 
-- `@EnableModularServices` (put next to `@SpringBootApplication`) discovers every
-  `@ModularService` interface and every `@ServiceVersion`-annotated implementation on the
+- `@EnableHengeServices` (put next to `@SpringBootApplication`) discovers every
+  `@HengeService` interface and every `@ServiceVersion`-annotated implementation on the
   classpath (implementations are registered directly by the framework, not by `@ComponentScan` —
   `@ServiceVersion` carries no `@Component` meta-annotation). For every (interface, version) pair
   in play:
@@ -110,51 +110,51 @@ health- or load-aware routing, circuit breaking, and tracing across the process 
   - **internal-rest**: the proxy dispatches calls over HTTP instead.
   - Either way, what a caller injects is a JDK dynamic proxy, never the implementation: callers hold
     the interface, and every call, embedded or remote, passes through the same point. Beans of type
-    `ServiceCallInterceptor` wrap each call there, in `@Order`; a call arriving over `/_modular` goes
+    `ServiceCallInterceptor` wrap each call there, in `@Order`; a call arriving over `/_henge` goes
     straight to the implementation, since the calling node already ran them. An application that
     injected an implementation by its concrete class has to take the interface instead.
   - Whichever version matches the interface's `defaultVersion()` is marked `@Primary`, and every
     registered bean carries `@ServiceVersion` qualifier metadata — together these are what let
     Spring's own autowiring resolve an unqualified dependency to the default version and a
     qualified one to the exact version it asked for, with no custom autowiring code.
-- A single generic `ModularDispatcherController` serves `POST /_modular/{service}/{version}/{method}`
+- A single generic `HengeDispatcherController` serves `POST /_henge/{service}/{version}/{method}`
   for every (service, version) this process embeds, validated strictly against a startup-built
   registry keyed by bean name — never by type alone, since multiple versions of the same interface
   may be embedded in the same process. Arguments and the return value are a JSON array / JSON
   value, matched positionally against the method's declared parameter types. The
-  security model is network isolation: `/_modular` is meant to sit on a private network (VPC,
+  security model is network isolation: `/_henge` is meant to sit on a private network (VPC,
   service mesh, cluster-internal DNS), and running with no secret is a fully supported
-  configuration — the expected one there, since every embedded `@ModularService` method is
+  configuration — the expected one there, since every embedded `@HengeService` method is
   reachable by whoever can reach the process's HTTP port, which on a private network is only your
-  own services. Set `modular.transport.secret` for defense in depth where that isn't enough:
-  `InternalRestTransport` then sends it as a `Modular-Internal-Secret` header on every call, and
+  own services. Set `henge.transport.secret` for defense in depth where that isn't enough:
+  `InternalRestTransport` then sends it as a `Henge-Internal-Secret` header on every call, and
   the dispatcher requires it (constant-time compare, checked before the request body is parsed,
   `403` otherwise). With no secret the dispatcher logs one INFO line saying so, not a warning.
-  `/_modular` shares `server.port` with whatever public API you
-  build on top — there's no separate listen port, and there isn't meant to be one: `/_modular` was
+  `/_henge` shares `server.port` with whatever public API you
+  build on top — there's no separate listen port, and there isn't meant to be one: `/_henge` was
   never intended to be internet-facing in the first place, so splitting it onto its own port
   doesn't buy anything a network boundary (VPC / service mesh) doesn't already give you. If you do
   expose a public "frontend" API from the same process, put it on a different port/process
   yourself — that's a decision this framework deliberately stays out of.
-- **Spring Security.** Add it and `/_modular` just works — no flag. Spring Security's default chain would
+- **Spring Security.** Add it and `/_henge` just works — no flag. Spring Security's default chain would
   demand a user session and a CSRF token on every POST, so the Boot starter adds a dedicated
-  `SecurityFilterChain` for exactly `POST {modular.server.path-prefix}/**` (under `spring.mvc.servlet.path`, if you
+  `SecurityFilterChain` for exactly `POST {henge.server.path-prefix}/**` (under `spring.mvc.servlet.path`, if you
   set one), ordered ahead of yours and
   added *next to* whatever you have, including Boot's default chain, never instead of it — nothing else
-  you serve is affected. With `modular.transport.secret` set, the secret is a real authentication: a
-  valid `Modular-Internal-Secret` header becomes an authenticated principal
-  (`modular-internal-service`, holding `ROLE_MODULAR_SERVICE`, visible to your code, method security and
+  you serve is affected. With `henge.transport.secret` set, the secret is a real authentication: a
+  valid `Henge-Internal-Secret` header becomes an authenticated principal
+  (`henge-internal-service`, holding `ROLE_HENGE_SERVICE`, visible to your code, method security and
   auditing), and anything else is rejected by Spring Security with `403` — the same status the
   dispatcher answers without it. With no secret the chain is an explicit `permitAll`: the network is the
   boundary, a supported configuration. Sessions are stateless and CSRF is off for this path, which is
   sound because CSRF defends cookie/session authentication and this endpoint has none. To apply your own
-  policy to the path instead (JWT, mTLS, ...), define a bean named `modularSecurityFilterChain` and
+  policy to the path instead (JWT, mTLS, ...), define a bean named `hengeSecurityFilterChain` and
   Henge's backs off.
 - Remote calls go through a single `ServiceTransport` seam (`digital.demilich.henge.core`) between the
   generated proxy and the wire. `internal-rest` (HTTP + JSON) is the only transport, and it is not an
   extension point today: implementing the interface is the small part of adding another (say gRPC). The
-  serving side (`ModularDispatcherController`) and the wiring are REST-specific too —
-  `ModularTransportConfiguration` registers exactly one `ServiceTransport`, and the proxy looks it up by
+  serving side (`HengeDispatcherController`) and the wiring are REST-specific too —
+  `HengeTransportConfiguration` registers exactly one `ServiceTransport`, and the proxy looks it up by
   type, so a second bean would be ambiguous. A new transport is a design exercise, not a drop-in.
 - A caller of an **embedded** service sees whatever exception the real implementation throws; a
   naive **internal-rest** transport would only ever be able to throw a generic exception instead,
@@ -170,7 +170,7 @@ health- or load-aware routing, circuit breaking, and tracing across the process 
   (public `(String)` constructor required), looked up through the application's own classloader —
   not the loader of the interface that declares the called method, so it also works for methods
   inherited from a JDK/third-party interface and under split-classloader setups such as Spring
-  Boot DevTools. Like everything else on `/_modular`, this assumes the peer is on a trusted
+  Boot DevTools. Like everything else on `/_henge`, this assumes the peer is on a trusted
   network: a compromised peer could pick any such exception type present on the caller's classpath.
 - **HTTP status of a failure.** The dispatcher answers `500` for anything it can't classify — a
   business exception that says nothing about its own status, or an unexpected error — and
@@ -192,17 +192,17 @@ health- or load-aware routing, circuit breaking, and tracing across the process 
 - The runtime wiring itself is just `BeanDefinitionRegistry` manipulation, `java.lang.reflect.Proxy`,
   and Spring's own `@Primary`/qualifier autowiring machinery — no bytecode generation there. See
   the Javadoc on
-  [`ModularServiceRegistrar`](modular-spring/src/main/java/digital/demilich/henge/spring/ModularServiceRegistrar.java)
+  [`HengeServiceRegistrar`](henge-spring/src/main/java/digital/demilich/henge/spring/HengeServiceRegistrar.java)
   for the exact bean-wiring mechanics. `@AddedIn`/`@DeprecatedSince` are the one place this
   project *does* use real annotation processing — see below.
 
 ## Compile-time method versioning: `@AddedIn` / `@DeprecatedSince`
 
 Java forces every concrete class to implement every abstract interface method — so without help,
-adding a method to a `@ModularService` interface for version 2 would force version 1's
+adding a method to a `@HengeService` interface for version 2 would force version 1's
 implementation to implement it too, even though it's meaningless there. `@AddedIn`/
 `@DeprecatedSince` fix this at compile time via a real `javax.annotation.processing.Processor`
-(the `modular-processor` module):
+(the `henge-processor` module):
 
 ```java
 public interface AuditService {
@@ -214,7 +214,7 @@ public interface AuditService {
 }
 ```
 
-For any `@ModularService` interface with at least one `@AddedIn`/`@DeprecatedSince` method, the
+For any `@HengeService` interface with at least one `@AddedIn`/`@DeprecatedSince` method, the
 processor generates a companion abstract class, `{Interface}Skeleton`, in the same package, with a
 throwing override of every such method. An implementation `extends {Interface}Skeleton` instead of
 `implements {Interface}` directly, and only overrides the methods actually in range for its
@@ -243,12 +243,12 @@ implementation is actually supposed to support is a compile error, not a runtime
 
 Two things worth knowing:
 - Versions are plain integers everywhere: `@ServiceVersion(version = 2)`, `@AddedIn(2)`,
-  `@DeprecatedSince(3)`, `@ModularService(defaultVersion = ...)`, and the `versions.<n>` /
-  `name@<n>` keys in config and `--modular.serve`. That's how the processor orders versions to
+  `@DeprecatedSince(3)`, `@HengeService(defaultVersion = ...)`, and the `versions.<n>` /
+  `name@<n>` keys in config and `--henge.serve`. That's how the processor orders versions to
   compute ranges, and it means `1` and `01` can never be two different versions. A non-integer
-  version in config or `--modular.serve` fails at startup.
-- Any module that compiles a `@ModularService` interface with versioned methods, or a
-  `@ServiceVersion` implementation, needs `modular-processor` on its `annotationProcessor` (or
+  version in config or `--henge.serve` fails at startup.
+- Any module that compiles a `@HengeService` interface with versioned methods, or a
+  `@ServiceVersion` implementation, needs `henge-processor` on its `annotationProcessor` (or
   `testAnnotationProcessor`) configuration explicitly — Gradle does not propagate annotation
   processors transitively. See `examples/example-contracts` and `examples/example-services`'s
   `build.gradle.kts` for the pattern.
@@ -260,16 +260,16 @@ method behave identically. Two ways they silently don't, unless something stops 
 
 - **Checked exceptions.** Embedded dispatch propagates whatever the real implementation throws;
   internal-rest reconstructs failures as `RuntimeException` only (see
-  `RemoteExceptionReconstructor`'s Javadoc). A checked exception on a `@ModularService` method
-  would behave differently depending on which mode is configured for it — so `modular-processor`
-  rejects checked exceptions in `@ModularService` method `throws` clauses at compile time. Wrap
+  `RemoteExceptionReconstructor`'s Javadoc). A checked exception on a `@HengeService` method
+  would behave differently depending on which mode is configured for it — so `henge-processor`
+  rejects checked exceptions in `@HengeService` method `throws` clauses at compile time. Wrap
   them in an unchecked exception instead.
 - **Mutable/aliased state.** Embedded calls pass arguments and return values by reference inside
   one shared bean universe; internal-rest passes them by value, as JSON. A plain mutable class
   (or a JPA entity — attached, lazy-loadable embedded, detached and half-populated over the wire)
   can be mutated by whichever side holds a reference, invisibly to the other side, only in embedded
   mode. So the processor enforces a positive rule instead of chasing individual bad shapes: every
-  parameter and return type reachable from a `@ModularService` method must be **provably
+  parameter and return type reachable from a `@HengeService` method must be **provably
   immutable** — recursively, through record components and collection type arguments. Allowed:
   - `record`s and `enum`s (recursed into, for records)
   - primitives, `String`, and well-known immutable JDK value types (`java.time.*`, `UUID`,
@@ -300,21 +300,21 @@ method behave identically. Two ways they silently don't, unless something stops 
   `ImmutableList`/`ImmutableSet`/`ImmutableMap` are genuinely immutable (backed by
   `List.copyOf`/`Set.copyOf`/`Map.copyOf`, mutator methods throw `UnsupportedOperationException`),
   and distinctly named so the processor can recognize the *type*, not just runtime behavior a
-  caller happened to rely on. `modular-spring`'s shared transport `ObjectMapper` knows how to
-  deserialize them, and Guava's (`HengeCollectionsModule`) — `modular-core` itself stays Jackson-free.
+  caller happened to rely on. `henge-spring`'s shared transport `ObjectMapper` knows how to
+  deserialize them, and Guava's (`HengeCollectionsModule`) — `henge-core` itself stays Jackson-free.
 
-The same processor also checks the *shape* of a `@ModularService` interface, over its own and its
+The same processor also checks the *shape* of a `@HengeService` interface, over its own and its
 superinterfaces' methods alike (those are exactly the methods the dispatcher exposes): no
 overloaded RPC names (rename one, or use `@ServiceMethod(name = ...)`), no static methods, no empty
 or non-positive `@AddedIn`/`@DeprecatedSince` ranges and none on a default method (a method with a
 body is never required to be implemented, so there's nothing to enforce), a positive
-`defaultVersion`, and `@ModularService` only on a non-private interface. Names end up in the
+`defaultVersion`, and `@HengeService` only on a non-private interface. Names end up in the
 dispatch path and in config keys, so a service name (explicit, or the interface's simple name in
 kebab case: `AuditService` → `audit-service`) must be lowercase kebab case, and an RPC method name a
 Java identifier.
 
 `@ServiceVersion` must sit on a concrete top-level or static nested class (or record) that actually
-implements a `@ModularService` interface, with a positive version no other implementation in the
+implements a `@HengeService` interface, with a positive version no other implementation in the
 same compilation claims, and without `@Component`/`@Service` (the framework registers it; a
 stereotype would make a second instance). At an injection site it must name the injected
 interface. `@ErrorStatus` must be a `4xx`/`5xx` code.
@@ -323,7 +323,7 @@ Each of these would otherwise compile and then fail — or silently do nothing �
 the service is split. Where the mistake can also come from code compiled without the processor
 (names, stereotypes, duplicate versions), the registrar repeats the check at startup.
 
-Generics: a `@ModularService` interface or method can't declare type parameters (nothing at runtime
+Generics: a `@HengeService` interface or method can't declare type parameters (nothing at runtime
 knows what `T` is, so it would bind as an untyped JSON map once split), nor inherit methods from a
 generic interface. Generic *records* are fine — `Box<Point>` is validated through its type
 arguments, so `Box<List<String>>` is rejected like `List<String>` itself — and a wildcard needs a
@@ -336,21 +336,21 @@ process. `examples/example-app` demonstrates the fix: its `build.gradle.kts` dec
 `implementation(example-contracts)` + `runtimeOnly(example-services)`, so impl classes are on the
 runtime classpath but never the *compile* classpath — `DemoController` physically cannot resolve a
 reference to `AuditServiceImpl`, only to `AuditService`. This is the recommended consumption
-pattern for any module that calls into a `@ModularService`.
+pattern for any module that calls into a `@HengeService`.
 
 ## Modules
 
 | Module | Contents |
 |---|---|
-| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, `@RequiresLease` / `Lease`, `@LeasedResource` / `ResourceProvider`, the `ServiceTransport` seam, the `SystemEphemeralDatastore` contract and its `InProcessEphemeralDatastore`, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
-| `modular-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges and names). Declared to Gradle as an aggregating incremental processor. Depends only on `modular-core` — no Spring. |
-| `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, leases (`@RequiresLease` enforcement, renewal and their resources), service advertisements and advertisement-based routing, retries, the topology endpoint and page, datastore selection (`modular.store.type`), plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
-| `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, registers the dispatcher in servlet web applications behind the `modular.server.enabled` property gate, ships configuration metadata for IDE completion of `modular.*`, and — when Spring Security is present — adds the dedicated security chain for `/_modular` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
-| `modular-redis` | `RedisEphemeralDatastore`: a `SystemEphemeralDatastore` on Redis 7.4+ (hash-field TTLs, one Lua script per operation, so `claim` is atomic across nodes). Needs Lettuce; no Spring. Add the module and set `modular.store.type=redis` and `modular.store.redis.uri`. |
-| `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn(2)` method. |
+| `henge-core` | `@HengeService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, `@RequiresLease` / `Lease`, `@LeasedResource` / `ResourceProvider`, the `ServiceTransport` seam, the `SystemEphemeralDatastore` contract and its `InProcessEphemeralDatastore`, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `henge-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges and names). Declared to Gradle as an aggregating incremental processor. Depends only on `henge-core` — no Spring. |
+| `henge-spring` | The actual mechanism, and Boot-free: `@EnableHengeServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, leases (`@RequiresLease` enforcement, renewal and their resources), service advertisements and advertisement-based routing, retries, the topology endpoint and page, datastore selection (`henge.store.type`), plus `HengeTransportConfiguration`/`HengeDispatcherConfiguration`/`HengeConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
+| `henge-spring-boot-starter` | A thin classpath-autodetection layer on top of `henge-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, registers the dispatcher in servlet web applications behind the `henge.server.enabled` property gate, ships configuration metadata for IDE completion of `henge.*`, and — when Spring Security is present — adds the dedicated security chain for `/_henge` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
+| `henge-redis` | `RedisEphemeralDatastore`: a `SystemEphemeralDatastore` on Redis 7.4+ (hash-field TTLs, one Lua script per operation, so `claim` is atomic across nodes). Needs Lettuce; no Spring. Add the module and set `henge.store.type=redis` and `henge.store.redis.uri`. |
+| `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@HengeService` interfaces used by the demo; `AuditService` has an `@AddedIn(2)` method. |
 | `examples/example-services` | Their `@ServiceVersion` implementations, including a second `AuditService` version to demonstrate multi-version wiring and the generated-skeleton mechanism. No Spring dependency at all. |
 | `examples/example-app` | One Spring Boot application tying it together, runnable as the monolith or as either half of a split deployment. |
-| `examples/example-plain-spring` | The same idea with zero Spring Boot: a plain `AnnotationConfigApplicationContext` + `@EnableModularServices`, proving the core wiring mechanism works standalone. See "Using this without Spring Boot" below. |
+| `examples/example-plain-spring` | The same idea with zero Spring Boot: a plain `AnnotationConfigApplicationContext` + `@EnableHengeServices`, proving the core wiring mechanism works standalone. See "Using this without Spring Boot" below. |
 
 ## Quickstart
 
@@ -358,7 +358,7 @@ pattern for any module that calls into a `@ModularService`.
 ./gradlew build
 ```
 
-The Redis-backed tests (`modular-redis`, and the Redis case in `modular-spring`) run against a
+The Redis-backed tests (`henge-redis`, and the Redis case in `henge-spring`) run against a
 Redis container through Testcontainers, so they need Docker. Without it they are skipped, unless the
 `CI` environment variable is set, in which case the build fails instead of passing without having
 tested Redis.
@@ -375,19 +375,19 @@ curl http://localhost:8080/api/audit         # -> ["greeted:Alice"]
 ```
 
 `GreetingServiceImpl` called `AuditService.recordEvent(...)` as a plain in-process method call.
-The process also serves `/_modular/**` for both services (`modular.server.enabled` defaults to
+The process also serves `/_henge/**` for both services (`henge.server.enabled` defaults to
 `true`), so it's simultaneously a fully valid microservice for either role, even though nothing
 crossed the network for this particular request.
 
 ### Run as two split processes (same jar, two CLI-flag-configured instances)
 
 Terminal 1 — hosts `audit-service` only; everything else this process discovers on the classpath
-(`greeting-service`) defaults to `internal-rest` automatically because `--modular.serve` is set:
+(`greeting-service`) defaults to `internal-rest` automatically because `--henge.serve` is set:
 
 ```bash
 java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar \
   --server.port=8082 \
-  --modular.serve=audit-service
+  --henge.serve=audit-service
 ```
 
 Terminal 2 — hosts `greeting-service` only, and is told where to find `audit-service` (no real DNS
@@ -397,8 +397,8 @@ for the templated form real deployments would use instead):
 ```bash
 java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar \
   --server.port=8080 \
-  --modular.serve=greeting-service \
-  --modular.services.audit-service.url=http://localhost:8082
+  --henge.serve=greeting-service \
+  --henge.services.audit-service.url=http://localhost:8082
 ```
 
 ```bash
@@ -411,12 +411,12 @@ one declares itself to *be*, not a growing list of everything it isn't.
 
 ### Fitting into an existing orchestrator
 
-`--modular.serve` and `--modular.remote-url-template` are independent and composable:
+`--henge.serve` and `--henge.remote-url-template` are independent and composable:
 
-- **`--modular.serve=<name>[@<version>][,...]`** sets what's embedded in this process; everything
+- **`--henge.serve=<name>[@<version>][,...]`** sets what's embedded in this process; everything
   else discovered on the classpath defaults to `internal-rest` instead of the usual `embedded`
   default. Leaving it unset (the default) keeps everything embedded unless configured otherwise.
-- **`--modular.remote-url-template=http://{service}.default.svc.cluster.local:8080`** fills in a
+- **`--henge.remote-url-template=http://{service}.default.svc.cluster.local:8080`** fills in a
   `url` for anything that ends up `internal-rest` without one, substituting `{service}` with the
   service's name and `{version}` with the resolved version — matching whatever DNS convention an
   orchestrator already hands you for free (a Kubernetes `Service`, an ECS Cloud Map namespace,
@@ -426,20 +426,20 @@ one declares itself to *be*, not a growing list of everything it isn't.
   `http://{service}-v{version}.default.svc.cluster.local:8080` to route each version to its own
   endpoint.
 
-Precedence, per service: an explicit `modular.services.<name>.url` always wins (the escape hatch
-for anything that doesn't fit the convention) → else derived from `--modular.remote-url-template`
+Precedence, per service: an explicit `henge.services.<name>.url` always wins (the escape hatch
+for anything that doesn't fit the convention) → else derived from `--henge.remote-url-template`
 → else whichever process advertises the service on the shared datastore (see "Service advertisements") → else the
 call fails, saying that no url is configured and nobody advertises it. Mode works the same way:
-explicit `modular.services.<name>.mode` always wins → else `embedded` if `--modular.serve` names
-this (service, version) or `--modular.serve` is empty → else `internal-rest`. Declaring a service
-in `--modular.serve` while also explicitly setting its mode to `internal-rest` is a contradiction
+explicit `henge.services.<name>.mode` always wins → else `embedded` if `--henge.serve` names
+this (service, version) or `--henge.serve` is empty → else `internal-rest`. Declaring a service
+in `--henge.serve` while also explicitly setting its mode to `internal-rest` is a contradiction
 and fails fast at startup rather than silently picking one.
 
 There's no real DNS on localhost, but the fallback itself is fully exercisable there too —
 equivalent to terminal 2 above, just via the template instead of an explicit `.url`:
 
 ```bash
---modular.serve=greeting-service --modular.remote-url-template=http://localhost:8082
+--henge.serve=greeting-service --henge.remote-url-template=http://localhost:8082
 ```
 
 Using the template (or an explicit url) means Henge tracks nothing about who is running where: the
@@ -449,22 +449,22 @@ advertise on a shared datastore; see "Service advertisements". See also "Why thi
 
 **Connect/read timeouts:** the `internal-rest` transport defaults to a 2s connect timeout and a
 10s read timeout — a single hung remote service can't pin a caller thread forever. Override with
-`modular.transport.connect-timeout` / `modular.transport.read-timeout` (milliseconds, or `10s`-style). A timed-out
+`henge.transport.connect-timeout` / `henge.transport.read-timeout` (milliseconds, or `10s`-style). A timed-out
 call fails as a `RemoteServiceException` naming the timeout, within the configured bound.
 
-**Environment variable configuration:** `modular.services.audit-service.mode` and friends are
+**Environment variable configuration:** `henge.services.audit-service.mode` and friends are
 plain dotted-kebab keys, read directly from Spring's `Environment` (see "Using this without Spring
 Boot" below) — no Boot-specific relaxed-binding `Binder` involved. This works from a plain OS
 environment variable regardless: Spring Framework's own `SystemEnvironmentPropertySource` already
-translates `MODULAR_SERVICES_AUDIT_SERVICE_MODE` (and the equivalent per-version form,
-`MODULAR_SERVICES_AUDIT_SERVICE_VERSIONS_2_URL`) into the dotted key at lookup time, and Henge's
+translates `HENGE_SERVICES_AUDIT_SERVICE_MODE` (and the equivalent per-version form,
+`HENGE_SERVICES_AUDIT_SERVICE_VERSIONS_2_URL`) into the dotted key at lookup time, and Henge's
 own version-discovery scan checks for both forms directly — so a container orchestrator that only
 offers env vars (no YAML/properties file, no CLI flags) can declare a version's mode/url/existence
-purely via `MODULAR_SERVICES_<NAME>_VERSIONS_<VERSION>_*` env vars, with no local impl and no
-mention in `--modular.serve` needed. If you'd rather set nested config as one blob instead of many
+purely via `HENGE_SERVICES_<NAME>_VERSIONS_<VERSION>_*` env vars, with no local impl and no
+mention in `--henge.serve` needed. If you'd rather set nested config as one blob instead of many
 separate env vars, `SPRING_APPLICATION_JSON` (a single JSON-blob env var Boot unpacks into regular
 dotted properties) is the Boot-idiomatic alternative — e.g.
-`SPRING_APPLICATION_JSON='{"modular":{"services":{"audit-service":{"versions":{"2":{"mode":"internal-rest","url":"http://audit-v2:8080"}}}}}}'`.
+`SPRING_APPLICATION_JSON='{"henge":{"services":{"audit-service":{"versions":{"2":{"mode":"internal-rest","url":"http://audit-v2:8080"}}}}}}'`.
 
 ### Two versions of a service side by side
 
@@ -486,7 +486,7 @@ curl http://localhost:8080/api/audit                # -> ["greeted:Carol"], unaf
 ```
 
 To run only version 2 embedded here and treat version 1 as remote instead, no code changes are
-needed — just config: `--modular.services.audit-service.versions.1.mode=internal-rest --modular.services.audit-service.versions.1.url=...`.
+needed — just config: `--henge.services.audit-service.versions.1.mode=internal-rest --henge.services.audit-service.versions.1.url=...`.
 
 ### A method that only exists from version 2 onward
 
@@ -505,41 +505,41 @@ curl -i http://localhost:8080/api/audit/recent/2    # -> 500 -- default (version
 ```
 
 The 500 comes from `ServiceVersionUnsupportedException`, thrown by the method
-`modular-processor` generated on `AuditServiceSkeleton`, naming exactly which version is required
+`henge-processor` generated on `AuditServiceSkeleton`, naming exactly which version is required
 — visible in the server log even though the HTTP response body itself is Spring Boot's generic
-error JSON. (That 500 is `DemoController`'s own unhandled exception. Split, the internal `/_modular`
+error JSON. (That 500 is `DemoController`'s own unhandled exception. Split, the internal `/_henge`
 call itself answers `501 Not Implemented` — the exception carries `@ErrorStatus(501)` — and the caller
 still gets `ServiceVersionUnsupportedException` reconstructed.)
 
 ## Configuration reference
 
 Everything is read from Spring's `Environment`, so CLI flags, `application.yml`, environment variables and
-`SPRING_APPLICATION_JSON` all work. A `modular.services.*` property that names no discovered service or isn't one of the
+`SPRING_APPLICATION_JSON` all work. A `henge.services.*` property that names no discovered service or isn't one of the
 keys below (say `.mdoe`) fails startup instead of being silently ignored.
 
 | Property | Default | Meaning |
 |---|---|---|
-| `modular.services.<name>.mode` | `embedded` | `embedded` or `internal-rest`, for every version of the service unless overridden below. |
-| `modular.services.<name>.url` | — | Base URL of the process hosting the service; used when the mode is `internal-rest`. |
-| `modular.services.<name>.versions.<n>.mode` / `.url` | inherit the service-level value | Per-version override; `<n>` is an integer. |
-| `modular.serve` | unset | `name[@version]` entries, comma-separated or as a YAML list, naming what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
-| `modular.recent-versions` | `2` | How many of the most recent versions of each service this process runs; older `@ServiceVersion` implementations stay on the classpath, unrun. Two covers a deploy from the previous version to the latest, and a rollback of one; raise it for more overlap. A version that `defaultVersion()`, `modular.serve` or `modular.services` names outside the window fails startup. A positive integer. |
-| `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`; any other placeholder fails startup) used for any `internal-rest` service without an explicit `url`. |
-| `modular.leases.<lease>.capacity` | — | Cluster-wide capacity of a resource that services claim shares of with `@RequiresLease`. A positive integer; required for every declared lease. |
-| `modular.leases.<lease>.amount` | — | How much of the lease one node claims, however many services on it declare it. A positive integer, at most the capacity; required for every declared lease. |
-| `modular.store.type` | `in-process` | Which `SystemEphemeralDatastore` holds this process's shared state (leases, service advertisements): `in-process`, or the type of an adapter on the classpath (`redis`, from `modular-redis`). Setting it while also defining a datastore bean fails startup. |
-| `modular.store.redis.uri` | — | For `type=redis`: a Lettuce URI, e.g. `redis://host:6379/0`; `rediss://` for TLS, `redis://:password@host` for a password, options as query parameters (`?timeout=5s`). Required. |
-| `modular.store.redis.cluster-nodes` | — | For `type=redis` on a Redis Cluster, instead of `uri`: comma-separated seed URIs, e.g. `redis://node1:6379,redis://node2:6379`. The other nodes are discovered and the topology is refreshed on failover or resharding. Exactly one of `uri` and `cluster-nodes` is required. |
-| `modular.transport.retry.max-attempts` | `3` | Calls made at most per invocation, the first included; `1` turns retries off. See "Retries". |
-| `modular.transport.retry.backoff` | `50ms` | Wait before each retry; same duration format as the timeouts, `0` retries at once. |
-| `modular.transport.retry.on` | `connect,not-served` | Which failures are retried: `connect`, `not-served`, or both. |
-| `modular.advertise.url` | unset | Base URL (`http://host:port`) other processes reach this one's `/_modular` at, published in its service advertisements. Unset: the advertisement says this process hosts a service but gives no address. |
-| `modular.topology.enabled` | `false` | Serve the topology as JSON at `<path-prefix>/topology` and as a page at `<path-prefix>/topology/ui`. See "Seeing the topology". Needs `modular.server.enabled` (the default) in Boot. |
-| `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all (a non-web application never does). |
-| `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. Must start with `/` and not end with one. |
-| `modular.transport.secret` | unset | Optional shared secret sent as `Modular-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
-| `modular.transport.connect-timeout` | `2s` | A bare number is milliseconds; `2s`/`500ms` and ISO-8601 (`PT2S`) work too. `0` means no timeout. |
-| `modular.transport.read-timeout` | `10s` | Same format. |
+| `henge.services.<name>.mode` | `embedded` | `embedded` or `internal-rest`, for every version of the service unless overridden below. |
+| `henge.services.<name>.url` | — | Base URL of the process hosting the service; used when the mode is `internal-rest`. |
+| `henge.services.<name>.versions.<n>.mode` / `.url` | inherit the service-level value | Per-version override; `<n>` is an integer. |
+| `henge.serve` | unset | `name[@version]` entries, comma-separated or as a YAML list, naming what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@HengeService` fail at startup. |
+| `henge.recent-versions` | `2` | How many of the most recent versions of each service this process runs; older `@ServiceVersion` implementations stay on the classpath, unrun. Two covers a deploy from the previous version to the latest, and a rollback of one; raise it for more overlap. A version that `defaultVersion()`, `henge.serve` or `henge.services` names outside the window fails startup. A positive integer. |
+| `henge.remote-url-template` | unset | URL template (`{service}`, `{version}`; any other placeholder fails startup) used for any `internal-rest` service without an explicit `url`. |
+| `henge.leases.<lease>.capacity` | — | Cluster-wide capacity of a resource that services claim shares of with `@RequiresLease`. A positive integer; required for every declared lease. |
+| `henge.leases.<lease>.amount` | — | How much of the lease one node claims, however many services on it declare it. A positive integer, at most the capacity; required for every declared lease. |
+| `henge.store.type` | `in-process` | Which `SystemEphemeralDatastore` holds this process's shared state (leases, service advertisements): `in-process`, or the type of an adapter on the classpath (`redis`, from `henge-redis`). Setting it while also defining a datastore bean fails startup. |
+| `henge.store.redis.uri` | — | For `type=redis`: a Lettuce URI, e.g. `redis://host:6379/0`; `rediss://` for TLS, `redis://:password@host` for a password, options as query parameters (`?timeout=5s`). Required. |
+| `henge.store.redis.cluster-nodes` | — | For `type=redis` on a Redis Cluster, instead of `uri`: comma-separated seed URIs, e.g. `redis://node1:6379,redis://node2:6379`. The other nodes are discovered and the topology is refreshed on failover or resharding. Exactly one of `uri` and `cluster-nodes` is required. |
+| `henge.transport.retry.max-attempts` | `3` | Calls made at most per invocation, the first included; `1` turns retries off. See "Retries". |
+| `henge.transport.retry.backoff` | `50ms` | Wait before each retry; same duration format as the timeouts, `0` retries at once. |
+| `henge.transport.retry.on` | `connect,not-served` | Which failures are retried: `connect`, `not-served`, or both. |
+| `henge.advertise.url` | unset | Base URL (`http://host:port`) other processes reach this one's `/_henge` at, published in its service advertisements. Unset: the advertisement says this process hosts a service but gives no address. |
+| `henge.topology.enabled` | `false` | Serve the topology as JSON at `<path-prefix>/topology` and as a page at `<path-prefix>/topology/ui`. See "Seeing the topology". Needs `henge.server.enabled` (the default) in Boot. |
+| `henge.server.enabled` | `true` | Boot starter only: whether this process serves `/_henge/**` at all (a non-web application never does). |
+| `henge.server.path-prefix` | `/_henge` | Path prefix of the dispatch endpoint, for both the server and the client side. Must start with `/` and not end with one. |
+| `henge.transport.secret` | unset | Optional shared secret sent as `Henge-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
+| `henge.transport.connect-timeout` | `2s` | A bare number is milliseconds; `2s`/`500ms` and ISO-8601 (`PT2S`) work too. `0` means no timeout. |
+| `henge.transport.read-timeout` | `10s` | Same format. |
 
 ## Leases: sharing a scarce resource
 
@@ -570,7 +570,7 @@ Every service and version that asks for `orders-db` is handed the same `DataSour
 built through Spring like an implementation, so it can take configuration in its constructor.
 
 ```yaml
-modular:
+henge:
   leases:
     orders-db:
       capacity: 180          # cluster-wide; set below the real limit as a margin
@@ -578,12 +578,12 @@ modular:
 ```
 
 A lease is a node-level claim: every service on a node that declares `orders-db` shares the node's one
-claim of `modular.leases.orders-db.amount`, however many services and versions that is, and the one
+claim of `henge.leases.orders-db.amount`, however many services and versions that is, and the one
 resource its provider builds. All of a service's leases are acquired before its implementation is
 constructed, or none are. If they are
 refused, the service is reached over `internal-rest` like any other remote one: at its explicit
-`modular.services.<name>.url` if there is one, otherwise wherever it is advertised (see "Service
-advertisements"). `modular.remote-url-template` can't be combined with leases, since the template
+`henge.services.<name>.url` if there is one, otherwise wherever it is advertised (see "Service
+advertisements"). `henge.remote-url-template` can't be combined with leases, since the template
 assumes every node behind the name hosts the service. A claim is renewed on a heartbeat and handed back
 (and its resource closed) when the last service on it lets go, whether it was stopped or failed to start; a crashed node gives
 its share back after the lease's 30-second TTL.
@@ -604,20 +604,20 @@ What Henge does and doesn't do:
   doesn't say which lease it is all say what to fix.
 - **An amount larger than the capacity fails startup**, since no node could ever be granted it.
 - **The cap is soft.** Shared state lives in a `SystemEphemeralDatastore` (in-process by default, so a
-  single node always grants what fits). To share it across nodes, add `modular-redis` and set
-  `modular.store.type=redis` with `modular.store.redis.uri`, or define your own bean of that type
+  single node always grants what fits). To share it across nodes, add `henge-redis` and set
+  `henge.store.type=redis` with `henge.store.redis.uri`, or define your own bean of that type
   (not both). See `docs/design/self-orchestration.md`.
 
 ## Service advertisements
 
 Once a process is fully started it advertises every service version it actually hosts on the
-`SystemEphemeralDatastore`, as `adv:<service>@<version>` with its `modular.advertise.url`: a leased
+`SystemEphemeralDatastore`, as `adv:<service>@<version>` with its `henge.advertise.url`: a leased
 service only if its lease was granted, never one that's `internal-rest` here. The entry is renewed
 every 10 seconds and expires after 30, so a crashed process disappears on its own; a graceful stop
 withdraws first.
 
 A caller finds a host the same way. For an `internal-rest` service the url is resolved in order: an
-explicit `modular.services.<name>.url`, then `modular.remote-url-template`, then **whoever advertises
+explicit `henge.services.<name>.url`, then `henge.remote-url-template`, then **whoever advertises
 it**. Callers cache the advertisers per service version and re-read them at most every 10 seconds, so
 the datastore sees a read per service per interval however many calls are made, and calls rotate
 through everything advertised. If a read comes back empty from a *different* storage (the store was
@@ -638,7 +638,7 @@ for every method, whatever it does, and needs no idempotency declaration:
   `@ErrorStatus(404)` exception thrown by a method answers with, so such an exception must be thrown
   before the method has had any effect: "not found" is fine, a half-finished write is not (give that
   one another status). If you'd rather not retry a legitimate "not found", set
-  `modular.transport.retry.on=connect`.
+  `henge.transport.retry.on=connect`.
 
 A retry goes to the next advertised host where there is one, and otherwise to the same url, which is
 what a load balancer or a Kubernetes Service in front of several processes wants. A host that just
@@ -657,13 +657,13 @@ be reached, and they share a datastore.
 ```bash
 docker run -d --name henge-redis -p 6379:6379 redis:8
 
-STORE="--modular.store.type=redis --modular.store.redis.uri=redis://localhost:6379"
+STORE="--henge.store.type=redis --henge.store.redis.uri=redis://localhost:6379"
 
 java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --server.port=8082 \
-  --modular.serve=audit-service --modular.advertise.url=http://localhost:8082 $STORE
+  --henge.serve=audit-service --henge.advertise.url=http://localhost:8082 $STORE
 
 java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --server.port=8080 \
-  --modular.serve=greeting-service --modular.advertise.url=http://localhost:8080 $STORE
+  --henge.serve=greeting-service --henge.advertise.url=http://localhost:8080 $STORE
 ```
 
 ```bash
@@ -686,7 +686,7 @@ nothing is loaded. Without Boot, declare `ObservationServiceCallInterceptor` and
 | Observation | Where | Key values |
 |---|---|---|
 | `henge.call` | Every call a caller in this process makes to a service, embedded or remote: the whole of it, including the retries and failover of a remote one. | `henge.service`, `henge.version`, `henge.method`, `henge.mode` (`embedded` or `internal-rest`); a call that throws carries the error. |
-| `henge.dispatch` | Every request to `/_modular` on the serving side, rejected ones included. | `henge.status` (the HTTP status answered), `henge.exception` (the class of the business exception, else `none`), and `henge.service`, `henge.version`, `henge.method`. |
+| `henge.dispatch` | Every request to `/_henge` on the serving side, rejected ones included. | `henge.status` (the HTTP status answered), `henge.exception` (the class of the business exception, else `none`), and `henge.service`, `henge.version`, `henge.method`. |
 
 Every key value is bounded by your interfaces, not by the traffic: a request that names a service or
 method this process doesn't serve has `none` for those three, never the caller's text. Compare the two
@@ -719,7 +719,7 @@ the host's request → `henge.dispatch`, all one trace.
 What the framework does on its own account (claiming leases, keeping advertisements alive, retrying a
 call, talking to the datastore) is reported as plain meters, on a `MeterRegistry`. In Spring Boot they
 switch on when the application has a `MeterRegistry` bean, the same way. Without Boot, declare
-`MicrometerSystemMetrics` and `ModularHostedGauges` as beans over your registry.
+`MicrometerSystemMetrics` and `HengeHostedGauges` as beans over your registry.
 
 | Meter | Kind | Tags | Tells you |
 |---|---|---|---|
@@ -739,19 +739,19 @@ as it took. Every tag is bounded by your interfaces and configuration, never by 
 
 ## Seeing the topology
 
-Config decides the topology, so the resolved result should be visible. Set `modular.topology.enabled=true`
-and the process serves it under the `/_modular` prefix: `GET /_modular/topology` as JSON, and
-`GET /_modular/topology/ui`, a page that draws it (no build step, nothing loaded from elsewhere).
+Config decides the topology, so the resolved result should be visible. Set `henge.topology.enabled=true`
+and the process serves it under the `/_henge` prefix: `GET /_henge/topology` as JSON, and
+`GET /_henge/topology/ui`, a page that draws it (no build step, nothing loaded from elsewhere).
 
 ```bash
-java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --modular.topology.enabled=true
-open http://localhost:8080/_modular/topology/ui
+java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --henge.topology.enabled=true
+open http://localhost:8080/_henge/topology/ui
 ```
 
 It is off by default, since it lists every service's host. When it is on it follows the same model as
-dispatch: network isolation, and where `modular.transport.secret` is set the JSON requires it as the
-`Modular-Internal-Secret` header. The page itself holds no data, so it is always served; it asks for the
-secret and sends it with its own requests. With Spring Security the Boot starter extends its `/_modular`
+dispatch: network isolation, and where `henge.transport.secret` is set the JSON requires it as the
+`Henge-Internal-Secret` header. The page itself holds no data, so it is always served; it asks for the
+secret and sends it with its own requests. With Spring Security the Boot starter extends its `/_henge`
 chain to cover both paths.
 
 The JSON has three parts:
@@ -776,30 +776,30 @@ fetch from peers; open each process's own page to see its side.
 
 ## Using this without Spring Boot
 
-`modular-spring-boot-starter` is a convenience layer, not a requirement — the actual mechanism
+`henge-spring-boot-starter` is a convenience layer, not a requirement — the actual mechanism
 (discovery, bean-definition wiring, the internal-rest transport, the dispatcher controller) lives
-in `modular-spring`, which only depends on plain Spring Framework (`spring-context`, `spring-web`).
+in `henge-spring`, which only depends on plain Spring Framework (`spring-context`, `spring-web`).
 A plain-Spring consumer does three things Boot users get for free:
 
-- **`@Import` the configuration explicitly.** `modular-spring-boot-starter`'s autoconfiguration
-  unconditionally wires `ModularTransportConfiguration` (the `ServiceTransport` and
-  `ModularProperties` beans needed to *call* other services) and, unless `modular.server.enabled=false`,
-  `ModularDispatcherConfiguration` (the controller needed to *serve* embedded ones). Without Boot,
-  import them yourself — `ModularConfiguration` imports them all at once, or import
-  `ModularTransportConfiguration` alone if this process never serves any requests. "Should this
+- **`@Import` the configuration explicitly.** `henge-spring-boot-starter`'s autoconfiguration
+  unconditionally wires `HengeTransportConfiguration` (the `ServiceTransport` and
+  `HengeProperties` beans needed to *call* other services) and, unless `henge.server.enabled=false`,
+  `HengeDispatcherConfiguration` (the controller needed to *serve* embedded ones). Without Boot,
+  import them yourself — `HengeConfiguration` imports them all at once, or import
+  `HengeTransportConfiguration` alone if this process never serves any requests. "Should this
   process serve requests" becomes a code-level choice (which class you import) instead of a
   runtime property.
-- **Spring Security isn't wired for you.** The dedicated `/_modular` chain described under "How it
+- **Spring Security isn't wired for you.** The dedicated `/_henge` chain described under "How it
   works" is part of the Boot starter. A plain-Spring application that uses Spring Security has to permit
-  `POST {modular.server.path-prefix}/**` itself (stateless, CSRF off for that path), and — if it sets
-  `modular.transport.secret` — decide for itself whether to authenticate it through Spring Security.
-- **CLI-flag property parsing isn't automatic.** Boot turns `--modular.serve=...` into environment
+  `POST {henge.server.path-prefix}/**` itself (stateless, CSRF off for that path), and — if it sets
+  `henge.transport.secret` — decide for itself whether to authenticate it through Spring Security.
+- **CLI-flag property parsing isn't automatic.** Boot turns `--henge.serve=...` into environment
   properties for free; plain Spring doesn't. Add a
   [`SimpleCommandLinePropertySource`](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/core/env/SimpleCommandLinePropertySource.html)
   to the context's environment yourself if you want the same `--key=value` CLI convention.
 
 `examples/example-plain-spring` demonstrates the minimal end of this — pure DI/location-transparency,
-no HTTP — with `@EnableModularServices` plus an `AnnotationConfigApplicationContext`, no
+no HTTP — with `@EnableHengeServices` plus an `AnnotationConfigApplicationContext`, no
 `SpringApplication` anywhere:
 
 ```bash
@@ -812,8 +812,8 @@ Audit trail: [greeted:plain Spring]
 ```
 
 For the HTTP-serving end (embedded Tomcat + `DispatcherServlet`, one process dispatching to
-another over `/_modular/**`, entirely Boot-free), see `modular-spring`'s
-[`ModularDispatchPlainSpringTest`](modular-spring/src/test/java/digital/demilich/henge/spring/ModularDispatchPlainSpringTest.java).
+another over `/_henge/**`, entirely Boot-free), see `henge-spring`'s
+[`HengeDispatchPlainSpringTest`](henge-spring/src/test/java/digital/demilich/henge/spring/HengeDispatchPlainSpringTest.java).
 
 ## Not in v1
 
@@ -822,21 +822,21 @@ Deliberately out of scope for now, to keep the core mechanism small and correct:
 - Health-aware routing and load-weighted host choice. Hosts find each other through advertisements on
   the shared datastore (see "Service advertisements"), and a host that stops renewing drops out
   after its TTL, but calls simply rotate over whatever is advertised: nothing measures a host's
-  health or load, and there is no circuit breaking. `--modular.serve` + `--modular.remote-url-template`
+  health or load, and there is no circuit breaking. `--henge.serve` + `--henge.remote-url-template`
   (see "Fitting into an existing orchestrator") still lets the binary lean on an orchestrator's own
   discovery (k8s DNS, Consul DNS, ...) instead.
 - Additional transports (e.g. gRPC) — more than a `ServiceTransport` implementation: the serving side and the
   bean wiring are REST-specific too, so this is a design exercise rather than a drop-in.
-- mTLS between internal services — `/_modular/**` is expected to sit behind a network boundary
-  (VPC / service mesh), not the public internet; the optional `modular.transport.secret` (see
-  "How it works") is the only in-process protection built so far. (A separate listen port for `/_modular` was considered
-  and deliberately rejected, not deferred — see "How it works": `/_modular` was never meant to be
+- mTLS between internal services — `/_henge/**` is expected to sit behind a network boundary
+  (VPC / service mesh), not the public internet; the optional `henge.transport.secret` (see
+  "How it works") is the only in-process protection built so far. (A separate listen port for `/_henge` was considered
+  and deliberately rejected, not deferred — see "How it works": `/_henge` was never meant to be
   internet-facing, so splitting it onto its own port doesn't solve a problem this framework
   actually has.)
 - Retrying a call that may have run, and circuit breaking, for `internal-rest`. (Retrying one that
   provably *didn't* run is built: see "Retries".)
 - Async/streaming methods — calls are synchronous/blocking only.
-- Overloaded methods on a `@ModularService` interface — rejected at compile time (RPC dispatch is by
+- Overloaded methods on a `@HengeService` interface — rejected at compile time (RPC dispatch is by
   method name; use `@ServiceMethod(name = ...)` to disambiguate if you need two methods with the same
   name).
 
@@ -855,13 +855,13 @@ scope deliberately excluded rather than deferred):
   copies the moment they're split — nothing surfaces this today. A startup-time bean-graph walk,
   heuristic and suppressible, would at least turn it into a loud warning instead of a silent
   production surprise.
-- **Strict/isolated embedded mode — the flagship feature.** `modular.strict=true` would round-trip
+- **Strict/isolated embedded mode — the flagship feature.** `henge.strict=true` would round-trip
   embedded calls through the same serialization internal-rest uses, so mutation bugs and
   non-serializable types reproduce on a laptop instead of after a production split. A further
   `isolated` tier would go all the way: each service gets its own child Spring context in dev, so
   shared in-memory state genuinely stops being shared, deterministically, with a debugger attached
   — the real answer to the shared-singleton problem above, not just a warning about it.
-- **Publishing + CI**, and a **test slice** (`@ModularServiceTest`-style) that boots one service's
+- **Publishing + CI**, and a **test slice** (`@HengeServiceTest`-style) that boots one service's
   module with its dependencies as strict-mode proxies once the isolation work above exists to build
   it on.
 

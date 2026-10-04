@@ -1,0 +1,4 @@
+digital.demilich.henge.spring.HengeAutoConfiguration
+digital.demilich.henge.spring.HengeSecurityAutoConfiguration
+digital.demilich.henge.spring.HengeObservationAutoConfiguration
+digital.demilich.henge.spring.HengeMetricsAutoConfiguration

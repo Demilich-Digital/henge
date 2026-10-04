@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * The project's public-facing HTTP API: plain Spring MVC, fully developer-owned, and completely
  * unaware of whether {@link GreetingService} or {@link AuditService} are running embedded in
- * this same process or being dispatched to another one over {@code /_modular/**} — that's the
+ * this same process or being dispatched to another one over {@code /_henge/**} — that's the
  * whole point.
  *
  * <p>{@code auditServiceV2} demonstrates pinning a dependency to a specific, non-default version

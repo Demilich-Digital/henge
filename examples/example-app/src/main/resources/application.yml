@@ -1,6 +1,6 @@
 server:
   port: 8080
 
-# No modular.* config needed for the monolith: every discovered service defaults to embedded, and
-# the process serves /_modular for all of them (modular.server.enabled defaults to true). Split-process
+# No henge.* config needed for the monolith: every discovered service defaults to embedded, and
+# the process serves /_henge for all of them (henge.server.enabled defaults to true). Split-process
 # mode is driven entirely by CLI flags — see the repository README's Quickstart for exact commands.

@@ -45,9 +45,9 @@ class ExampleAppTest {
     void asTwoProcessesTheGreetingCallsTheAuditServiceOverHttp() throws Exception {
         int auditPort = freePort();
         int greetingPort = freePort();
-        try (var audit = start(auditPort, "--modular.serve=audit-service");
-                var greeting = start(greetingPort, "--modular.serve=greeting-service",
-                        "--modular.services.audit-service.url=http://localhost:" + auditPort)) {
+        try (var audit = start(auditPort, "--henge.serve=audit-service");
+                var greeting = start(greetingPort, "--henge.serve=greeting-service",
+                        "--henge.services.audit-service.url=http://localhost:" + auditPort)) {
             assertThat(get(greetingPort, "/api/greet/Bob")).isEqualTo("Hello, Bob!");
 
             // Recorded by the other process, not this one.
@@ -56,7 +56,7 @@ class ExampleAppTest {
     }
 
     private static JsonNode topology(int port) throws Exception {
-        return new ObjectMapper().readTree(get(port, "/_modular/topology"));
+        return new ObjectMapper().readTree(get(port, "/_henge/topology"));
     }
 
     private static List<String> edges(JsonNode topology) {
@@ -78,13 +78,13 @@ class ExampleAppTest {
     @Test
     void theTopologyOfTheMonolithHasEverythingHostedAndGreetingInjectingAudit() throws Exception {
         int port = freePort();
-        try (var app = start(port, "--modular.topology.enabled=true")) {
+        try (var app = start(port, "--henge.topology.enabled=true")) {
             JsonNode topology = topology(port);
 
             assertThat(service(topology, "greeting-service@1").get("state").asText()).isEqualTo("hosted");
             assertThat(service(topology, "audit-service@1").get("state").asText()).isEqualTo("hosted");
             assertThat(edges(topology)).contains("greeting-service@1 -> audit-service@1", "bean:demoController -> greeting-service@1");
-            assertThat(get(port, "/_modular/topology/ui")).contains("Henge topology");
+            assertThat(get(port, "/_henge/topology/ui")).contains("Henge topology");
         }
     }
 
@@ -93,9 +93,9 @@ class ExampleAppTest {
         int auditPort = freePort();
         int greetingPort = freePort();
         String auditUrl = "http://localhost:" + auditPort;
-        try (var audit = start(auditPort, "--modular.serve=audit-service", "--modular.topology.enabled=true");
-                var greeting = start(greetingPort, "--modular.serve=greeting-service", "--modular.topology.enabled=true",
-                        "--modular.services.audit-service.url=" + auditUrl)) {
+        try (var audit = start(auditPort, "--henge.serve=audit-service", "--henge.topology.enabled=true");
+                var greeting = start(greetingPort, "--henge.serve=greeting-service", "--henge.topology.enabled=true",
+                        "--henge.services.audit-service.url=" + auditUrl)) {
             JsonNode topology = topology(greetingPort);
 
             JsonNode remoteAudit = service(topology, "audit-service@1");

@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Henge topology</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5b6573; --line: #d5d9e0; --edge: #7b8594;
+    --hosted: #1f7a45; --hosted-bg: #e4f4ea;
+    --remote: #1f5fbf; --remote-bg: #e3edfb;
+    --refused: #a15c00; --refused-bg: #fcefd6;
+    --bean: #5b6573; --bean-bg: #eceef2;
+    --focus: #1f5fbf; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181d; --panel: #1d2128; --text: #e6e9ee; --muted: #9aa4b2; --line: #333a45; --edge: #7f8998;
+      --hosted: #5fc98a; --hosted-bg: #17301f;
+      --remote: #7fb0ff; --remote-bg: #1a2a45;
+      --refused: #f0b455; --refused-bg: #3a2a10;
+      --bean: #9aa4b2; --bean-bg: #262b33;
+      --focus: #7fb0ff; --bad: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header, main { padding: 0 16px; max-width: 1200px; margin: 0 auto; }
+  header { padding-top: 16px; display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 24px 0 8px; }
+  .meta { color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px; flex: 1 1 320px; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  button, input { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+  button { cursor: pointer; }
+  button:focus-visible, input:focus-visible, .node:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .banner { margin: 12px 0 0; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--bad); color: var(--bad); background: var(--panel); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 0; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 2px solid; }
+  .legend .hosted::before { border-color: var(--hosted); background: var(--hosted-bg); }
+  .legend .remote::before { border-color: var(--remote); background: var(--remote-bg); }
+  .legend .refused::before { border-color: var(--refused); background: var(--refused-bg); }
+  .legend .bean::before { border-color: var(--bean); background: var(--bean-bg); }
+  .legend .dashed::before { border: 0; border-top: 2px dashed var(--edge); border-radius: 0; height: 0; width: 18px; background: none; vertical-align: 3px; }
+  .graph { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-top: 12px; overflow: auto; }
+  svg { display: block; }
+  .node { cursor: pointer; }
+  .node rect { stroke-width: 2; }
+  .node.hosted rect { stroke: var(--hosted); fill: var(--hosted-bg); }
+  .node.remote rect { stroke: var(--remote); fill: var(--remote-bg); }
+  .node.lease-refused rect { stroke: var(--refused); fill: var(--refused-bg); }
+  .node.bean rect { stroke: var(--bean); fill: var(--bean-bg); }
+  .node.selected rect { stroke-width: 4; }
+  .node text { fill: var(--text); font-size: 13px; }
+  .node .sub { fill: var(--muted); font-size: 11px; }
+  .edge { fill: none; stroke: var(--edge); stroke-width: 1.5; }
+  .edge.remote { stroke-dasharray: 6 4; }
+  .edge.dim { opacity: 0.15; }
+  .arrow { fill: var(--edge); }
+  .empty { padding: 24px; color: var(--muted); }
+  .detail { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+  .detail h3 { margin: 0 0 8px; font-size: 15px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  th, td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .none { color: var(--muted); }
+  .bar { height: 8px; background: var(--bean-bg); border-radius: 4px; overflow: hidden; min-width: 120px; }
+  .bar > div { height: 100%; background: var(--remote); }
+  .bar.over > div { background: var(--refused); }
+  .tablewrap { overflow-x: auto; }
+  footer { max-width: 1200px; margin: 24px auto; padding: 0 16px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Henge topology</h1>
+  <div class="meta" id="meta"></div>
+  <div class="controls">
+    <label><input type="checkbox" id="auto" checked> refresh every 5s</label>
+    <button id="refresh" type="button">Refresh</button>
+    <span id="updated" class="none"></span>
+  </div>
+</header>
+<main>
+  <div id="banner" class="banner" role="alert" hidden></div>
+  <form id="auth" class="banner" hidden>
+    <label>This process requires its shared secret: <input type="password" id="secret" autocomplete="off"></label>
+    <button type="submit">Use</button>
+  </form>
+  <div class="legend" aria-label="Legend">
+    <span class="hosted">hosted here</span>
+    <span class="remote">remote</span>
+    <span class="refused">lease refused, remote</span>
+    <span class="bean">application bean</span>
+    <span class="dashed">call crosses the network</span>
+  </div>
+  <div class="graph" id="graph"></div>
+  <div class="detail" id="detail" aria-live="polite"></div>
+  <h2>Advertised in the datastore</h2>
+  <div class="tablewrap"><table id="adverts"></table></div>
+  <h2>Leases</h2>
+  <div class="tablewrap"><table id="leases"></table></div>
+</main>
+<footer>Read from <code id="source"></code>. Dependencies are what this process wired; a service hosted elsewhere has its own, not shown here.</footer>
+<script>
+"use strict";
+(function () {
+  var SVG = "http://www.w3.org/2000/svg";
+  var API = new URL("../topology", location.href).toString();
+  var secret = "";
+  try { secret = sessionStorage.getItem("henge-secret") || ""; } catch (e) { /* storage may be blocked */ }
+  var data = null, selected = null, timer = null;
+
+  function el(tag, attrs, children) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    [].concat(children == null ? [] : children).forEach(function (c) {
+      node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    });
+    return node;
+  }
+  function svg(tag, attrs, text) {
+    var node = document.createElementNS(SVG, tag);
+    Object.keys(attrs || {}).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    if (text != null) { node.textContent = text; }
+    return node;
+  }
+  function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+  function simple(type) { return type ? type.substring(type.lastIndexOf(".") + 1) : "?"; }
+
+  document.getElementById("source").textContent = new URL(API).pathname;
+
+  function load() {
+    var headers = secret ? { "Henge-Internal-Secret": secret } : {};
+    fetch(API, { headers: headers, cache: "no-store" }).then(function (response) {
+      if (response.status === 403) { throw { auth: true }; }
+      if (!response.ok) { throw new Error("HTTP " + response.status); }
+      return response.json();
+    }).then(function (json) {
+      data = json;
+      document.getElementById("auth").hidden = true;
+      document.getElementById("banner").hidden = true;
+      render();
+    }).catch(function (e) {
+      if (e && e.auth) {
+        document.getElementById("auth").hidden = false;
+        banner(secret ? "The secret was rejected." : null);
+      } else {
+        banner("Could not load the topology: " + (e && e.message ? e.message : e));
+      }
+    });
+  }
+  function banner(message) {
+    var b = document.getElementById("banner");
+    b.hidden = !message;
+    b.textContent = message || "";
+  }
+
+  function render() {
+    renderMeta();
+    renderGraph();
+    renderDetail();
+    renderAdverts();
+    renderLeases();
+    document.getElementById("updated").textContent = "updated " + new Date(data.generatedAt).toLocaleTimeString();
+    if (!data.store.readable && data.store.error) {
+      banner("The datastore could not be read: " + data.store.error + ". Advertisements and leases are unknown.");
+    }
+  }
+
+  function renderMeta() {
+    var n = data.node, meta = document.getElementById("meta");
+    clear(meta);
+    [["node", n.id || "none"], ["store", n.storeType], ["advertises", n.advertiseUrl || "nothing"],
+     ["serves", n.serve.length ? n.serve.join(", ") : "everything"], ["url template", n.remoteUrlTemplate || "none"]]
+      .forEach(function (kv) { meta.appendChild(el("span", {}, [kv[0] + " ", el("b", {}, kv[1])])); });
+  }
+
+  // Layers: a node sits one column right of the furthest-left thing that injects it. An edge that skips
+  // layers gets a waypoint in each layer it crosses, which takes a row of its own, so it passes between
+  // the nodes there instead of behind one of them.
+  function layout() {
+    var nodes = [];
+    data.consumers.forEach(function (c) { nodes.push({ id: c.id, kind: "bean", title: simple(c.type), sub: "application bean", ref: c }); });
+    data.services.forEach(function (s) {
+      nodes.push({ id: s.id, kind: s.state, title: s.id, sub: s.state === "hosted" ? "hosted here" : s.state === "remote" ? "remote" : "lease refused", ref: s });
+    });
+    var byId = {};
+    nodes.forEach(function (n) { byId[n.id] = n; n.layer = 0; });
+    for (var pass = 0; pass < nodes.length; pass++) {
+      var changed = false;
+      data.dependencies.forEach(function (d) {
+        var from = byId[d.from], to = byId[d.to];
+        if (from && to && to.layer < from.layer + 1 && from.layer + 1 < nodes.length) { to.layer = from.layer + 1; changed = true; }
+      });
+      if (!changed) { break; }
+    }
+    var items = nodes.slice(), chains = [];
+    data.dependencies.forEach(function (d) {
+      var a = byId[d.from], b = byId[d.to];
+      if (!a || !b) { return; }
+      var chain = [a];
+      for (var l = a.layer + 1; l < b.layer; l++) {
+        var waypoint = { waypoint: true, layer: l, preds: [chain[chain.length - 1]] };
+        items.push(waypoint);
+        chain.push(waypoint);
+      }
+      chain.push(b);
+      chains.push({ dep: d, chain: chain });
+      for (var k = 1; k < chain.length; k++) { (chain[k].preds = chain[k].preds || []).push(chain[k - 1]); }
+    });
+    var columns = [];
+    items.forEach(function (n) { (columns[n.layer] = columns[n.layer] || []).push(n); });
+    // Order each column by where its inputs sit in the one before, to keep edges from crossing needlessly.
+    columns.forEach(function (col, x) {
+      if (!col) { return; }
+      if (x > 0) {
+        var before = columns[x - 1] || [];
+        col.forEach(function (n, i) {
+          var at = (n.preds || []).filter(function (p) { return p.layer === x - 1; }).map(function (p) { return before.indexOf(p); });
+          n.rank = at.length ? at.reduce(function (a, b) { return a + b; }, 0) / at.length : i;
+        });
+        col.sort(function (a, b) { return a.rank - b.rank; });
+      }
+    });
+    var W = 190, H = 46, GX = 90, GY = 22, PAD = 20, rows = 0;
+    columns.forEach(function (col, x) {
+      if (!col) { return; }
+      col.forEach(function (n, y) { n.x = PAD + x * (W + GX); n.y = PAD + y * (H + GY); n.w = W; n.h = H; });
+      rows = Math.max(rows, col.length);
+    });
+    return { nodes: nodes, chains: chains, width: PAD * 2 + columns.length * (W + GX) - GX, height: PAD * 2 + rows * (H + GY) - GY };
+  }
+
+  // One smooth path through the chain: out of the right of each node, level through each waypoint, into the left of the last.
+  function pathOf(chain) {
+    var points = [];
+    chain.forEach(function (item, i) {
+      var y = item.y + item.h / 2;
+      if (i === 0) { points.push([item.x + item.w, y]); }
+      else if (i === chain.length - 1) { points.push([item.x - 2, y]); }
+      else { points.push([item.x, y], [item.x + item.w, y]); }
+    });
+    var d = "M" + points[0][0] + " " + points[0][1];
+    for (var i = 1; i < points.length; i++) {
+      var p = points[i - 1], q = points[i], mid = (p[0] + q[0]) / 2;
+      d += " C" + mid + " " + p[1] + " " + mid + " " + q[1] + " " + q[0] + " " + q[1];
+    }
+    return d;
+  }
+
+  function renderGraph() {
+    var host = document.getElementById("graph");
+    clear(host);
+    if (!data.services.length) {
+      host.appendChild(el("div", { "class": "empty" }, "No @HengeService was discovered in this process."));
+      return;
+    }
+    var g = layout();
+    var root = svg("svg", { width: g.width, height: g.height, viewBox: "0 0 " + g.width + " " + g.height, role: "img",
+      "aria-label": "Service dependency graph" });
+    var defs = svg("defs");
+    var marker = svg("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" });
+    marker.appendChild(svg("path", { d: "M0 0 L10 5 L0 10 z", "class": "arrow" }));
+    defs.appendChild(marker);
+    root.appendChild(defs);
+    g.chains.forEach(function (c) {
+      var d = c.dep, related = !selected || selected === d.from || selected === d.to;
+      root.appendChild(svg("path", { d: pathOf(c.chain),
+        "class": "edge" + (d.remote ? " remote" : "") + (related ? "" : " dim"), "marker-end": "url(#arrow)" }));
+    });
+    g.nodes.forEach(function (n) {
+      var group = svg("g", { "class": "node " + n.kind + (selected === n.id ? " selected" : ""), tabindex: "0", role: "button",
+        "aria-label": n.title + ", " + n.sub, transform: "translate(" + n.x + " " + n.y + ")" });
+      group.appendChild(svg("rect", { width: n.w, height: n.h, rx: 8 }));
+      group.appendChild(svg("text", { x: 12, y: 20 }, n.title));
+      group.appendChild(svg("text", { x: 12, y: 36, "class": "sub" }, n.sub));
+      var choose = function () { selected = selected === n.id ? null : n.id; renderGraph(); renderDetail(); };
+      group.addEventListener("click", choose);
+      group.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); choose(); } });
+      root.appendChild(group);
+    });
+    host.appendChild(root);
+  }
+
+  function row(dl, label, value) {
+    dl.appendChild(el("dt", {}, label));
+    dl.appendChild(el("dd", {}, value));
+  }
+
+  function renderDetail() {
+    var box = document.getElementById("detail");
+    clear(box);
+    if (!selected) { box.appendChild(el("span", { "class": "none" }, "Select a node to see how it is configured and wired.")); return; }
+    var service = data.services.filter(function (s) { return s.id === selected; })[0];
+    var consumer = data.consumers.filter(function (c) { return c.id === selected; })[0];
+    var dl = el("dl");
+    if (consumer) {
+      box.appendChild(el("h3", {}, simple(consumer.type)));
+      row(dl, "type", consumer.type || "unknown");
+    } else if (service) {
+      box.appendChild(el("h3", {}, service.id + (service.defaultVersion ? " (default version)" : "")));
+      row(dl, "interface", service.interfaceName);
+      row(dl, "implementation", service.implementation || "none on this classpath");
+      row(dl, "mode", service.mode + " (" + ({ "explicit": "set in configuration", "serve": "from henge.serve", "default": "the default" })[service.modeSource] + ")");
+      row(dl, "state", service.state.replace("-", " "));
+      if (service.route) {
+        var where = { "configured-url": "configured url", "template": "henge.remote-url-template", "advertised": "advertised by another process", "none": "nowhere: nobody advertises it and no url is configured" }[service.route.source];
+        row(dl, "calls go to", where + (service.route.urls.length ? ": " + service.route.urls.join(", ") : ""));
+      }
+      if (service.leases.length) {
+        row(dl, "leases", service.leases.map(function (l) { return l.name + " (claims " + (l.amount == null ? "?" : l.amount) + " of " + (l.capacity == null ? "?" : l.capacity) + ")"; }).join(", "));
+      }
+      var uses = data.dependencies.filter(function (d) { return d.from === selected; }).map(function (d) { return d.to; });
+      var usedBy = data.dependencies.filter(function (d) { return d.to === selected; }).map(function (d) { return d.from.replace(/^bean:/, ""); });
+      row(dl, "injects", uses.length ? uses.join(", ") : "no other service");
+      row(dl, "injected by", usedBy.length ? usedBy.join(", ") : "nothing in this process");
+    }
+    box.appendChild(dl);
+  }
+
+  function renderAdverts() {
+    var t = document.getElementById("adverts");
+    clear(t);
+    t.appendChild(el("thead", {}, el("tr", {}, [el("th", {}, "Service"), el("th", {}, "Advertised by")])));
+    var body = el("tbody");
+    data.services.forEach(function (s) {
+      var cell = el("td");
+      if (!data.store.readable) { cell.appendChild(el("span", { "class": "none" }, "unknown")); }
+      else if (!s.advertisedBy.length) { cell.appendChild(el("span", { "class": "none" }, "nobody")); }
+      else {
+        s.advertisedBy.forEach(function (a) {
+          cell.appendChild(el("div", {}, (a.url || "no address") + "  (node " + a.node.substring(0, 8) + (a.self ? ", this process" : "") + ")"));
+        });
+      }
+      body.appendChild(el("tr", {}, [el("td", {}, s.id), cell]));
+    });
+    t.appendChild(body);
+  }
+
+  function renderLeases() {
+    var t = document.getElementById("leases");
+    clear(t);
+    if (!data.leases.length) { t.appendChild(el("tbody", {}, el("tr", {}, el("td", { "class": "none" }, "No service declares a lease.")))); return; }
+    t.appendChild(el("thead", {}, el("tr", {}, [el("th", {}, "Lease"), el("th", {}, "Claimed"), el("th", {}, ""), el("th", {}, "Held by")])));
+    var body = el("tbody");
+    data.leases.forEach(function (l) {
+      var cap = l.capacity;
+      var pct = cap ? Math.min(100, Math.round(100 * l.claimed / cap)) : 0;
+      var bar = el("div", { "class": "bar" + (cap && l.claimed >= cap ? " over" : "") }, el("div", { style: "width:" + pct + "%" }));
+      var holders = el("td");
+      if (!data.store.readable) { holders.appendChild(el("span", { "class": "none" }, "unknown")); }
+      l.holders.forEach(function (h) { holders.appendChild(el("div", {}, h.amount + "  (node " + h.node.substring(0, 8) + (h.self ? ", this process" : "") + ")")); });
+      body.appendChild(el("tr", {}, [el("td", {}, l.name), el("td", {}, l.claimed + " / " + (cap == null ? "?" : cap)), el("td", {}, bar), holders]));
+    });
+    t.appendChild(body);
+  }
+
+  function schedule() {
+    clearInterval(timer);
+    if (document.getElementById("auto").checked) { timer = setInterval(load, 5000); }
+  }
+  document.getElementById("auto").addEventListener("change", schedule);
+  document.getElementById("refresh").addEventListener("click", load);
+  document.getElementById("auth").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    secret = document.getElementById("secret").value;
+    try { sessionStorage.setItem("henge-secret", secret); } catch (e) { /* storage may be blocked */ }
+    load();
+  });
+  load();
+  schedule();
+})();
+</script>
+</body>
+</html>

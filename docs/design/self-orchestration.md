@@ -44,7 +44,7 @@ Everything is ordered so each phase ships something usable without the later one
   lease granted (or a config error). Code that works as a monolith must not do anything a
   multi-node cluster would refuse.
 - **Same jar, flag-selected role.** Whether a node stores shared state, which store backs it, and
-  whether it self-organizes at all are deployment flags, consistent with how `--modular.serve`
+  whether it self-organizes at all are deployment flags, consistent with how `--henge.serve`
   works today.
 
 ## Non-goals
@@ -78,7 +78,7 @@ key → { member → (value, version, expiresAt) }
   may have been wiped", which consumers use to tell "nobody is there" from "the store just
   restarted".
 
-Sketch (lives in `modular-core`, no Spring; the in-process adapter and the real Javadoc are in the code):
+Sketch (lives in `henge-core`, no Spring; the in-process adapter and the real Javadoc are in the code):
 
 ```java
 public interface SystemEphemeralDatastore {
@@ -191,7 +191,7 @@ nodes are trying to read bootstrap state from them**.
 - **Trusting writes and reads outside responsibility**: a node accepts a write for a key it doesn't
   think it's responsible for (the writer's view may differ during churn) and answers reads from
   whatever it holds. Misplaced data simply ages out. This is safe only because the cluster is
-  trusted (same security model as `/_modular`: network isolation) and the merge rule makes extra
+  trusted (same security model as `/_henge`: network isolation) and the merge rule makes extra
   copies harmless.
 - **Graceful handoff**: on SIGTERM (Spring graceful shutdown), a node removes its own members and
   pushes the data it holds to the next-closest nodes before exiting. That makes the normal rollout
@@ -287,7 +287,7 @@ builds the resource once per node for everyone who shares it (see "Versions, and
 between them"); then the constructor asks for the resource instead of the `Lease`.
 
 ```yaml
-modular:
+henge:
   leases:
     orders-db:
       capacity: 180          # cluster-wide; set below the real limit (200) as a margin
@@ -305,7 +305,7 @@ modular:
   implementation through the bean factory (normal DI applies) or returns the remote proxy. Callers
   inject exactly as today.
 - The dispatcher's registry of embedded services is computed **after** those decisions, so
-  `/_modular` never claims a service this node declined to build.
+  `/_henge` never claims a service this node declined to build.
 - Held leases are renewed by heartbeat and expire with the node, returning capacity one TTL after a
   crash. Once constructed, a service keeps its lease for the life of the process (no eviction in
   this phase).
@@ -336,7 +336,7 @@ startup config error.
 
 ### Decided constraints
 
-- **Incompatible with `--modular.remote-url-template`.** URL-template routing assumes every node
+- **Incompatible with `--henge.remote-url-template`.** URL-template routing assumes every node
   behind the DNS name hosts the service; with leases, some don't. A process combining leased
   services with URL-template routing fails at startup. Two supported modes: orchestrator-managed
   routing (k8s owns placement; no leases) or advertisement-based routing (Henge owns placement).
@@ -365,12 +365,12 @@ is no claim ordering or triage between versions or services.
 still builds a pool of that size, the database sees twice the lease. So the resource itself is one
 object, built once per node and owned by Henge rather than by an implementation constructor.
 
-- **A lease name is a resource.** `modular.leases.<name>.capacity` already names one real cluster
+- **A lease name is a resource.** `henge.leases.<name>.capacity` already names one real cluster
   resource, so the name is also the identity on a node: every version of every service that declares
   the lease shares one resource and one claim. A consumer that needs its own resource declares its own
   lease name. Sharing is opt-in by naming the same lease.
-- **The amount belongs to the lease, not to a service.** `modular.leases.<name>.amount` is what one
-  node claims, next to `capacity`; `modular.services.<name>.leases.<lease>` is gone. The resource is
+- **The amount belongs to the lease, not to a service.** `henge.leases.<name>.amount` is what one
+  node claims, next to `capacity`; `henge.services.<name>.leases.<lease>` is gone. The resource is
   built once at that size, and it can't depend on which consumers happen to be hosted, since sizing it
   from a changing mix would mean resizing a live pool. How the amount should change when several
   versions are live is the operator's to consider, and the one number they set.
@@ -529,8 +529,8 @@ plausible scale.
 
 Each phase is independently useful and testable.
 
-1. **Store contract + in-process adapter** (built) (`modular-core` contract including `claim`,
-   `modular-spring` wiring).
+1. **Store contract + in-process adapter** (built) (`henge-core` contract including `claim`,
+   `henge-spring` wiring).
 2. **`@RequiresLease`** (built) — factory-bean decision, late dispatcher registry, `Lease` injection,
    startup rejection of leases + URL template. Fully testable in monolith mode.
 3. **Advertisements + advertisement-based routing** — the "Not in v1: service discovery" item,
@@ -552,8 +552,8 @@ Each phase is independently useful and testable.
 - **DHT transport**: HTTP under the dispatcher prefix (inherits security, simplest) vs a dedicated
   binary protocol.
 - **Declaring a node a storage member vs client-only for the DHT.** Store selection itself is
-  `modular.store.type` (`in-process` default, or an adapter found with `ServiceLoader`) with each
-  adapter's settings under `modular.store.<type>.*`; the DHT still needs a way to say whether a node
+  `henge.store.type` (`in-process` default, or an adapter found with `ServiceLoader`) with each
+  adapter's settings under `henge.store.<type>.*`; the DHT still needs a way to say whether a node
   holds data.
 - **Heartbeat defaults** for leases, and the post-ownership-change grace period; whether they
   derive from the adapter.

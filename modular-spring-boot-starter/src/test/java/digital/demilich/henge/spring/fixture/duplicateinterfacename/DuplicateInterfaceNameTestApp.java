@@ -1,9 +1,0 @@
-package digital.demilich.henge.spring.fixture.duplicateinterfacename;
-
-import digital.demilich.henge.spring.EnableModularServices;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-
-@SpringBootApplication
-@EnableModularServices
-public class DuplicateInterfaceNameTestApp {
-}

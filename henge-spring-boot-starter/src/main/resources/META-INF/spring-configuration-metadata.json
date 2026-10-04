@@ -1,0 +1,119 @@
+{
+  "groups": [
+    {
+      "name": "henge",
+      "description": "Henge: which @HengeService versions this process embeds, and how it reaches the others."
+    },
+    {
+      "name": "henge.services",
+      "description": "Per service, by name: henge.services.<name>.mode (embedded | internal-rest) and .url, overridable per version as henge.services.<name>.versions.<n>.mode / .url. Unrecognized keys or service names fail startup."
+    },
+    {
+      "name": "henge.store",
+      "description": "The datastore for Henge's shared state: henge.store.type picks it, henge.store.<type>.* configures it."
+    },
+    {
+      "name": "henge.leases",
+      "description": "Per lease, by name: henge.leases.<lease>.capacity, the cluster-wide capacity services share out with @RequiresLease, and henge.leases.<lease>.amount, what one node claims of it."
+    },
+    {
+      "name": "henge.server",
+      "description": "The /_henge dispatch endpoint this process serves."
+    },
+    {
+      "name": "henge.topology",
+      "description": "The topology endpoint and page this process can serve."
+    },
+    {
+      "name": "henge.transport",
+      "description": "The internal-rest client and its shared secret."
+    }
+  ],
+  "properties": [
+    {
+      "name": "henge.serve",
+      "type": "java.util.List<java.lang.String>",
+      "description": "name[@version] entries naming what this process hosts; every other discovered service defaults to internal-rest. Names that match no @HengeService fail startup."
+    },
+    {
+      "name": "henge.recent-versions",
+      "type": "java.lang.Integer",
+      "defaultValue": 2,
+      "description": "How many of the most recent versions of each service this process runs; older implementations on the classpath are not run. A version named by defaultVersion(), henge.serve or henge.services outside the window fails startup."
+    },
+    {
+      "name": "henge.remote-url-template",
+      "type": "java.lang.String",
+      "description": "URL for any internal-rest service without an explicit url, with {service} and {version} substituted, e.g. http://{service}.default.svc.cluster.local:8080. Other placeholders fail startup."
+    },
+    {
+      "name": "henge.store.type",
+      "type": "java.lang.String",
+      "defaultValue": "in-process",
+      "description": "Which datastore holds this process's shared state (leases, service advertisements): in-process, or the type of an adapter module on the classpath, e.g. redis. Setting it while also defining a SystemEphemeralDatastore bean fails startup."
+    },
+    {
+      "name": "henge.store.redis.uri",
+      "type": "java.lang.String",
+      "description": "For henge.store.type=redis: a Lettuce URI such as redis://host:6379/0 (rediss:// for TLS, redis://:password@host for a password). Required."
+    },
+    {
+      "name": "henge.transport.retry.max-attempts",
+      "type": "java.lang.Integer",
+      "defaultValue": 3,
+      "description": "Calls made at most per invocation, the first included; 1 turns retries off. Only a call that provably never ran (a failed connection, or a process that doesn't serve the service) is retried."
+    },
+    {
+      "name": "henge.transport.retry.backoff",
+      "type": "java.time.Duration",
+      "defaultValue": "50ms",
+      "description": "Wait before each retry. A bare number is milliseconds; 0 retries at once."
+    },
+    {
+      "name": "henge.transport.retry.on",
+      "type": "java.util.List<java.lang.String>",
+      "defaultValue": "connect,not-served",
+      "description": "Which failures are retried: connect (the connection couldn't be made), not-served (the process doesn't serve that service version), or both."
+    },
+    {
+      "name": "henge.advertise.url",
+      "type": "java.lang.String",
+      "description": "Base URL other processes reach this one's /_henge at, published in its service advertisements, e.g. http://10.0.0.7:8080. Must be absolute http(s). Unset: advertisements give no address."
+    },
+    {
+      "name": "henge.topology.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether this process serves its topology (services, modes, routes, the dependency graph, advertisements and leases) as JSON at <henge.server.path-prefix>/topology and as a page at /topology/ui. Off by default: it lists every service's host. With henge.transport.secret set, the JSON requires it; the page asks for it."
+    },
+    {
+      "name": "henge.server.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether this process serves /_henge at all (a non-web application never does)."
+    },
+    {
+      "name": "henge.server.path-prefix",
+      "type": "java.lang.String",
+      "defaultValue": "/_henge",
+      "description": "Path prefix of the dispatch endpoint, for both the server and the client side. Must start with '/' and not end with one."
+    },
+    {
+      "name": "henge.transport.secret",
+      "type": "java.lang.String",
+      "description": "Optional shared secret, sent as the Henge-Internal-Secret header and required by the dispatcher; with Spring Security it becomes an authentication. Unset is supported: the network is the boundary."
+    },
+    {
+      "name": "henge.transport.connect-timeout",
+      "type": "java.time.Duration",
+      "defaultValue": "2s",
+      "description": "Connect timeout of internal-rest calls. A bare number is milliseconds; 0 means no timeout."
+    },
+    {
+      "name": "henge.transport.read-timeout",
+      "type": "java.time.Duration",
+      "defaultValue": "10s",
+      "description": "Read timeout of internal-rest calls. A bare number is milliseconds; 0 means no timeout."
+    }
+  ]
+}

@@ -1,4 +1,4 @@
 dependencies {
     api(project(":examples:example-contracts"))
-    annotationProcessor(project(":modular-processor"))
+    annotationProcessor(project(":henge-processor"))
 }

@@ -4,7 +4,7 @@ plugins {
 
 dependencies {
     implementation(project(":examples:example-services"))
-    implementation(project(":modular-spring"))
+    implementation(project(":henge-spring"))
     implementation("org.springframework:spring-context")
 }
 

@@ -1,11 +1,11 @@
 rootProject.name = "henge"
 
 include(
-    "modular-core",
-    "modular-processor",
-    "modular-spring",
-    "modular-spring-boot-starter",
-    "modular-redis",
+    "henge-core",
+    "henge-processor",
+    "henge-spring",
+    "henge-spring-boot-starter",
+    "henge-redis",
     "examples:example-contracts",
     "examples:example-services",
     "examples:example-app",

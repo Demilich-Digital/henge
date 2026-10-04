@@ -5,7 +5,7 @@ import digital.demilich.henge.examples.contracts.AuditService;
 import digital.demilich.henge.examples.contracts.GreetingService;
 
 /**
- * {@code @ServiceVersion} stands in for {@code @Service} on modular service implementations —
+ * {@code @ServiceVersion} stands in for {@code @Service} on Henge service implementations —
  * the framework registers this bean itself, so it must not also carry {@code @Service}. Note it
  * pins its {@link AuditService} dependency to version 1 explicitly; whether that dependency
  * turns out to be the real local implementation or an HTTP-backed proxy is decided entirely by
