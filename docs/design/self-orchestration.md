@@ -334,6 +334,47 @@ startup config error.
   - The resource is sized from `Lease.amount()`. Henge only does bookkeeping; it never sees a real
     connection.
 
+### Versions, and sharing a resource between them
+
+Leases are declared on a version's implementation, so two versions of one service that use the same
+database each claim a lease, and each opens its own pool: the cluster's claim, and the database's real
+load, grow with the number of versions a node hosts. Two things address that.
+
+**Triage (built).** When a lease can't cover everyone, who is refused is a policy, and it is "newest
+first, round-robin": the newest version of every service claims, then the second newest of every
+service, and so on, so a shortfall lands on old versions, which are reached remotely. It is
+implemented by chaining each round's `depends-on` to the one before.
+
+**One resource per service and lease, reference counted (to build).** Claim dedup alone would only
+move the bookkeeping: if v1 and v2 share a claim and each still builds a pool of that size, the
+database sees twice the lease. So the resource itself must be one object, built once per node and
+owned by Henge rather than by an implementation constructor.
+
+- **The key is (service, lease).** Versions of one service share a resource by default; two
+  *services* never do (`ledger-service` and `report-service` taking 40 and 60 of `ledger-db` are two
+  consumers of one cluster pool, deliberately). A version that really needs a different resource
+  declares a different lease.
+- **One claim per node per key.** The claim is the service's configured amount, as today, written
+  once for the key (`service`, not `service@version`) however many versions are hosted.
+- **Liveness is a reference count over declared edges, version → resource.** A resource is live while
+  at least one hosted version (a binding whose target is `Local`) references it. The last reference
+  going away closes the resource and releases the lease. These are declared edges, not inferred bean
+  wiring; a general dependency graph is only needed if a resource can depend on another, which this
+  does not allow.
+- **The resource lives in a Henge-managed context above the versions'.** Spring's destroy ordering
+  does the teardown (pools close, executors stop), and a version's child context sits beneath it. This
+  is the same shape the isolated tier and eviction need; the one difference is that the resource is
+  shared between sibling contexts instead of private to one.
+- **The static check counts a service once per lease**, not once per version, which removes the
+  version-count term from the over-allocation arithmetic.
+- **The API changes.** An implementation no longer builds the resource from a `Lease`; it is handed the
+  resource. The `Lease` still tells the provider how big to make it. Exactly how a provider is declared
+  is open (below).
+
+This composes with the switchable proxies of phase 6: a binding leaving `Local` is where its reference
+is dropped, and a drained version releasing its share is what lets a deprecated version stop costing
+capacity.
+
 ## Part 4 — Self-organization (long term)
 
 ### Mechanism
@@ -440,3 +481,7 @@ Each phase is independently useful and testable.
 - **Rate limiter as a user-facing API**, or internal-only until self-organization needs it?
 - **Does `Lease` support partial grants later?** The API (`amount()`) leaves room; v1 is
   all-or-nothing.
+- **How a leased resource is declared.** Something that builds it from a `Lease` and closes it (a
+  provider class, or a factory method on the implementation's module), and how an implementation asks
+  for the result (a typed constructor parameter naming the lease). Needs to work the same in the
+  monolith, a split, and a child context per version.
