@@ -1,0 +1,16 @@
+server:
+  port: 8080
+
+henge:
+  leases:
+    # Inventory's connection pool: however many processes host inventory, the database sees at
+    # most 10 connections, 5 to a process.
+    inventory-db:
+      capacity: 10
+      amount: 5
+  rate-limits:
+    # Each customer gets a burst of 3 messages, then one every 10 seconds.
+    customer-notifications:
+      permits: 1
+      period: 10s
+      capacity: 3

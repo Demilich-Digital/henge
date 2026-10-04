@@ -10,4 +10,7 @@ include(
     "examples:example-services",
     "examples:example-app",
     "examples:example-plain-spring",
+    "examples:shop-contracts",
+    "examples:shop-services",
+    "examples:shop-app",
 )
