@@ -19,7 +19,8 @@ import org.springframework.lang.Nullable;
  *
  * <p>It runs as the last {@link SmartLifecycle} to start, so a process advertises only once the
  * context is fully built (the lease decisions are made, the web server is up), and the first to
- * stop, so it withdraws before the server stops answering. Nothing reads the advertisements yet.
+ * stop, so it withdraws before the server stops answering. Callers read the advertisements to route
+ * to a service with no configured url (see {@link AdvertisedEndpoints}).
  */
 class HengeServiceAdvertiser implements SmartLifecycle {
 
