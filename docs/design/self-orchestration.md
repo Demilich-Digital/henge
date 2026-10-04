@@ -259,15 +259,18 @@ connections. The cluster needs to cap how many nodes construct that service.
 
 ```java
 @ServiceVersion(value = OrderService.class, version = 1)
-@RequiresLease("orders-db")              // repeatable
 public class OrderServiceImpl implements OrderService {
-    public OrderServiceImpl(Lease ordersDb /* , ... */) {
+    public OrderServiceImpl(@RequiresLease("orders-db") Lease ordersDb /* , ... */) {
         HikariConfig config = /* ... */;
         config.setMaximumPoolSize(ordersDb.amount());   // size the resource FROM the lease
         this.dataSource = new HikariDataSource(config);
     }
 }
 ```
+
+This is the form where the implementation builds its own resource. A lease can also have a provider that
+builds the resource once per node for everyone who shares it (see "Versions, and sharing a resource
+between them"); then the constructor asks for the resource instead of the `Lease`.
 
 ```yaml
 modular:
@@ -357,9 +360,23 @@ owned by Henge rather than by an implementation constructor.
   built once at that size, and it can't depend on which consumers happen to be hosted, since sizing it
   from a changing mix would mean resizing a live pool. How the amount should change when several
   versions are live is the operator's to consider, and the one number they set.
-- **The provider sees the amount.** A lease's resource is built by one provider per lease name, handed
-  the `Lease` (name and the configured amount), so it sizes the pool from it exactly as a constructor
-  does today. Zero or two providers for a name is a startup error.
+- **Providers are optional, and a `Lease` parameter is the explicit way around one.** A lease may have
+  a provider: a class annotated `@LeasedResource("<lease>")` that implements `ResourceProvider<T>`
+  (`T open(Lease)`, and a `close(T)` that by default closes an `AutoCloseable`), built by Henge through
+  Spring DI like an implementation, one per lease name. A constructor parameter marked
+  `@RequiresLease("<lease>")` then has one of two meanings by its type:
+  - type `Lease`: the name and the configured per-node amount. The implementation builds its own
+    resource, which is the user's choice to bypass the provider, and the N-copies hazard is theirs;
+  - any other type: the provider's resource, which must be assignable from `T`. A lease with no provider
+    can't satisfy one, and startup says to take a `Lease` instead.
+
+  Providers are found by scanning (static metadata, no instantiation); the resource type comes from
+  the provider's generic parameter, and one that can't be resolved fails startup.
+- **`@RequiresLease` is for constructor parameters only.** The class-level form is dropped: a
+  consumer's leases are fully described by its parameters, so it was redundant, and only a lease with
+  no parameter (a gate with no resource) would have used it. The annotation names the lease on every
+  such parameter. It can't be inferred from the type: two providers can produce one type, and an
+  ordinary bean parameter must not silently become a leased resource.
 - **One claim per node per lease**, written when the first consumer is hosted, under the lease name
   (not `service@version`).
 - **Liveness is a reference count over declared edges, version → lease.** A resource is live while at
@@ -375,8 +392,9 @@ owned by Henge rather than by an implementation constructor.
   between sibling contexts instead of private to one.
 - **The static check shrinks to one node's claim.** All consumers of a lease share a claim, so there is
   no sum over services to check: the lease's amount just has to fit its capacity.
-- **The API changes.** An implementation no longer builds the resource from a `Lease`; it is handed the
-  resource. Exactly how a provider is declared is open (below).
+- **What the refcount counts.** Every hosted version that holds the lease, whichever form it uses. The
+  claim is released when the last one goes, and the provider's resource, if there is one, is closed
+  then; a resource an implementation built itself is its own to close.
 - **Noisy neighbours are the cost of sharing.** Two services on one lease contend for the one pool;
   that is what sharing means, and naming the same lease is how a user chooses it.
 
@@ -494,8 +512,3 @@ Each phase is independently useful and testable.
 - **Rate limiter as a user-facing API**, or internal-only until self-organization needs it?
 - **Does `Lease` support partial grants later?** The API (`amount()`) leaves room; v1 is
   all-or-nothing.
-- **How a leased resource is declared.** Something that builds it from a `Lease` (name and the
-  configured per-node amount) and closes it -- one per lease name: a provider class, or a factory
-  method on the implementation's module -- and how an implementation asks for the result (a typed
-  constructor parameter naming the lease). Needs to work the same in the
-  monolith, a split, and a child context per version.
