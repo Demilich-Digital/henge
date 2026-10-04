@@ -528,6 +528,7 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.leases.<lease>.amount` | — | How much of the lease one node claims, however many services on it declare it. A positive integer, at most the capacity; required for every declared lease. |
 | `modular.store.type` | `in-process` | Which `SystemEphemeralDatastore` holds this process's shared state (leases, service advertisements): `in-process`, or the type of an adapter on the classpath (`redis`, from `modular-redis`). Setting it while also defining a datastore bean fails startup. |
 | `modular.store.redis.uri` | — | For `type=redis`: a Lettuce URI, e.g. `redis://host:6379/0`; `rediss://` for TLS, `redis://:password@host` for a password, options as query parameters (`?timeout=5s`). Required. |
+| `modular.store.redis.cluster-nodes` | — | For `type=redis` on a Redis Cluster, instead of `uri`: comma-separated seed URIs, e.g. `redis://node1:6379,redis://node2:6379`. The other nodes are discovered and the topology is refreshed on failover or resharding. Exactly one of `uri` and `cluster-nodes` is required. |
 | `modular.transport.retry.max-attempts` | `3` | Calls made at most per invocation, the first included; `1` turns retries off. See "Retries". |
 | `modular.transport.retry.backoff` | `50ms` | Wait before each retry; same duration format as the timeouts, `0` retries at once. |
 | `modular.transport.retry.on` | `connect,not-served` | Which failures are retried: `connect`, `not-served`, or both. |

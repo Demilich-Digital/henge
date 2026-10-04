@@ -148,7 +148,7 @@ The contract is Henge-owned; each adapter owns its own topology and config.
 | Adapter | Use | Mapping |
 |---|---|---|
 | **In-process** | Monolith; tests | Lazy expiry (an expired member is dropped when its key is next touched), one lock, so `claim` is atomic. |
-| **Redis / Valkey** | Teams that already run Redis | Member = hash field with per-field TTL (`HSETEX`/`HGETALL`, Redis 7.4+; Valkey support to verify). Version check on write is a small Lua script; `claim` is another (sum live fields, compare, write), atomic because Redis is single-threaded. Older Redis: sorted set scored by expiry + value hash, Lua scripts, server `TIME`. Static client-side sharding; no replicas, no persistence needed. |
+| **Redis / Valkey** | Teams that already run Redis | Member = hash field with per-field TTL (`HSETEX`/`HGETALL`, Redis 7.4+; Valkey support to verify). Version check on write is a small Lua script; `claim` is another (sum live fields, compare, write), atomic because Redis is single-threaded. Older Redis: sorted set scored by expiry + value hash, Lua scripts, server `TIME`. Redis Cluster works as is: every operation is one script on one key, so the cluster routes it to the key's slot (a key's epoch is its shard's `run_id`); a failover or resharding can lose the data, which is the wipe the epoch reports. No persistence needed. |
 | **Hazelcast** | Teams that already run it | Composite `(key, member)` entries, partition-aware on `key`, per-entry TTL; read is a single-partition query. `claim` is an entry processor, run serially on the key's partition. |
 | **Built-in DHT** | Henge nodes are the store | See below. |
 

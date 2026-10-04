@@ -7,12 +7,21 @@ import io.lettuce.core.RedisCommandExecutionException;
 import io.lettuce.core.RedisNoScriptException;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
+import io.lettuce.core.api.StatefulConnection;
 import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.sync.RedisScriptingCommands;
+import io.lettuce.core.cluster.ClusterClientOptions;
+import io.lettuce.core.cluster.ClusterTopologyRefreshOptions;
+import io.lettuce.core.cluster.RedisClusterClient;
+import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -27,9 +36,9 @@ import java.util.UUID;
  * never depend on a writer's.
  *
  * <p>The epoch is the server's {@code run_id}: a Redis restart changes it, and with it everything it
- * held is gone. No persistence or replication is needed or wanted. Redis Cluster isn't supported: a
- * key lives wholly on one node, which is the point, but sharding across several independent
- * instances is left to the caller.
+ * held is gone. No persistence or replication is needed or wanted. A key lives wholly on one node,
+ * so {@link #connectCluster} shards by Redis Cluster slot with nothing more to do, and the epoch a
+ * read reports is that of the shard holding the key.
  */
 public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, AutoCloseable {
 
@@ -115,30 +124,70 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
             """;
 
     private final String nodeId = UUID.randomUUID().toString();
-    private volatile String tryAcquireDigest;
-    private final RedisClient client;
-    private final StatefulRedisConnection<byte[], byte[]> connection;
+    private static final String TRY_ACQUIRE_DIGEST = sha1(TRY_ACQUIRE);
 
-    private RedisEphemeralDatastore(RedisClient client) {
-        this.client = client;
-        this.connection = client.connect(ByteArrayCodec.INSTANCE);
+    private final StatefulConnection<byte[], byte[]> connection;
+    private final RedisScriptingCommands<byte[], byte[]> scripts;
+    private final Runnable shutdown;
+
+    private RedisEphemeralDatastore(StatefulConnection<byte[], byte[]> connection,
+            RedisScriptingCommands<byte[], byte[]> scripts, Runnable shutdown) {
+        this.connection = connection;
+        this.scripts = scripts;
+        this.shutdown = shutdown;
     }
 
     /** Connects to the Redis at {@code uri}, e.g. {@code redis://host:6379/0}; {@link #close()} disconnects. */
     public static RedisEphemeralDatastore connect(String uri) {
-        RedisURI redisUri;
-        try {
-            redisUri = RedisURI.create(Objects.requireNonNull(uri, "uri"));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("'" + uri + "' is not a Redis URI, e.g. redis://localhost:6379/0", e);
-        }
+        RedisURI redisUri = parse(uri);
         RedisClient client = RedisClient.create(redisUri);
         try {
-            return new RedisEphemeralDatastore(client);
+            StatefulRedisConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE);
+            return new RedisEphemeralDatastore(connection, connection.sync(), client::shutdown);
         } catch (RuntimeException e) {
             client.shutdown();
             // RedisURI's toString() masks the password.
             throw new IllegalStateException("Can't connect to Redis at " + redisUri + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Connects to a Redis Cluster through any of its nodes, e.g. {@code redis://host1:6379}; the rest
+     * are discovered, and the topology is refreshed on a schedule and whenever a redirect, a dropped
+     * connection or a failed reconnect suggests it moved. {@link #close()} disconnects.
+     *
+     * <p>Every operation touches exactly one key, so each is routed to the node that owns that key's
+     * slot, and nothing needs to be atomic across nodes. The price is that a key's data lives and dies
+     * with its shard: a failover to a replica that hadn't seen the last writes, or a resharding, loses
+     * them. That is the same wipe the {@link Epoch} already reports, and bounded overshoot is what
+     * {@link #claim} and {@link #tryAcquire} already accept.
+     */
+    public static RedisEphemeralDatastore connectCluster(List<String> seedUris) {
+        List<RedisURI> seeds = Objects.requireNonNull(seedUris, "seedUris").stream().map(RedisEphemeralDatastore::parse).toList();
+        if (seeds.isEmpty()) {
+            throw new IllegalArgumentException("A Redis Cluster needs at least one seed node");
+        }
+        RedisClusterClient client = RedisClusterClient.create(seeds);
+        client.setOptions(ClusterClientOptions.builder()
+                .topologyRefreshOptions(ClusterTopologyRefreshOptions.builder()
+                        .enablePeriodicRefresh(Duration.ofSeconds(30))
+                        .enableAllAdaptiveRefreshTriggers()
+                        .build())
+                .build());
+        try {
+            StatefulRedisClusterConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE);
+            return new RedisEphemeralDatastore(connection, connection.sync(), client::shutdown);
+        } catch (RuntimeException e) {
+            client.shutdown();
+            throw new IllegalStateException("Can't connect to the Redis Cluster at " + seeds + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static RedisURI parse(String uri) {
+        try {
+            return RedisURI.create(Objects.requireNonNull(uri, "uri"));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("'" + uri + "' is not a Redis URI, e.g. redis://localhost:6379/0", e);
         }
     }
 
@@ -187,8 +236,11 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
     }
 
     /**
-     * Runs on every request a limiter guards, so it goes by {@code EVALSHA}: the script is sent once,
-     * and again only if Redis has forgotten it (a restart, or {@code SCRIPT FLUSH}).
+     * Runs on every request a limiter guards, so it goes by {@code EVALSHA}. The digest is computed
+     * here rather than learned from {@code SCRIPT LOAD}, which in a cluster would load the script on
+     * one node and not the one that owns the key. A node that doesn't have the script (a restart,
+     * {@code SCRIPT FLUSH}, a replica just promoted) answers NOSCRIPT, and a plain {@code EVAL} then
+     * teaches it.
      */
     @Override
     public boolean tryAcquire(String key, int amount, RateLimit limit) {
@@ -197,34 +249,31 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
         }
         byte[][] keys = {bytes(BUCKET_PREFIX + key)};
         byte[][] arguments = {bytes(amount), bytes(limit.capacity()), bytes(limit.permits()), bytes(limit.periodMillis())};
-        String digest = tryAcquireDigest;
-        if (digest == null) {
-            digest = loadTryAcquire();
-        }
+        Long granted;
         try {
-            return granted(connection.sync().evalsha(digest, ScriptOutputType.INTEGER, keys, arguments));
+            granted = scripts.evalsha(TRY_ACQUIRE_DIGEST, ScriptOutputType.INTEGER, keys, arguments);
         } catch (RedisNoScriptException e) {
-            return granted(connection.sync().evalsha(loadTryAcquire(), ScriptOutputType.INTEGER, keys, arguments));
+            granted = scripts.eval(bytes(TRY_ACQUIRE), ScriptOutputType.INTEGER, keys, arguments);
         }
-    }
-
-    private String loadTryAcquire() {
-        tryAcquireDigest = connection.sync().scriptLoad(bytes(TRY_ACQUIRE));
-        return tryAcquireDigest;
-    }
-
-    private static boolean granted(Long reply) {
-        return reply == 1;
+        return granted == 1;
     }
 
     @Override
     public void close() {
         connection.close();
-        client.shutdown();
+        shutdown.run();
     }
 
     private <T> T eval(String script, ScriptOutputType type, String key, byte[]... arguments) {
-        return connection.sync().eval(bytes(script), type, new byte[][] {bytes(KEY_PREFIX + key)}, arguments);
+        return scripts.eval(bytes(script), type, new byte[][] {bytes(KEY_PREFIX + key)}, arguments);
+    }
+
+    private static String sha1(String text) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(bytes(text)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Every JVM has SHA-1", e);
+        }
     }
 
     private String field(String localName) {
