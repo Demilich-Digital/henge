@@ -48,6 +48,24 @@
       "description": "For modular.store.type=redis: a Lettuce URI such as redis://host:6379/0 (rediss:// for TLS, redis://:password@host for a password). Required."
     },
     {
+      "name": "modular.transport.retry.max-attempts",
+      "type": "java.lang.Integer",
+      "defaultValue": 3,
+      "description": "Calls made at most per invocation, the first included; 1 turns retries off. Only a call that provably never ran (a failed connection, or a process that doesn't serve the service) is retried."
+    },
+    {
+      "name": "modular.transport.retry.backoff",
+      "type": "java.time.Duration",
+      "defaultValue": "50ms",
+      "description": "Wait before each retry. A bare number is milliseconds; 0 retries at once."
+    },
+    {
+      "name": "modular.transport.retry.on",
+      "type": "java.util.List<java.lang.String>",
+      "defaultValue": "connect,not-served",
+      "description": "Which failures are retried: connect (the connection couldn't be made), not-served (the process doesn't serve that service version), or both."
+    },
+    {
       "name": "modular.advertise.url",
       "type": "java.lang.String",
       "description": "Base URL other processes reach this one's /_modular at, published in its service advertisements, e.g. http://10.0.0.7:8080. Must be absolute http(s). Unset: advertisements give no address."

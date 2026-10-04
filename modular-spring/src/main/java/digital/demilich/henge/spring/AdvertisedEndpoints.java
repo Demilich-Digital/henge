@@ -50,6 +50,18 @@ class AdvertisedEndpoints {
         return urls.isEmpty() ? null : urls.get(Math.floorMod(rotation.getAndIncrement(), urls.size()));
     }
 
+    /**
+     * {@code url} was just tried and wasn't there (unreachable, or it no longer serves the service):
+     * stop offering it until the advertisements are next read, unless it's the only one left, which is
+     * still the best guess there is.
+     */
+    void failed(String service, int version, String url) {
+        cache.computeIfPresent(ServiceAdvertisement.key(service, version), (key, cached) -> {
+            List<String> remaining = cached.urls().stream().filter(candidate -> !candidate.equals(url)).toList();
+            return remaining.isEmpty() ? cached : new Cached(remaining, cached.epoch(), cached.fetchedAt());
+        });
+    }
+
     private List<String> urls(String key) {
         Cached cached = cache.get(key);
         Instant now = clock.instant();

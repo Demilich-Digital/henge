@@ -77,12 +77,52 @@ public class ModularProperties {
 
     /** {@code modular.transport.connect-timeout}, default 2 seconds -- see {@link #timeout}. */
     public Duration getConnectTimeout() {
-        return timeout("modular.transport.connect-timeout", Duration.ofSeconds(2));
+        return timeout("modular.transport.connect-timeout", Duration.ofSeconds(2), "no timeout");
     }
 
     /** {@code modular.transport.read-timeout}, default 10 seconds -- see {@link #timeout}. */
     public Duration getReadTimeout() {
-        return timeout("modular.transport.read-timeout", Duration.ofSeconds(10));
+        return timeout("modular.transport.read-timeout", Duration.ofSeconds(10), "no timeout");
+    }
+
+    /**
+     * {@code modular.transport.retry.*}: {@code max-attempts} (default 3, the first call included; 1
+     * turns retries off), {@code backoff} (default 50ms, a duration as for the timeouts; 0 retries at
+     * once) and {@code on} (default {@code connect,not-served}: which failures are retried, see
+     * {@link RetryPolicy}). Invalid values fail at startup, naming the property.
+     */
+    RetryPolicy getRetryPolicy() {
+        String attemptsKey = "modular.transport.retry.max-attempts";
+        String rawAttempts = environment.getProperty(attemptsKey);
+        int attempts = RetryPolicy.DEFAULT.maxAttempts();
+        if (rawAttempts != null && !rawAttempts.isBlank()) {
+            try {
+                attempts = Integer.parseInt(rawAttempts.trim());
+            } catch (NumberFormatException e) {
+                attempts = 0;
+            }
+            if (attempts < 1) {
+                throw new IllegalStateException(attemptsKey + "=" + rawAttempts + " is not a positive integer; use 1 for no retries");
+            }
+        }
+        Duration backoff = timeout("modular.transport.retry.backoff", RetryPolicy.DEFAULT.backoff(), "no delay");
+
+        boolean onConnect = RetryPolicy.DEFAULT.onConnectFailure();
+        boolean onNotServed = RetryPolicy.DEFAULT.onNotServed();
+        String rawOn = environment.getProperty("modular.transport.retry.on");
+        if (rawOn != null && !rawOn.isBlank()) {
+            onConnect = false;
+            onNotServed = false;
+            for (String kind : rawOn.split(",")) {
+                switch (kind.trim()) {
+                    case "connect" -> onConnect = true;
+                    case "not-served" -> onNotServed = true;
+                    default -> throw new IllegalStateException("modular.transport.retry.on=" + rawOn + " names '" + kind.trim()
+                            + "'; the failures that can be retried are connect and not-served");
+                }
+            }
+        }
+        return new RetryPolicy(attempts, backoff, onConnect, onNotServed);
     }
 
     /**
@@ -90,7 +130,7 @@ public class ModularProperties {
      * ISO-8601 ({@code PT2S}) also works, the forms Boot accepts for its own durations. {@code 0}
      * means no timeout. Negative or unparseable values fail at startup, naming the property.
      */
-    private Duration timeout(String key, Duration defaultValue) {
+    private Duration timeout(String key, Duration defaultValue, String zeroMeans) {
         String raw = environment.getProperty(key);
         if (raw == null || raw.isBlank()) {
             return defaultValue;
@@ -103,7 +143,7 @@ public class ModularProperties {
                     + "suffix (2s, 500ms) or ISO-8601 (PT2S)", e);
         }
         if (timeout.isNegative()) {
-            throw new IllegalStateException(key + "=" + raw + " is negative; use 0 for no timeout");
+            throw new IllegalStateException(key + "=" + raw + " is negative; use 0 for " + zeroMeans);
         }
         return timeout;
     }

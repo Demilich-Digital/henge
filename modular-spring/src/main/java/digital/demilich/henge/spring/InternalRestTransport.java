@@ -4,13 +4,23 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
+import digital.demilich.henge.core.ServiceNotServedException;
+import digital.demilich.henge.core.ServiceUnreachableException;
 import digital.demilich.henge.core.ServiceTransport;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.PortUnreachableException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
+import java.net.UnknownHostException;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.BeanClassLoaderAware;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
@@ -24,6 +34,8 @@ import org.springframework.web.client.RestClientResponseException;
  * arguments, matching {@link ModularDispatcherController} on the receiving end.
  */
 class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
+
+    private static final Log log = LogFactory.getLog(InternalRestTransport.class);
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{[^}]*}");
 
@@ -40,6 +52,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
     private volatile ClassLoader beanClassLoader = ClassUtils.getDefaultClassLoader();
 
     private final AdvertisedEndpoints advertisedEndpoints;
+    private final RetryPolicy retryPolicy;
 
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties) {
         this(restClient, objectMapper, properties, null);
@@ -52,6 +65,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.advertisedEndpoints = advertisedEndpoints;
+        this.retryPolicy = properties.getRetryPolicy(); // validated at startup, not on the first failure
         requireKnownPlaceholders(properties.getRemoteUrlTemplate());
         properties.getServerPathPrefix(); // validated at startup, not on the first call
     }
@@ -78,73 +92,46 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         this.beanClassLoader = classLoader != null ? classLoader : ClassUtils.getDefaultClassLoader();
     }
 
+    /** Where one attempt goes, and whether it was found among the advertisements (so another one can be tried). */
+    private record Endpoint(String baseUrl, boolean advertised) {
+    }
+
+    private enum Undelivered { CONNECT, NOT_SERVED }
+
+    /** A call that never ran on the remote, carrying the failure to throw if it isn't retried. */
+    private static final class NotDelivered extends RuntimeException {
+        private final transient Undelivered kind;
+        private final transient RuntimeException failure;
+
+        NotDelivered(Undelivered kind, RuntimeException failure) {
+            super(failure.getMessage(), failure, false, false);
+            this.kind = kind;
+            this.failure = failure;
+        }
+    }
+
     @Override
     public Object invoke(ServiceInvocation invocation) {
-        String url = properties.service(invocation.serviceName()).resolveUrl(invocation.serviceVersion());
-        if (url == null || url.isBlank()) {
-            url = resolveFromTemplate(invocation.serviceName(), invocation.serviceVersion());
-        }
-        if ((url == null || url.isBlank()) && advertisedEndpoints != null) {
-            url = advertisedEndpoints.next(invocation.serviceName(), invocation.serviceVersion());
-        }
-        if (url == null || url.isBlank()) {
-            throw new RemoteServiceException("No url configured for modular service '" + invocation.serviceName()
-                    + "' version '" + invocation.serviceVersion() + "', and no process advertises it (set modular.services."
-                    + invocation.serviceName() + ".url, modular.services." + invocation.serviceName() + ".versions."
-                    + invocation.serviceVersion() + ".url for a per-version override, modular.remote-url-template for a "
-                    + "shared convention, or run a process that hosts it with modular.advertise.url set)");
-        }
-
-        // "http://audit:8080/" is a natural way to write a base URL; without this it would produce
-        // "//_modular/...", which the server doesn't route.
-        while (url.endsWith("/")) {
-            url = url.substring(0, url.length() - 1);
-        }
-        String endpoint = url + properties.getServerPathPrefix() + "/" + invocation.serviceName() + "/"
-                + invocation.serviceVersion() + "/" + invocation.methodName();
-        // A URI, not a String: RestClient would treat a String as a URI template and try to expand
-        // any '{...}' in it.
-        URI uri;
-        try {
-            uri = URI.create(endpoint);
-        } catch (IllegalArgumentException e) {
-            throw new RemoteServiceException("Invalid url '" + endpoint + "' for modular service '" + invocation.serviceName()
-                    + "' version '" + invocation.serviceVersion() + "' -- check modular.services." + invocation.serviceName()
-                    + ".url (or its per-version override) and modular.remote-url-template", e);
-        }
-
+        Endpoint endpoint = resolveEndpoint(invocation);
         byte[] body = writeArguments(invocation);
 
-        String secret = properties.getTransportSecret();
-
         byte[] responseBody;
-        try {
-            responseBody = restClient.post()
-                    .uri(uri)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .headers(headers -> {
-                        if (secret != null && !secret.isBlank()) {
-                            headers.set(ModularDispatcherController.SECRET_HEADER, secret);
-                        }
-                    })
-                    .body(body)
-                    .retrieve()
-                    .body(byte[].class);
-        } catch (RestClientResponseException e) {
-            RemoteServiceException fallback = new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
-                    + invocation.methodName() + " -> " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
-            throw RemoteExceptionReconstructor.reconstruct(
-                    e.getResponseBodyAsString(), beanClassLoader, objectMapper, fallback);
-        } catch (RestClientException e) {
-            // The immediate exception's own message is often a generic wrapper (e.g. "Error while
-            // extracting response..."); the actually-useful detail -- "connect timed out",
-            // "Read timed out" -- is on the root cause.
-            Throwable root = e;
-            while (root.getCause() != null) {
-                root = root.getCause();
+        for (int attempt = 1; ; attempt++) {
+            try {
+                responseBody = post(invocation, endpoint, body);
+                break;
+            } catch (NotDelivered notDelivered) {
+                if (endpoint.advertised()) {
+                    advertisedEndpoints.failed(invocation.serviceName(), invocation.serviceVersion(), endpoint.baseUrl());
+                }
+                if (attempt >= retryPolicy.maxAttempts() || !retries(notDelivered.kind, endpoint)) {
+                    throw attempt == 1 ? notDelivered.failure : gaveUp(notDelivered, attempt);
+                }
+                log.debug("Retrying " + invocation.serviceName() + "#" + invocation.methodName() + " after attempt " + attempt
+                        + " (" + notDelivered.kind + " at " + endpoint.baseUrl() + ")");
+                pause(retryPolicy.backoff(), notDelivered.failure);
+                endpoint = resolveEndpoint(invocation);
             }
-            throw new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
-                    + invocation.methodName() + " (" + root.getMessage() + ")", e);
         }
 
         Class<?> returnType = invocation.method().getReturnType();
@@ -159,6 +146,141 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
             throw new RemoteServiceException("Failed to deserialize response from modular service '"
                     + invocation.serviceName() + "#" + invocation.methodName() + "'", e);
         }
+    }
+
+    private boolean retries(Undelivered kind, Endpoint endpoint) {
+        return switch (kind) {
+            case CONNECT -> retryPolicy.onConnectFailure();
+            // The same configured url would only say it again.
+            case NOT_SERVED -> retryPolicy.onNotServed() && endpoint.advertised();
+        };
+    }
+
+    /** The same kind of failure, saying how many times it was tried. */
+    private static RuntimeException gaveUp(NotDelivered notDelivered, int attempts) {
+        String message = notDelivered.failure.getMessage() + " (gave up after " + attempts + " attempts)";
+        return switch (notDelivered.kind) {
+            case CONNECT -> new ServiceUnreachableException(message, notDelivered.failure);
+            case NOT_SERVED -> {
+                ServiceNotServedException notServed = new ServiceNotServedException(message);
+                notServed.initCause(notDelivered.failure);
+                yield notServed;
+            }
+        };
+    }
+
+    private static void pause(java.time.Duration backoff, RuntimeException failure) {
+        if (backoff.isZero()) {
+            return;
+        }
+        try {
+            Thread.sleep(backoff);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw failure;
+        }
+    }
+
+    /** An explicit url, else the template, else a process that advertises the service. */
+    private Endpoint resolveEndpoint(ServiceInvocation invocation) {
+        boolean advertised = false;
+        String url = properties.service(invocation.serviceName()).resolveUrl(invocation.serviceVersion());
+        if (url == null || url.isBlank()) {
+            url = resolveFromTemplate(invocation.serviceName(), invocation.serviceVersion());
+        }
+        if ((url == null || url.isBlank()) && advertisedEndpoints != null) {
+            url = advertisedEndpoints.next(invocation.serviceName(), invocation.serviceVersion());
+            advertised = url != null;
+        }
+        if (url == null || url.isBlank()) {
+            throw new RemoteServiceException("No url configured for modular service '" + invocation.serviceName()
+                    + "' version '" + invocation.serviceVersion() + "', and no process advertises it (set modular.services."
+                    + invocation.serviceName() + ".url, modular.services." + invocation.serviceName() + ".versions."
+                    + invocation.serviceVersion() + ".url for a per-version override, modular.remote-url-template for a "
+                    + "shared convention, or run a process that hosts it with modular.advertise.url set)");
+        }
+        // "http://audit:8080/" is a natural way to write a base URL; without this it would produce
+        // "//_modular/...", which the server doesn't route.
+        while (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
+        return new Endpoint(url, advertised);
+    }
+
+    /**
+     * One attempt. A failure that means the call never ran on the remote is a {@link NotDelivered}, for
+     * {@link #invoke} to retry or give up on; anything else is final.
+     */
+    private byte[] post(ServiceInvocation invocation, Endpoint endpoint, byte[] body) {
+        String endpointUrl = endpoint.baseUrl() + properties.getServerPathPrefix() + "/" + invocation.serviceName() + "/"
+                + invocation.serviceVersion() + "/" + invocation.methodName();
+        // A URI, not a String: RestClient would treat a String as a URI template and try to expand
+        // any '{...}' in it.
+        URI uri;
+        try {
+            uri = URI.create(endpointUrl);
+        } catch (IllegalArgumentException e) {
+            throw new RemoteServiceException("Invalid url '" + endpointUrl + "' for modular service '" + invocation.serviceName()
+                    + "' version '" + invocation.serviceVersion() + "' -- check modular.services." + invocation.serviceName()
+                    + ".url (or its per-version override) and modular.remote-url-template", e);
+        }
+
+        String secret = properties.getTransportSecret();
+        try {
+            return restClient.post()
+                    .uri(uri)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .headers(headers -> {
+                        if (secret != null && !secret.isBlank()) {
+                            headers.set(ModularDispatcherController.SECRET_HEADER, secret);
+                        }
+                    })
+                    .body(body)
+                    .retrieve()
+                    .body(byte[].class);
+        } catch (RestClientResponseException e) {
+            RemoteServiceException fallback = new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
+                    + invocation.methodName() + " -> " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
+            RuntimeException reconstructed = RemoteExceptionReconstructor.reconstruct(
+                    e.getResponseBodyAsString(), beanClassLoader, objectMapper, fallback);
+            if (reconstructed instanceof ServiceNotServedException) {
+                throw new NotDelivered(Undelivered.NOT_SERVED, reconstructed);
+            }
+            throw reconstructed;
+        } catch (RestClientException e) {
+            // The immediate exception's own message is often a generic wrapper (e.g. "Error while
+            // extracting response..."); the actually-useful detail -- "connect timed out",
+            // "Read timed out" -- is on the root cause.
+            Throwable root = e;
+            while (root.getCause() != null) {
+                root = root.getCause();
+            }
+            String message = "Modular service call failed: " + invocation.serviceName() + "#" + invocation.methodName()
+                    + " (" + root.getMessage() + ")";
+            if (isConnectFailure(e)) {
+                throw new NotDelivered(Undelivered.CONNECT, new ServiceUnreachableException(message, e));
+            }
+            throw new RemoteServiceException(message, e);
+        }
+    }
+
+    /**
+     * The connection was never made, so nothing ran: refused, unknown host, no route, or a connect (not
+     * read) timeout. A read timeout, a reset, or anything else after the connection exists says nothing
+     * about whether the remote ran the call, so it isn't one.
+     */
+    static boolean isConnectFailure(Throwable failure) {
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            if (t instanceof ConnectException || t instanceof UnknownHostException
+                    || t instanceof NoRouteToHostException || t instanceof PortUnreachableException) {
+                return true;
+            }
+            if (t instanceof SocketTimeoutException && t.getMessage() != null
+                    && t.getMessage().toLowerCase(Locale.ROOT).contains("connect")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

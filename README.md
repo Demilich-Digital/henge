@@ -174,7 +174,9 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   gets the original exception reconstructed; only the wire status changes, and it has no effect when
   the service is embedded. The dispatcher's own failures use `400` (malformed request/arguments),
   `403` (bad secret) and `404` (unknown service/version/method); those bodies carry no exception
-  type, so they stay distinguishable from an annotated business exception that reuses the code.
+  type, so they stay distinguishable from an annotated business exception that reuses the code. The
+  one exception is a `404` for a service version this process doesn't serve, which is a real type,
+  `ServiceNotServedException`, rebuilt on the caller like any other (see "Retries" below).
 - **Logging a failure.** The caller only gets the exception's type and message, so the serving
   process logs the stack trace: a failure answered with a `5xx` at `ERROR`, a `4xx` at `DEBUG`.
   `@ErrorLogLevel(ErrorLogLevel.Level.WARN)` (`digital.demilich.henge.core`) on the exception
@@ -513,6 +515,9 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.services.<name>.leases.<lease>` | — | How much of the lease one instance of the service claims. A positive integer, at most the capacity; required for every lease the implementation declares. |
 | `modular.store.type` | `in-process` | Which `SystemEphemeralDatastore` holds this process's shared state (leases, service advertisements): `in-process`, or the type of an adapter on the classpath (`redis`, from `modular-redis`). Setting it while also defining a datastore bean fails startup. |
 | `modular.store.redis.uri` | — | For `type=redis`: a Lettuce URI, e.g. `redis://host:6379/0`; `rediss://` for TLS, `redis://:password@host` for a password, options as query parameters (`?timeout=5s`). Required. |
+| `modular.transport.retry.max-attempts` | `3` | Calls made at most per invocation, the first included; `1` turns retries off. See "Retries". |
+| `modular.transport.retry.backoff` | `50ms` | Wait before each retry; same duration format as the timeouts, `0` retries at once. |
+| `modular.transport.retry.on` | `connect,not-served` | Which failures are retried: `connect`, `not-served`, or both. |
 | `modular.advertise.url` | unset | Base URL (`http://host:port`) other processes reach this one's `/_modular` at, published in its service advertisements. Unset: the advertisement says this process hosts a service but gives no address. |
 | `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all (a non-web application never does). |
 | `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. Must start with `/` and not end with one. |
@@ -586,6 +591,25 @@ through everything advertised. If a read comes back empty from a *different* sto
 restarted and hosts haven't re-advertised yet) the previous answer is kept one more interval; an empty
 read from the same storage is believed. With nobody advertising, the call fails saying so. There are
 no retries yet: a call that reaches a host that has just died fails, and the next one tries the next.
+
+### Retries
+
+`internal-rest` retries only a call that provably **never ran** on the remote, so repeating it is safe
+for every method, whatever it does, and needs no idempotency declaration:
+
+- **`connect`**: the connection couldn't be made (refused, unknown host, no route, a connect
+  timeout). Thrown as `ServiceUnreachableException`, a `RemoteServiceException`.
+- **`not-served`**: the process answered that it doesn't serve that service version (a host that
+  advertised it and has since withdrawn it, or one that wasn't granted its lease). Thrown as
+  `ServiceNotServedException`, sent by the dispatcher and rebuilt on the caller like any other
+  exception, so an application can catch it too.
+
+A retry goes to the next advertised host, and a host that just failed isn't offered again until the
+advertisements are next read (unless it's the only one). A configured `url` is retried on `connect`
+only, since the same url would answer `not-served` again. Anything that may have started is never
+retried: a read timeout, a 5xx, an exception the implementation threw. Whether *that* is safe is a
+question about the method, and has no answer here yet. Giving up says so:
+`... (gave up after 3 attempts)`.
 
 ### Finding each other through Redis
 
@@ -670,7 +694,8 @@ Deliberately out of scope for now, to keep the core mechanism small and correct:
   and deliberately rejected, not deferred — see "How it works": `/_modular` was never meant to be
   internet-facing, so splitting it onto its own port doesn't solve a problem this framework
   actually has.)
-- Retries, load balancing, circuit breaking for `internal-rest`.
+- Retrying a call that may have run, and circuit breaking, for `internal-rest`. (Retrying one that
+  provably *didn't* run is built: see "Retries".)
 - Async/streaming methods — calls are synchronous/blocking only.
 - Overloaded methods on a `@ModularService` interface — rejected at compile time (RPC dispatch is by
   method name; use `@ServiceMethod(name = ...)` to disambiguate if you need two methods with the same

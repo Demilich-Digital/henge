@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.ServiceNotServedException;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.exc.StreamReadException;
@@ -77,8 +78,11 @@ class ModularDispatcherController {
         requireValidSecret(providedSecret);
 
         ModularServiceDescriptor descriptor = registry.find(service, version)
-                .orElseThrow(() -> new ModularDispatchException(HttpStatus.NOT_FOUND,
-                        "This process does not host modular service '" + service + "' version '" + version + "'"));
+                .orElseThrow(() -> {
+                    String message = "This process does not host modular service '" + service + "' version '" + version + "'";
+                    // Sent as an exception type, so the caller rebuilds it and can tell "not run here" from a failure.
+                    return new ModularDispatchException(HttpStatus.NOT_FOUND, message, ServiceNotServedException.class.getName(), message);
+                });
 
         Method targetMethod = descriptor.methods().get(method);
         if (targetMethod == null) {

@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.RemoteServiceException;
+import digital.demilich.henge.core.ServiceNotServedException;
+import digital.demilich.henge.core.ServiceUnreachableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.spring.fixture.echo.EchoService;
 import digital.demilich.henge.spring.fixture.echo.EchoServiceImpl;
@@ -135,6 +137,134 @@ class ModularAdvertisementRoutingTest {
             assertThatThrownBy(() -> client.getBean(EchoService.class).echo("hi"))
                     .isInstanceOf(RemoteServiceException.class)
                     .hasMessageContaining("no process advertises it");
+        }
+    }
+
+    /** Advertises {@code url} for echo-service@1 as another host, ordered after the real server's own "host". */
+    private static void advertiseElsewhere(SystemEphemeralDatastore store, String url) {
+        store.put("adv:echo-service@1", "zz-other", new ServiceAdvertisement(url).encode(), java.time.Duration.ofMinutes(5));
+    }
+
+    private static String deadUrl() throws Exception {
+        return "http://localhost:" + freePort();
+    }
+
+    @Test
+    void aCallThatCantConnectIsRetriedOnTheNextAdvertisedHost() throws Exception {
+        var shared = new InProcessEphemeralDatastore();
+        int port = freePort();
+        RunningServer server = startServer(hosting(port), shared, port);
+        advertiseElsewhere(shared, deadUrl());
+        try (var client = startClient(Map.of("modular.transport.retry.backoff", "0"), shared)) {
+            EchoService echo = client.getBean(EchoService.class);
+
+            for (int i = 0; i < 6; i++) {
+                assertThat(echo.echo("n" + i)).isEqualTo("echo:n" + i);
+            }
+            assertThat(server.context().getBean(EchoServiceImpl.class).getCallCount()).isEqualTo(6);
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    void withRetriesOffTheDeadHostFailsTheCallThatPicksIt() throws Exception {
+        var shared = new InProcessEphemeralDatastore();
+        int port = freePort();
+        RunningServer server = startServer(hosting(port), shared, port);
+        advertiseElsewhere(shared, deadUrl());
+        try (var client = startClient(Map.of("modular.transport.retry.max-attempts", "1"), shared)) {
+            EchoService echo = client.getBean(EchoService.class);
+
+            int failures = 0;
+            for (int i = 0; i < 4; i++) {
+                try {
+                    echo.echo("n" + i);
+                } catch (RemoteServiceException e) {
+                    failures++;
+                }
+            }
+            // Rotation reaches the dead host once; it is then skipped until the next refresh.
+            assertThat(failures).isEqualTo(1);
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    void aHostThatNoLongerServesTheServiceIsSkippedToo() throws Exception {
+        var shared = new InProcessEphemeralDatastore();
+        int livePort = freePort();
+        RunningServer live = startServer(hosting(livePort), shared, livePort);
+        // Reachable and answering, but it doesn't host echo-service: a "not served here" reply.
+        int emptyPort = freePort();
+        RunningServer empty = startServer(Map.of("modular.services.echo-service.mode", "internal-rest",
+                "modular.services.echo-service.url", "http://localhost:1"), shared, emptyPort);
+        advertiseElsewhere(shared, "http://localhost:" + emptyPort);
+        try (var client = startClient(Map.of("modular.transport.retry.backoff", "0"), shared)) {
+            EchoService echo = client.getBean(EchoService.class);
+
+            for (int i = 0; i < 4; i++) {
+                assertThat(echo.echo("n" + i)).isEqualTo("echo:n" + i);
+            }
+        } finally {
+            empty.stop();
+            live.stop();
+        }
+    }
+
+    @Test
+    void notServedIsntRetriedWhenThePolicyOnlyCoversConnectFailures() throws Exception {
+        var shared = new InProcessEphemeralDatastore();
+        int livePort = freePort();
+        RunningServer live = startServer(hosting(livePort), shared, livePort);
+        int emptyPort = freePort();
+        RunningServer empty = startServer(Map.of("modular.services.echo-service.mode", "internal-rest",
+                "modular.services.echo-service.url", "http://localhost:1"), shared, emptyPort);
+        advertiseElsewhere(shared, "http://localhost:" + emptyPort);
+        try (var client = startClient(Map.of("modular.transport.retry.on", "connect"), shared)) {
+            EchoService echo = client.getBean(EchoService.class);
+
+            int failures = 0;
+            for (int i = 0; i < 4; i++) {
+                try {
+                    echo.echo("n" + i);
+                } catch (ServiceNotServedException e) {
+                    assertThat(e).hasMessageContaining("does not host");
+                    // Rebuilt from the remote's reply, with the transport's own diagnosis chained in.
+                    assertThat(e).hasCauseInstanceOf(RemoteServiceException.class);
+                    failures++;
+                }
+            }
+            assertThat(failures).isEqualTo(1);
+        } finally {
+            empty.stop();
+            live.stop();
+        }
+    }
+
+    @Test
+    void aConfiguredUrlThatCantBeReachedIsRetriedThenGivenUpOn() throws Exception {
+        try (var client = startClient(Map.of("modular.services.echo-service.url", deadUrl(),
+                "modular.transport.retry.backoff", "0"), null)) {
+            assertThatThrownBy(() -> client.getBean(EchoService.class).echo("hi"))
+                    .isInstanceOf(ServiceUnreachableException.class)
+                    .hasMessageContaining("gave up after 3 attempts");
+        }
+    }
+
+    @Test
+    void aConfiguredUrlIsNotRetriedOnNotServedBecauseItWouldSayTheSameAgain() throws Exception {
+        int emptyPort = freePort();
+        RunningServer empty = startServer(Map.of("modular.services.echo-service.mode", "internal-rest",
+                "modular.services.echo-service.url", "http://localhost:1"), null, emptyPort);
+        try (var client = startClient(Map.of("modular.services.echo-service.url", "http://localhost:" + emptyPort), null)) {
+            assertThatThrownBy(() -> client.getBean(EchoService.class).echo("hi"))
+                    .isInstanceOf(ServiceNotServedException.class)
+                    .hasMessageContaining("does not host")
+                    .hasMessageNotContaining("gave up");
+        } finally {
+            empty.stop();
         }
     }
 

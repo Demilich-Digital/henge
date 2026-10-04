@@ -23,7 +23,7 @@ class ConfigurationMetadataTest {
                 names.add(property.get("name").asText());
             });
             assertThat(names).doesNotHaveDuplicates().contains(
-                    "modular.serve", "modular.remote-url-template", "modular.advertise.url", "modular.store.type", "modular.store.redis.uri", "modular.server.enabled", "modular.server.path-prefix",
+                    "modular.serve", "modular.remote-url-template", "modular.advertise.url", "modular.transport.retry.max-attempts", "modular.transport.retry.backoff", "modular.transport.retry.on", "modular.store.type", "modular.store.redis.uri", "modular.server.enabled", "modular.server.path-prefix",
                     "modular.transport.secret", "modular.transport.connect-timeout", "modular.transport.read-timeout");
         }
     }

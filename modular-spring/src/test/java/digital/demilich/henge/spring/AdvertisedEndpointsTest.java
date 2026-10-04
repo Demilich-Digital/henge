@@ -123,6 +123,35 @@ class AdvertisedEndpointsTest {
     }
 
     @Test
+    void aHostThatFailedIsNotOfferedAgainUntilTheNextRefresh() {
+        advertise(inner, "http://a:8080");
+        advertise(other, "http://b:8080");
+        endpoints.next("echo-service", 1);
+
+        endpoints.failed("echo-service", 1, "http://a:8080");
+
+        for (int i = 0; i < 4; i++) {
+            assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://b:8080");
+        }
+        advance(REFRESH.plusSeconds(1)); // still advertised, so it's back
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < 4; i++) {
+            seen.add(endpoints.next("echo-service", 1));
+        }
+        assertThat(seen).containsExactlyInAnyOrder("http://a:8080", "http://b:8080");
+    }
+
+    @Test
+    void theLastHostIsNeverEvictedSinceItIsStillTheBestGuess() {
+        advertise(inner, "http://a:8080");
+        endpoints.next("echo-service", 1);
+
+        endpoints.failed("echo-service", 1, "http://a:8080");
+
+        assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");
+    }
+
+    @Test
     void aWithdrawnNodeDisappearsOnceTheCacheIsStale() {
         advertise(inner, "http://a:8080");
         assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");

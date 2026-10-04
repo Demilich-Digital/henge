@@ -3,7 +3,7 @@
 Status: draft, branch `self-management`. Implemented so far: the datastore contract with its in-process
 and Redis adapters (phase 1, and phase 4's adapter), `@RequiresLease` (phase 2), and
 advertisement-based routing (phase 3, minus load-weighted choice and withdrawal when overloaded: calls
-rotate over what's advertised). Everything else is design only.
+rotate over what's advertised) and retries of calls that provably never ran (failed connection, "not served here"), with failover to the next advertised host. Everything else is design only.
 
 ## Summary
 
