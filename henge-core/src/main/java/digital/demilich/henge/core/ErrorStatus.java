@@ -22,7 +22,7 @@ import java.lang.annotation.Target;
  * <p>How the serving process logs it is chosen separately, with {@link ErrorLogLevel}.
  *
  * <p>Only the status changes: the caller still gets the original exception type reconstructed, as
- * with any other business exception (see the README). Has no effect when the service is embedded,
+ * with any other business exception (see docs/reference/wire-protocol.md). Has no effect when the service is embedded,
  * since no HTTP response is involved. Must be a {@code 4xx} or {@code 5xx} code: {@code henge-processor}
  * rejects anything else at compile time, and the dispatcher logs and ignores it (answering
  * {@code 500}) for a class compiled without the processor.

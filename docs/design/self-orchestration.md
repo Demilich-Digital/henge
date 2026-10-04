@@ -465,7 +465,7 @@ ordinary beans in the shared context, and everything is constructed eagerly. Evi
    their own proxy.
 2. **A child application context per service version**, holding the resources the service owns.
    Closing it is real deallocation: Spring runs every bean's destroy logic in reverse dependency
-   order (pools close, executors stop). This is the same mechanism the README roadmap's "isolated"
+   order (pools close, executors stop). This is the same mechanism the roadmap's "isolated" (docs/scope.md)
    strict-mode tier needs.
 3. **Drain before evict**: stop advertising, wait ≥ one TTL plus in-flight calls, then close.
 4. Limits that remain: resources outside Spring's lifecycle (hand-started threads, static caches,

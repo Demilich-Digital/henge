@@ -728,8 +728,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                         + " is not a valid @HengeService boundary type (" + reason + "). Boundary types must be "
                         + "records, enums, primitives, String, well-known immutable value types (java.time.*, UUID, "
                         + "BigDecimal, BigInteger), or ImmutableList/ImmutableSet/ImmutableMap/Optional thereof, "
-                        + "recursively -- see the "
-                        + "state-ownership doctrine in the README.",
+                        + "recursively -- see "
+                        + "docs/reference/compile-time-checks.md.",
                 method);
     }
 

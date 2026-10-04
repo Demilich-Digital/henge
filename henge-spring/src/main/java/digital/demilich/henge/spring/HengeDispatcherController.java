@@ -31,7 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
  * against {@link HengeServiceRegistry} — no reflection target outside that pre-built,
  * startup-time table is ever reachable.
  *
- * <p>Authentication is optional: the security model is network isolation (see the README), so with
+ * <p>Authentication is optional: the security model is network isolation (see docs/guide/07-operating.md), so with
  * {@code henge.transport.secret} unset every embedded {@code @HengeService} method is open to
  * whoever can reach this process's HTTP port, which is the supported, expected configuration.
  * When the secret is set, it is required on every call.

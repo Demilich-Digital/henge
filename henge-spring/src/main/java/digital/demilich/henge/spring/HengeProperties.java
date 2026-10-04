@@ -177,7 +177,7 @@ public class HengeProperties {
     /**
      * {@code henge.transport.secret}; {@code null} if unset. When set, {@link InternalRestTransport}
      * sends it on every dispatch call and {@link HengeDispatcherController} requires it (constant-time
-     * compare, 403 otherwise) -- see the README's security section.
+     * compare, 403 otherwise) -- see docs/guide/07-operating.md.
      */
     public String getTransportSecret() {
         return environment.getProperty("henge.transport.secret");
