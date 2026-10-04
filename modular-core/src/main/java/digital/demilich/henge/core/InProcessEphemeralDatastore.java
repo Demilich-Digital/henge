@@ -1,0 +1,126 @@
+package digital.demilich.henge.core;
+
+import java.nio.ByteBuffer;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.InstantSource;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+
+/**
+ * A {@link SystemEphemeralDatastore} that lives inside this process: the default, and the only one
+ * a monolith needs, since there is no one else to share anything with. Expiry is lazy: an expired
+ * member is dropped the next time its key is touched, so nothing runs in the background. One lock
+ * covers everything, which also makes {@link #claim} atomic.
+ */
+public final class InProcessEphemeralDatastore implements SystemEphemeralDatastore {
+
+    private final String nodeId = UUID.randomUUID().toString();
+    private final Epoch epoch = new Epoch(nodeId);
+    private final InstantSource clock;
+    private final Map<String, Map<String, Entry>> keys = new HashMap<>();
+
+    public InProcessEphemeralDatastore() {
+        this(InstantSource.system());
+    }
+
+    public InProcessEphemeralDatastore(InstantSource clock) {
+        this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    @Override
+    public String nodeId() {
+        return nodeId;
+    }
+
+    @Override
+    public synchronized void put(String key, String localName, byte[] value, Duration ttl) {
+        Objects.requireNonNull(value, "value");
+        liveMembers(key, true).put(localName, new Entry(value.clone(), deadline(ttl)));
+    }
+
+    @Override
+    public synchronized void remove(String key, String localName) {
+        Map<String, Entry> members = liveMembers(key, false);
+        if (members != null) {
+            members.remove(localName);
+            if (members.isEmpty()) {
+                keys.remove(key);
+            }
+        }
+    }
+
+    @Override
+    public synchronized Snapshot read(String key) {
+        Map<String, Entry> members = liveMembers(key, false);
+        Map<MemberId, byte[]> result = new HashMap<>();
+        if (members != null) {
+            members.forEach((localName, entry) -> result.put(new MemberId(nodeId, localName), entry.value().clone()));
+        }
+        return new Snapshot(Map.copyOf(result), epoch);
+    }
+
+    @Override
+    public synchronized boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
+        if (amount < 0 || capacity < 0) {
+            throw new IllegalArgumentException("amount and capacity must not be negative, got " + amount + " and " + capacity);
+        }
+        Instant deadline = deadline(ttl);
+        Map<String, Entry> members = liveMembers(key, true);
+        long claimedByOthers = 0;
+        for (Map.Entry<String, Entry> member : members.entrySet()) {
+            if (!member.getKey().equals(localName)) {
+                claimedByOthers += amountOf(key, member.getKey(), member.getValue());
+            }
+        }
+        if (claimedByOthers + amount > capacity) {
+            if (members.isEmpty()) {
+                keys.remove(key);
+            }
+            return false;
+        }
+        members.put(localName, new Entry(ByteBuffer.allocate(Integer.BYTES).putInt(amount).array(), deadline));
+        return true;
+    }
+
+    /** The key's live members, with the expired ones dropped; null if there are none and {@code create} is false. */
+    private Map<String, Entry> liveMembers(String key, boolean create) {
+        Map<String, Entry> members = keys.get(key);
+        if (members == null) {
+            return create ? keys.computeIfAbsent(key, k -> new HashMap<>()) : null;
+        }
+        Instant now = clock.instant();
+        for (Iterator<Entry> it = members.values().iterator(); it.hasNext(); ) {
+            if (!it.next().expiresAt().isAfter(now)) {
+                it.remove();
+            }
+        }
+        if (members.isEmpty() && !create) {
+            keys.remove(key);
+            return null;
+        }
+        return members;
+    }
+
+    private Instant deadline(Duration ttl) {
+        Objects.requireNonNull(ttl, "ttl");
+        if (ttl.isZero() || ttl.isNegative()) {
+            throw new IllegalArgumentException("ttl must be positive, got " + ttl);
+        }
+        return clock.instant().plus(ttl);
+    }
+
+    private static int amountOf(String key, String localName, Entry entry) {
+        if (entry.value().length != Integer.BYTES) {
+            throw new IllegalStateException("Member '" + localName + "' of '" + key
+                    + "' was written with put, but the key is being claimed: a key is for claims or for put, never both.");
+        }
+        return ByteBuffer.wrap(entry.value()).getInt();
+    }
+
+    private record Entry(byte[] value, Instant expiresAt) {
+    }
+}

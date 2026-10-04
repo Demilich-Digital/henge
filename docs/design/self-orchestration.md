@@ -48,7 +48,7 @@ Everything is ordered so each phase ships something usable without the later one
   *what each node does*.
 - Kademlia's k-bucket routing in the first DHT (see Open questions).
 
-## Part 1 — The shared store
+## Part 1 — The shared store (`SystemEphemeralDatastore`)
 
 ### The one primitive: an expiring, single-writer-per-member map
 
@@ -70,10 +70,13 @@ key → { member → (value, version, expiresAt) }
   may have been wiped", which consumers use to tell "nobody is there" from "the store just
   restarted".
 
-Sketch (names provisional, lives in `modular-core`, no Spring):
+Sketch (lives in `modular-core`, no Spring; the in-process adapter and the real Javadoc are in the code):
 
 ```java
-public interface SharedStore {
+public interface SystemEphemeralDatastore {
+    /** This node's ID, stable for the life of the process. */
+    String nodeId();
+
     /** Write (or renew) this node's member {@code localName} under {@code key}. */
     void put(String key, String localName, byte[] value, Duration ttl);
 
@@ -95,7 +98,7 @@ public interface SharedStore {
 }
 ```
 
-`MemberId` is `(nodeId, localName)`. `localName` lets one node own several members under a key
+`MemberId` is `(nodeId, localName)`; a claimed member's value is its amount (a 4-byte `int`). `localName` lets one node own several members under a key
 (two services on one node each claiming the same lease, say) without breaking single-writer.
 
 Everything above the store is built from `put`/`read`: advertisements, rate limiters, demand and
@@ -122,7 +125,7 @@ The contract is Henge-owned; each adapter owns its own topology and config.
 
 | Adapter | Use | Mapping |
 |---|---|---|
-| **In-process** | Monolith; tests | `ConcurrentHashMap` per key, lazy expiry on read + periodic sweep. `claim` runs under the key's lock. |
+| **In-process** | Monolith; tests | Lazy expiry (an expired member is dropped when its key is next touched), one lock, so `claim` is atomic. |
 | **Redis / Valkey** | Teams that already run Redis | Member = hash field with per-field TTL (`HSETEX`/`HGETALL`, Redis 7.4+; Valkey support to verify). Version check on write is a small Lua script; `claim` is another (sum live fields, compare, write), atomic because Redis is single-threaded. Older Redis: sorted set scored by expiry + value hash, Lua scripts, server `TIME`. Static client-side sharding; no replicas, no persistence needed. |
 | **Hazelcast** | Teams that already run it | Composite `(key, member)` entries, partition-aware on `key`, per-entry TTL; read is a single-partition query. `claim` is an entry processor, run serially on the key's partition. |
 | **Built-in DHT** | Henge nodes are the store | See below. |
