@@ -262,11 +262,14 @@ class ModularLeasesTest {
     }
 
     @Test
-    void aRefusedLeaseWithNoUrlToReachTheServiceByFailsStartup() {
-        try (var ctx = context(leases(100, 40, 20), LeasedConfig.class, ForeignHolderConfig.class)) {
-            assertThatThrownBy(ctx::refresh)
-                    .hasStackTraceContaining("must be reached remotely from here, but no url is configured")
-                    .hasStackTraceContaining("modular.services.ledger-service.url");
+    void aRefusedLeaseNeedsNoUrlSinceTheServiceIsFoundWhereItIsAdvertised() {
+        try (var ctx = context(leases(100, 40, 20), LeasedConfig.class, ForeignHolderConfig.class, ModularTransportConfiguration.class)) {
+            ctx.refresh();
+
+            var ledger = ctx.getBean(LedgerService.class);
+            assertThat(java.lang.reflect.Proxy.isProxyClass(ledger.getClass())).isTrue();
+            // Nobody advertises it in this test, and the call says so rather than naming a missing url.
+            assertThatThrownBy(() -> ledger.grant()).hasMessageContaining("no process advertises it");
         }
     }
 }

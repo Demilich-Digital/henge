@@ -25,10 +25,9 @@ import org.springframework.context.ConfigurableApplicationContext;
  * and lifecycle. It is created eagerly ({@link #isEagerInit()}), so a refusal or a configuration
  * mistake fails startup rather than the first call.
  *
- * <p>A refusal means other processes hold the lease, so the service has to be reached remotely, which
- * needs a configured url: without one startup fails here rather than on the first call. (Services that
- * over-allocate a lease between them are rejected before anything is constructed, see
- * {@link ModularServiceRegistrar}.)
+ * <p>A refusal means other processes hold the lease, so the service is reached remotely: at its
+ * configured url, or else wherever it is advertised. (Services that over-allocate a lease between
+ * them are rejected before anything is constructed, see {@link ModularServiceRegistrar}.)
  */
 class ModularLeasedServiceFactoryBean implements SmartFactoryBean<Object>, ApplicationContextAware, BeanNameAware, DisposableBean {
 
@@ -89,12 +88,6 @@ class ModularLeasedServiceFactoryBean implements SmartFactoryBean<Object>, Appli
     }
 
     private Object remoteInstead(LeaseNeed need) {
-        if (!leased.remoteUrlConfigured()) {
-            throw new IllegalStateException("Lease '" + need.name() + "' (capacity " + need.capacity() + ") is held by other "
-                    + "processes, so " + leased.localName() + " must be reached remotely from here, but no url is "
-                    + "configured for it. Set modular.services." + leased.serviceName() + ".url (modular.remote-url-template "
-                    + "can't be combined with leases).");
-        }
         log.info("Lease '" + need.name() + "' is full; " + leased.localName() + " is reached remotely from this process");
         ModularServiceProxyFactoryBean proxy =
                 new ModularServiceProxyFactoryBean(leased.serviceInterface(), leased.serviceName(), leased.version());

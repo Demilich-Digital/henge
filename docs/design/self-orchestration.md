@@ -431,10 +431,6 @@ Each phase is independently useful and testable.
   holds data.
 - **Heartbeat defaults** for leases, and the post-ownership-change grace period; whether they
   derive from the adapter.
-- **Where a refused lease routes.** Phase 2 shipped with an explicit `url` required on a leased
-  service (startup fails without one), because URL-template routing is incompatible with leases.
-  Advertisements now exist (phase 3), so a refusing node could find the holder through them instead,
-  with no `url`. Decide whether to relax that requirement.
 - **Is a refusal retried?** v1 treats it as permanent for the process's life; a periodic retry
   would let a node pick up capacity freed later, at the cost of switching a service from remote to
   embedded at runtime, which needs the switchable proxies of phase 6.

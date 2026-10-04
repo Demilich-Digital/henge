@@ -364,8 +364,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             leaseParameters.put(i, lease);
         }
 
-        boolean remoteUrlConfigured = properties.service(name).resolveUrl(version) != null;
-        return new LeasedImplementation(serviceInterface, name, version, implClass, needs, leaseParameters, remoteUrlConfigured);
+        return new LeasedImplementation(serviceInterface, name, version, implClass, needs, leaseParameters);
     }
 
     private static void addServiceVersionQualifier(RootBeanDefinition definition, Class<?> serviceInterface, int version) {

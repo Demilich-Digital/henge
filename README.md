@@ -560,9 +560,10 @@ modular:
 ```
 
 All of a service's leases are acquired before its implementation is constructed, or none are. If
-they are refused, the service is reached over `internal-rest` like any other remote one, which needs
-an explicit `modular.services.<name>.url` (`modular.remote-url-template` can't be combined with
-leases, since the template assumes every node behind the name hosts the service). A lease is held for
+they are refused, the service is reached over `internal-rest` like any other remote one: at its
+explicit `modular.services.<name>.url` if there is one, otherwise wherever it is advertised (see
+"Service advertisements"). `modular.remote-url-template` can't be combined with leases, since the
+template assumes every node behind the name hosts the service. A lease is held for
 the life of the process and renewed on a heartbeat, so a crashed node gives its share back after the
 lease's 30-second TTL.
 
