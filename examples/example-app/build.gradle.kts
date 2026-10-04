@@ -12,6 +12,9 @@ dependencies {
     // Only used when modular.store.type=redis; see the README's "Finding each other through Redis".
     runtimeOnly(project(":modular-redis"))
     implementation("org.springframework.boot:spring-boot-starter-web")
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 springBoot {

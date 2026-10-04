@@ -32,5 +32,7 @@ subprojects {
 
     tasks.withType<Test> {
         useJUnitPlatform()
+        // In CI a Docker-less skip of the Redis tests must fail the build, not pass it.
+        systemProperty("henge.requireDocker", System.getenv("CI") != null)
     }
 }

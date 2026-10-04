@@ -6,7 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import digital.demilich.henge.core.SystemEphemeralDatastore.MemberId;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -272,5 +276,37 @@ class RedisEphemeralDatastoreTest {
 
     private static int i2(String name) {
         return Integer.parseInt(name.substring(1));
+    }
+
+    @Test
+    void concurrentClaimsFromTwoNodesNeverGrantMoreThanTheCapacity() throws Exception {
+        String key = freshKey();
+        int claimants = 64;
+        int capacity = 10;
+        var executor = Executors.newFixedThreadPool(claimants);
+        var start = new CountDownLatch(1);
+        try {
+            var results = new ArrayList<Future<Boolean>>();
+            for (int i = 0; i < claimants; i++) {
+                RedisEphemeralDatastore node = i % 2 == 0 ? store : otherNode;
+                String name = "claimant-" + i;
+                results.add(executor.submit(() -> {
+                    start.await();
+                    return node.claim(key, name, 1, capacity, Duration.ofSeconds(30));
+                }));
+            }
+            start.countDown();
+            int granted = 0;
+            for (var result : results) {
+                if (result.get()) {
+                    granted++;
+                }
+            }
+
+            assertThat(granted).isEqualTo(capacity);
+            assertThat(store.read(key).members()).hasSize(capacity);
+        } finally {
+            executor.shutdownNow();
+        }
     }
 }

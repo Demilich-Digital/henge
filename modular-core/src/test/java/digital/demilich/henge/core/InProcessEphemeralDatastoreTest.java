@@ -8,6 +8,10 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
+import java.util.ArrayList;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -152,5 +156,36 @@ class InProcessEphemeralDatastoreTest {
         real.put("k", "a", new byte[] {1}, Duration.ofMinutes(1));
 
         assertThat(real.read("k").members()).hasSize(1);
+    }
+
+    @Test
+    void concurrentClaimsNeverGrantMoreThanTheCapacity() throws Exception {
+        int claimants = 64;
+        int capacity = 10;
+        var executor = Executors.newFixedThreadPool(claimants);
+        var start = new CountDownLatch(1);
+        try {
+            var results = new ArrayList<java.util.concurrent.Future<Boolean>>();
+            for (int i = 0; i < claimants; i++) {
+                String name = "claimant-" + i;
+                Callable<Boolean> claim = () -> {
+                    start.await();
+                    return store.claim("pool", name, 1, capacity, Duration.ofSeconds(30));
+                };
+                results.add(executor.submit(claim));
+            }
+            start.countDown();
+            int granted = 0;
+            for (var result : results) {
+                if (result.get()) {
+                    granted++;
+                }
+            }
+
+            assertThat(granted).isEqualTo(capacity);
+            assertThat(store.read("pool").members()).hasSize(capacity);
+        } finally {
+            executor.shutdownNow();
+        }
     }
 }
