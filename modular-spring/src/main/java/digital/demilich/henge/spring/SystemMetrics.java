@@ -46,6 +46,13 @@ interface SystemMetrics {
     default void advertisementRenewed(String service, int version, boolean succeeded) {
     }
 
+    /**
+     * A caller looking for {@code service@version} read the advertisements and found {@code nodes} nodes
+     * advertising it. Only what a lookup happens to see: it is as old as the last call to that service.
+     */
+    default void advertisersSeen(String service, int version, int nodes) {
+    }
+
     /** A call to {@code service@version} that never ran is being tried again; {@code reason} is {@code connect} or {@code not-served}. */
     default void callRetried(String service, int version, String reason) {
     }

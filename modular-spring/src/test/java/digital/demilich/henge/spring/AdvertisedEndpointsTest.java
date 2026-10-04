@@ -56,7 +56,17 @@ class AdvertisedEndpointsTest {
         }
     };
 
-    private final AdvertisedEndpoints endpoints = new AdvertisedEndpoints(store, REFRESH, now::get);
+    /** What was reported as seen advertising, as {@code service@version=nodes}. */
+    private final java.util.List<String> advertisersSeen = new java.util.ArrayList<>();
+
+    private final SystemMetrics metrics = new SystemMetrics() {
+        @Override
+        public void advertisersSeen(String service, int version, int nodes) {
+            advertisersSeen.add(service + "@" + version + "=" + nodes);
+        }
+    };
+
+    private final AdvertisedEndpoints endpoints = new AdvertisedEndpoints(store, REFRESH, now::get, metrics);
 
     private void advertise(InProcessEphemeralDatastore node, String url) {
         node.put(ServiceAdvertisement.key("echo-service", 1), "host", new ServiceAdvertisement(url).encode(), Duration.ofHours(1));
@@ -64,6 +74,87 @@ class AdvertisedEndpointsTest {
 
     private void advance(Duration by) {
         now.updateAndGet(t -> t.plus(by));
+    }
+
+    @Test
+    void aLookupReportsHowManyNodesItSawAdvertising() {
+        advertise(inner, "http://a:8080");
+        advertise(other, "http://b:8080");
+
+        endpoints.next("echo-service", 1);
+
+        assertThat(advertisersSeen).containsExactly("echo-service@1=2");
+    }
+
+    @Test
+    void aNodeWithNoUrlStillCountsAsAdvertising() {
+        advertise(inner, null);
+        advertise(other, "http://b:8080");
+
+        endpoints.next("echo-service", 1);
+
+        assertThat(advertisersSeen).containsExactly("echo-service@1=2");
+    }
+
+    @Test
+    void nobodyAdvertisingIsReportedAsZero() {
+        endpoints.next("echo-service", 1);
+
+        assertThat(advertisersSeen).containsExactly("echo-service@1=0");
+    }
+
+    @Test
+    void thereIsOneReportPerReadAndNotPerCall() {
+        advertise(inner, "http://a:8080");
+
+        for (int i = 0; i < 5; i++) {
+            endpoints.next("echo-service", 1);
+        }
+        assertThat(advertisersSeen).hasSize(1);
+
+        advance(REFRESH.plusSeconds(1));
+        inner.remove(ServiceAdvertisement.key("echo-service", 1), "host");
+        endpoints.next("echo-service", 1);
+
+        assertThat(advertisersSeen).containsExactly("echo-service@1=1", "echo-service@1=0");
+    }
+
+    @Test
+    void eachServiceVersionIsReportedOnItsOwn() {
+        advertise(inner, "http://a:8080");
+
+        endpoints.next("echo-service", 1);
+        endpoints.next("echo-service", 2);
+
+        assertThat(advertisersSeen).containsExactly("echo-service@1=1", "echo-service@2=0");
+    }
+
+    @Test
+    void anEmptyReadFromAStorageThatMayHaveBeenWipedIsNotReported() {
+        advertise(inner, "http://a:8080");
+        endpoints.next("echo-service", 1);
+        advertisersSeen.clear();
+
+        // The storage answers with a different epoch and nobody advertising: it may just have restarted.
+        epoch = "epoch-2";
+        inner.remove(ServiceAdvertisement.key("echo-service", 1), "host");
+        advance(REFRESH.plusSeconds(1));
+        endpoints.next("echo-service", 1);
+
+        assertThat(advertisersSeen).isEmpty();
+    }
+
+    @Test
+    void aReadThatFailsReportsNothing() {
+        advertise(inner, "http://a:8080");
+        endpoints.next("echo-service", 1);
+        advertisersSeen.clear();
+
+        failing = true;
+        advance(REFRESH.plusSeconds(1));
+        endpoints.next("echo-service", 1);
+
+        assertThat(advertisersSeen).isEmpty();
     }
 
     @Test

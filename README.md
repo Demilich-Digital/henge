@@ -707,6 +707,7 @@ switch on when the application has a `MeterRegistry` bean, the same way. Without
 | `henge.lease.held` | gauge | `lease` | The amount this node holds; `0` once it hands it back. |
 | `henge.service.hosted` | gauge | `service`, `version`, `mode` (as configured) | `1` if this process serves the version, `0` if it is reached remotely. A `0` on an `embedded` version is a lease refusal. |
 | `henge.advertisement.renewals` | counter | `service`, `version`, `outcome` (`success`, `error`) | This node keeping its advertisements alive. A run of `error` is a node about to disappear from the cluster. |
+| `henge.service.advertisers` | gauge | `service`, `version` | How many nodes advertise the version, as the last lookup saw it. Nothing is read for this: it is set whenever a call to a service with no configured url reads the advertisements (at most once per refresh interval), so it is as old as the last such call, and absent for a service that is only ever reached by configured url. An empty read from a storage that may just have restarted is not recorded. |
 | `henge.transport.retries` | counter | `service`, `version`, `reason` (`connect`, `not-served`) | A call that provably never ran, being tried again. |
 | `henge.transport.giveups` | counter | `service`, `version`, `reason` | Such a call, abandoned: the attempts ran out, or retries are off. |
 | `henge.transport.endpoint.failures` | counter | `service`, `version` | An advertised host failed a call, so it isn't offered again for a while (see "Retries"). |
@@ -827,8 +828,7 @@ scope deliberately excluded rather than deferred):
   log the `service@version → mode → url` table at startup, expose it through Actuator, and
   aggregate the view across processes instead of one at a time.
 - **Metrics, further.** Calls, dispatches and the system's own meters are built (see "Metrics").
-  Still to do: the number of nodes advertising each service version (a datastore read per scrape, so
-  it needs thought), and the dependency graph's remote edges as a gauge.
+  Still to do: the dependency graph's remote edges as a gauge.
 - **Trace propagation on the transport.** The hand-built `RestClient` bypasses Boot's observation
   instrumentation today, so a trace's context stops dead exactly at the process boundary that
   matters most (the `henge.call` span is there; nothing carries it across the wire). Build it from

@@ -37,16 +37,19 @@ class AdvertisedEndpoints {
     private final InstantSource clock;
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
     private final AtomicInteger rotation = new AtomicInteger();
+    private final SystemMetrics metrics;
 
-    AdvertisedEndpoints(SystemEphemeralDatastore datastore, Duration refreshInterval, InstantSource clock) {
+    /** @param metrics told how many nodes advertise a service version, each time that is read */
+    AdvertisedEndpoints(SystemEphemeralDatastore datastore, Duration refreshInterval, InstantSource clock, SystemMetrics metrics) {
         this.datastore = datastore;
         this.refreshInterval = refreshInterval;
         this.clock = clock;
+        this.metrics = metrics;
     }
 
     /** The next base URL to call for {@code service@version}, or {@code null} if nobody advertises one. */
     String next(String service, int version) {
-        List<String> urls = urls(ServiceAdvertisement.key(service, version));
+        List<String> urls = urls(service, version);
         return urls.isEmpty() ? null : urls.get(Math.floorMod(rotation.getAndIncrement(), urls.size()));
     }
 
@@ -62,7 +65,8 @@ class AdvertisedEndpoints {
         });
     }
 
-    private List<String> urls(String key) {
+    private List<String> urls(String service, int version) {
+        String key = ServiceAdvertisement.key(service, version);
         Cached cached = cache.get(key);
         Instant now = clock.instant();
         if (cached != null && now.isBefore(cached.fetchedAt().plus(refreshInterval))) {
@@ -78,6 +82,11 @@ class AdvertisedEndpoints {
                     .toList();
             boolean maybeWiped = fresh.isEmpty() && cached != null && !cached.urls().isEmpty()
                     && !snapshot.epoch().equals(cached.epoch());
+            if (!maybeWiped) {
+                // What was seen, only when it is believed: an empty read from a storage that may have just
+                // been wiped says nothing about how many nodes are there.
+                metrics.advertisersSeen(service, version, snapshot.members().size());
+            }
             Cached updated = new Cached(maybeWiped ? cached.urls() : fresh, snapshot.epoch(), now);
             cache.put(key, updated);
             return updated.urls();

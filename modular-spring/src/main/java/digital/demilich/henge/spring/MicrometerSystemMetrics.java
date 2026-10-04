@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <tr><td>{@code henge.lease.renewals}</td><td>counter: {@code lease}, {@code outcome} ({@code renewed}, {@code over-capacity} or {@code error})</td></tr>
  *   <tr><td>{@code henge.lease.held}</td><td>gauge: {@code lease}; the amount this node holds, {@code 0} after it hands it back</td></tr>
  *   <tr><td>{@code henge.advertisement.renewals}</td><td>counter: {@code service}, {@code version}, {@code outcome} ({@code success} or {@code error})</td></tr>
+ *   <tr><td>{@code henge.service.advertisers}</td><td>gauge: {@code service}, {@code version}; the nodes advertising it as last seen by a caller looking for it</td></tr>
  *   <tr><td>{@code henge.transport.retries}</td><td>counter: {@code service}, {@code version}, {@code reason} ({@code connect} or {@code not-served})</td></tr>
  *   <tr><td>{@code henge.transport.giveups}</td><td>counter: {@code service}, {@code version}, {@code reason}</td></tr>
  *   <tr><td>{@code henge.transport.endpoint.failures}</td><td>counter: {@code service}, {@code version}</td></tr>
@@ -29,6 +30,7 @@ public class MicrometerSystemMetrics implements SystemMetrics {
 
     private final MeterRegistry registry;
     private final Map<String, AtomicInteger> held = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> advertisers = new ConcurrentHashMap<>();
 
     public MicrometerSystemMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -63,6 +65,16 @@ public class MicrometerSystemMetrics implements SystemMetrics {
     public void advertisementRenewed(String service, int version, boolean succeeded) {
         registry.counter("henge.advertisement.renewals", "service", service, "version", String.valueOf(version),
                 "outcome", succeeded ? "success" : "error").increment();
+    }
+
+    @Override
+    public void advertisersSeen(String service, int version, int nodes) {
+        advertisers.computeIfAbsent(service + "@" + version, name -> {
+            AtomicInteger seen = new AtomicInteger();
+            Gauge.builder("henge.service.advertisers", seen, AtomicInteger::get)
+                    .tag("service", service).tag("version", String.valueOf(version)).register(registry);
+            return seen;
+        }).set(nodes);
     }
 
     @Override

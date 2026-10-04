@@ -46,7 +46,7 @@ public class ModularTransportConfiguration {
         SystemEphemeralDatastore available = datastore.getIfAvailable();
         AdvertisedEndpoints advertised = available == null ? null
                 : new AdvertisedEndpoints(metrics.measured(available, "routing"), ModularLeaseKeeper.DEFAULT_TTL.dividedBy(3),
-                        InstantSource.system());
+                        InstantSource.system(), metrics);
         return new InternalRestTransport(
                 ModularTransportSupport.restClient(modularProperties), ModularTransportSupport.objectMapper(), modularProperties,
                 advertised, metrics);

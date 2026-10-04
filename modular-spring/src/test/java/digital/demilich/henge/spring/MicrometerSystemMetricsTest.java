@@ -195,6 +195,18 @@ class MicrometerSystemMetricsTest {
         }
     }
 
+    @Test
+    void theNodesSeenAdvertisingAreAGaugePerServiceVersionThatFollowsWhatWasLastSeen() {
+        metrics.advertisersSeen("echo-service", 1, 3);
+        metrics.advertisersSeen("echo-service", 2, 1);
+        assertThat(meters.get("henge.service.advertisers").tags("service", "echo-service", "version", "1").gauge().value()).isEqualTo(3);
+
+        metrics.advertisersSeen("echo-service", 1, 0);
+
+        assertThat(meters.get("henge.service.advertisers").tags("service", "echo-service", "version", "1").gauge().value()).isZero();
+        assertThat(meters.get("henge.service.advertisers").tags("service", "echo-service", "version", "2").gauge().value()).isEqualTo(1);
+    }
+
     // -- the transport
 
     private InternalRestTransport transportThatCannotConnect(MockEnvironment environment, AdvertisedEndpoints advertised) {
@@ -241,10 +253,12 @@ class MicrometerSystemMetricsTest {
         var transport = transportThatCannotConnect(new MockEnvironment()
                 .withProperty("modular.transport.retry.max-attempts", "3")
                 .withProperty("modular.transport.retry.backoff", "0"),
-                new AdvertisedEndpoints(store, Duration.ofSeconds(10), now::get));
+                new AdvertisedEndpoints(store, Duration.ofSeconds(10), now::get, metrics));
 
         assertThatThrownBy(() -> transport.invoke(echo())).isInstanceOf(RemoteServiceException.class);
 
+        // The lookup that found the host also counted it, once: the cache served the retries.
+        assertThat(meters.get("henge.service.advertisers").tags("service", "echo-service", "version", "1").gauge().value()).isEqualTo(1);
         assertThat(count("henge.transport.endpoint.failures", "service", "echo-service", "version", "1")).isEqualTo(3);
         assertThat(count("henge.transport.giveups", "service", "echo-service", "version", "1", "reason", "connect")).isEqualTo(1);
     }
