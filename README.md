@@ -555,10 +555,12 @@ What Henge does and doesn't do:
 - **It keeps books; it never sees a connection.** Size the real resource from `Lease.amount()`, and
   keep the resource inside the service: a shared pool bean (or JPA, Flyway, ...) opens its connections
   whether or not the service was built here.
-- **Over-allocating inside one process fails startup.** If a process's own services claim more of a
-  lease than its capacity and no other process holds any of it, nothing else could host the refused
-  service either, so startup fails and says who holds what. Raise the capacity, lower the amounts, or
-  host fewer of the services here with `--modular.serve`.
+- **Over-allocating inside one process fails startup.** The services a process has to host (those
+  with no `modular.services.<name>.url` to fall back to) are summed per lease at boot; if they claim
+  more than the capacity, startup fails naming each service and amount. Raise the capacity, lower
+  the amounts, or host fewer of the services here with `--modular.serve` and give the rest a url.
+  Whatever that static check can't see is caught when the claims are made: a refusal while nothing
+  else in the cluster holds the lease fails startup too, with who holds what.
 - **The cap is soft.** Shared state lives in a `SystemEphemeralDatastore` (in-process by default, so a
   single node always grants what fits); declare your own bean of that type to share it across nodes.
   See `docs/design/self-orchestration.md`.

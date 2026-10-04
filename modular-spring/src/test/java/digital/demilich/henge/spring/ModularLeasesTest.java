@@ -85,13 +85,29 @@ class ModularLeasesTest {
     }
 
     @Test
-    void servicesThatOverAllocateALeaseInOneProcessFailStartupSayingWho() {
+    void aMonolithThatOverAllocatesALeaseFailsAtBootNamingEveryService() {
         try (var ctx = context(leases(100, 60, 60), LeasedConfig.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("Lease 'ledger-db' has capacity 100, but the services this process has to host claim 120")
+                    .hasStackTraceContaining("ledger-service@1 60")
+                    .hasStackTraceContaining("report-service@1 60")
+                    .hasStackTraceContaining("Raise modular.leases.ledger-db.capacity")
+                    .hasStackTraceContaining("--modular.serve");
+        }
+    }
+
+    @Test
+    void servicesThatCouldGoRemoteDontCountTowardsTheBootCheck() {
+        Map<String, Object> properties = new HashMap<>(leases(100, 60, 60));
+        properties.put("modular.services.report-service.url", "http://report-host:8080");
+        try (var ctx = context(properties, LeasedConfig.class, ModularTransportConfiguration.class)) {
+            // 60 + 60 > 100, but only ledger-service has to be hosted here (60 fits): no boot error.
+            // At runtime whichever of the two is created second is refused with nobody else holding
+            // the lease, which is the second line of defence.
             assertThatThrownBy(ctx::refresh)
                     .hasStackTraceContaining("Lease 'ledger-db' (capacity 100) can't be granted")
                     .hasStackTraceContaining("already hold 60 of 100")
-                    .hasStackTraceContaining("Raise modular.leases.ledger-db.capacity")
-                    .hasStackTraceContaining("--modular.serve");
+                    .hasStackTraceContaining("nothing else holds it");
         }
     }
 

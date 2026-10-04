@@ -106,6 +106,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         List<String> serviceBeanNames = new ArrayList<>();
         Set<String> leasedBeanNames = new LinkedHashSet<>();
         Set<String> declaredLeaseNames = new LinkedHashSet<>();
+        List<LeasedImplementation> leasedImplementations = new ArrayList<>();
         Map<String, Class<?>> namesToInterfaces = new LinkedHashMap<>();
 
         for (Class<?> serviceInterface : serviceInterfaces) {
@@ -165,8 +166,10 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                         definition = new RootBeanDefinition(implClass);
                     } else {
                         definition = new RootBeanDefinition(ModularLeasedServiceFactoryBean.class);
-                        definition.getConstructorArgumentValues().addIndexedArgumentValue(0,
-                                leasedImplementation(properties, serviceInterface, name, version, implClass, declaredLeases));
+                        LeasedImplementation leased =
+                                leasedImplementation(properties, serviceInterface, name, version, implClass, declaredLeases);
+                        leasedImplementations.add(leased);
+                        definition.getConstructorArgumentValues().addIndexedArgumentValue(0, leased);
                         definition.setDependsOn(LEASE_KEEPER_BEAN_NAME);
                         leasedBeanNames.add(beanName);
                         declaredLeases.forEach(lease -> declaredLeaseNames.add(lease.value()));
@@ -192,6 +195,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                     + "service(s) they meant to configure would silently keep their defaults:\n  "
                     + String.join("\n  ", unknownProperties));
         }
+
+        requireStaticallyGrantable(leasedImplementations);
 
         List<String> unknownLeaseProperties = properties.unknownLeaseProperties(declaredLeaseNames);
         if (!unknownLeaseProperties.isEmpty()) {
@@ -229,6 +234,40 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 .getBeanDefinition();
         registryDefinition.setAttribute(IMPORTED_BY_ATTRIBUTE, importingClassMetadata.getClassName());
         registry.registerBeanDefinition(REGISTRY_BEAN_NAME, registryDefinition);
+    }
+
+    /**
+     * A leased service with no url configured can't be reached remotely if its lease is refused, so
+     * it has to be constructed here. If those services alone claim more of a lease than its capacity,
+     * startup can't succeed whatever the rest of the cluster does, which is every monolith that
+     * over-allocates. (Services with a url may legitimately be refused, so they don't count; whether
+     * that works out depends on the other nodes, and is checked when the claims are made.)
+     */
+    private static void requireStaticallyGrantable(List<LeasedImplementation> leasedImplementations) {
+        Map<String, List<String>> mustHostByLease = new LinkedHashMap<>();
+        Map<String, Integer> totals = new LinkedHashMap<>();
+        Map<String, Integer> capacities = new LinkedHashMap<>();
+        for (LeasedImplementation leased : leasedImplementations) {
+            if (leased.remoteUrlConfigured()) {
+                continue;
+            }
+            for (LeaseNeed need : leased.needs()) {
+                mustHostByLease.computeIfAbsent(need.name(), k -> new ArrayList<>()).add(leased.localName() + " " + need.amount());
+                totals.merge(need.name(), need.amount(), Integer::sum);
+                capacities.put(need.name(), need.capacity());
+            }
+        }
+        for (Map.Entry<String, Integer> total : totals.entrySet()) {
+            String lease = total.getKey();
+            if (total.getValue() > capacities.get(lease)) {
+                throw new IllegalStateException("Lease '" + lease + "' has capacity " + capacities.get(lease) + ", but the services "
+                        + "this process has to host claim " + total.getValue() + " of it (" + String.join(", ", mustHostByLease.get(lease))
+                        + "). None of them has a url to be reached at instead (modular.services.<service>.url), so every one "
+                        + "has to be constructed here. Raise modular.leases." + lease + ".capacity, lower the amounts under "
+                        + "modular.services.<service>.leases." + lease + ", or host fewer of these services here (--modular.serve, "
+                        + "and give the rest a url).");
+            }
+        }
     }
 
     /**
