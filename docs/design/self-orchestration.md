@@ -116,6 +116,20 @@ and atomicity is only ever required of whoever serializes operations on that one
 adapters, and the DHT's single-owner placement for claim keys). Where that serialization is
 briefly doubled or lost, the damage is bounded overshoot, which the lease capacity margin absorbs.
 
+### Rate limiters: `tryAcquire`
+
+A rate limiter is not built from `put`/`read` after all: a leaky bucket is one scalar that every node
+draws on, and "is there room?" must be answered and applied at once, which is `claim`'s problem again.
+So there is a second atomic-per-key operation, `tryAcquire(key, amount, RateLimit)`, under the same
+terms as `claim` (serialized per key; where that briefly fails, the rate overshoots by a bounded amount).
+
+The bucket's state is a scalar `(level, at)` and nothing else. The constants (`RateLimit`: capacity,
+permits per period) are supplied by the caller on every call, so they cost no storage and no
+coordination, but every caller of a key must agree on them. Levels are in units of 1/period of a permit,
+which makes the leak exact integer arithmetic (each elapsed millisecond drains `permits` units), and
+`at` is the store's clock. A drained bucket is the same as no bucket, so the key's TTL is its drain
+time and nothing needs a lease, a renewal or a sweeper. Redis runs it as one `EVALSHA`.
+
 ### Why not "a subset of Redis"
 
 The first sketch was a Redis command subset (`GET`/`SET NX`/`INCR`/`MULTI`). Each of those needs a

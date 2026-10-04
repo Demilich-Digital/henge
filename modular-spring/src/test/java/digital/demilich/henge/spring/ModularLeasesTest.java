@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
+import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.spring.leasedfixture.ledger.LedgerService;
 import digital.demilich.henge.spring.leasedfixture.ledger.ReportService;
@@ -242,6 +243,11 @@ class ModularLeasesTest {
         public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
             return capacity - foreign >= 0 && delegate.claim(key, localName, amount, capacity - foreign, ttl);
         }
+
+        @Override
+        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+            return delegate.tryAcquire(key, amount, limit);
+        }
     }
 
     @Configuration
@@ -341,6 +347,11 @@ class ModularLeasesTest {
         @Override
         public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
             return !key.equals("lease:db-b") && delegate.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+            return delegate.tryAcquire(key, amount, limit);
         }
     }
 

@@ -48,6 +48,22 @@ public interface SystemEphemeralDatastore {
      */
     boolean claim(String key, String localName, int amount, int capacity, Duration ttl);
 
+    /**
+     * Atomically: leaks the bucket at {@code key} for the time since it was last touched, then, if
+     * {@code amount} more permits fit under the limit's capacity, adds them and returns {@code true};
+     * otherwise changes nothing and returns {@code false}. A bucket nobody has touched is empty, and
+     * one that has drained completely is forgotten, so there is nothing to clean up.
+     *
+     * <p>Unlike everything else here, a bucket is a single scalar shared by every node that draws on
+     * it, not a member with one writer: it is the second operation, after {@link #claim}, that must be
+     * atomic per key, and under the same terms. Where that is briefly not so, the damage is a bounded
+     * overshoot of the rate. The leak is computed on the store's own clock. Its keyspace is separate
+     * from the members', so a key may be used for a bucket and for members at once.
+     *
+     * @throws IllegalArgumentException if {@code amount} is negative
+     */
+    boolean tryAcquire(String key, int amount, RateLimit limit);
+
     /** The amount a member written by {@link #claim} holds, decoded from its value. */
     static int claimedAmount(byte[] value) {
         if (value.length != Integer.BYTES) {

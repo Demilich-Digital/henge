@@ -1,8 +1,10 @@
 package digital.demilich.henge.redis;
 
+import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandExecutionException;
+import io.lettuce.core.RedisNoScriptException;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -32,6 +34,7 @@ import java.util.UUID;
 public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, AutoCloseable {
 
     private static final String KEY_PREFIX = "henge:";
+    private static final String BUCKET_PREFIX = "henge:bucket:";
 
     /**
      * Gives {@code field} its TTL (writing a field clears it) and the hash its own: the hash lives as
@@ -81,7 +84,38 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
             return 1
             """;
 
+    /**
+     * KEYS: the bucket, a string {@code level:at}. ARGV: amount, capacity, permits, period-millis.
+     * Levels are in units of 1/period of a permit, so the leak is exact integer arithmetic: each
+     * elapsed millisecond drains {@code permits} units. Time is the server's. A drained bucket is
+     * the same as no bucket, so the key's TTL is how long it takes to drain.
+     */
+    private static final String TRY_ACQUIRE = """
+            local t = redis.call('TIME')
+            local now = t[1] * 1000 + math.floor(t[2] / 1000)
+            local period, permits = tonumber(ARGV[4]), tonumber(ARGV[3])
+            local capacity, cost = tonumber(ARGV[2]) * period, tonumber(ARGV[1]) * period
+            local level = 0
+            local raw = redis.call('GET', KEYS[1])
+            if raw then
+              local l, a = string.match(raw, '^(%d+):(%d+)$')
+              local at = tonumber(a)
+              local elapsed = math.min(math.max(0, now - at), capacity)
+              level = math.max(0, tonumber(l) - elapsed * permits)
+              now = math.max(now, at)
+            end
+            if level + cost > capacity then return 0 end
+            level = level + cost
+            if level == 0 then
+              redis.call('DEL', KEYS[1])
+            else
+              redis.call('SET', KEYS[1], string.format('%d:%d', level, now), 'PX', string.format('%d', math.ceil(level / permits)))
+            end
+            return 1
+            """;
+
     private final String nodeId = UUID.randomUUID().toString();
+    private volatile String tryAcquireDigest;
     private final RedisClient client;
     private final StatefulRedisConnection<byte[], byte[]> connection;
 
@@ -150,6 +184,37 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
                     + " (a key is for claims or for put, never both)", e);
         }
         return granted == 1;
+    }
+
+    /**
+     * Runs on every request a limiter guards, so it goes by {@code EVALSHA}: the script is sent once,
+     * and again only if Redis has forgotten it (a restart, or {@code SCRIPT FLUSH}).
+     */
+    @Override
+    public boolean tryAcquire(String key, int amount, RateLimit limit) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("amount must not be negative, got " + amount);
+        }
+        byte[][] keys = {bytes(BUCKET_PREFIX + key)};
+        byte[][] arguments = {bytes(amount), bytes(limit.capacity()), bytes(limit.permits()), bytes(limit.periodMillis())};
+        String digest = tryAcquireDigest;
+        if (digest == null) {
+            digest = loadTryAcquire();
+        }
+        try {
+            return granted(connection.sync().evalsha(digest, ScriptOutputType.INTEGER, keys, arguments));
+        } catch (RedisNoScriptException e) {
+            return granted(connection.sync().evalsha(loadTryAcquire(), ScriptOutputType.INTEGER, keys, arguments));
+        }
+    }
+
+    private String loadTryAcquire() {
+        tryAcquireDigest = connection.sync().scriptLoad(bytes(TRY_ACQUIRE));
+        return tryAcquireDigest;
+    }
+
+    private static boolean granted(Long reply) {
+        return reply == 1;
     }
 
     @Override

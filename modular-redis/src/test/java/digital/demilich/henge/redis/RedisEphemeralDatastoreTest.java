@@ -3,6 +3,7 @@ package digital.demilich.henge.redis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.SystemEphemeralDatastore.MemberId;
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -305,6 +306,96 @@ class RedisEphemeralDatastoreTest {
 
             assertThat(granted).isEqualTo(capacity);
             assertThat(store.read(key).members()).hasSize(capacity);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void aBucketIsSharedAcrossNodesAndRefusesPastItsCapacity() {
+        String key = freshKey();
+        var limit = RateLimit.perSecond(1, 5);
+
+        assertThat(store.tryAcquire(key, 3, limit)).isTrue();
+        assertThat(otherNode.tryAcquire(key, 2, limit)).isTrue();
+
+        assertThat(store.tryAcquire(key, 1, limit)).isFalse();
+        assertThat(otherNode.tryAcquire(key, 1, limit)).isFalse();
+    }
+
+    @Test
+    void aBucketLeaksOnTheServersClock() throws Exception {
+        String key = freshKey();
+        var limit = new RateLimit(2, 10, Duration.ofSeconds(1));
+        assertThat(store.tryAcquire(key, 2, limit)).isTrue();
+        assertThat(store.tryAcquire(key, 1, limit)).isFalse();
+
+        sleep(Duration.ofMillis(150));
+
+        assertThat(store.tryAcquire(key, 1, limit)).isTrue();
+        sleep(Duration.ofMillis(300));
+        assertThat(store.tryAcquire(key, 2, limit)).isTrue();
+    }
+
+    @Test
+    void aRequestLargerThanTheCapacityIsRefusedAndNegativeIsRejected() {
+        var limit = RateLimit.perSecond(1, 5);
+
+        assertThat(store.tryAcquire(freshKey(), 6, limit)).isFalse();
+        assertThatThrownBy(() -> store.tryAcquire(freshKey(), -1, limit)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aBucketAndMembersMayShareAKey() {
+        String key = freshKey();
+        store.claim(key, "a", 1, 5, Duration.ofSeconds(30));
+
+        assertThat(store.tryAcquire(key, 5, RateLimit.perSecond(1, 5))).isTrue();
+        assertThat(store.read(key).members()).hasSize(1);
+    }
+
+    @Test
+    void theLimiterKeepsWorkingWhenRedisForgetsItsScripts() {
+        String key = freshKey();
+        var limit = RateLimit.perSecond(1, 5);
+        assertThat(store.tryAcquire(key, 1, limit)).isTrue();
+
+        // SCRIPT FLUSH, as after a restart: the cached digest is now unknown to the server.
+        var client = io.lettuce.core.RedisClient.create("redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379));
+        try (var connection = client.connect()) {
+            connection.sync().scriptFlush();
+        } finally {
+            client.shutdown();
+        }
+
+        assertThat(store.tryAcquire(key, 1, limit)).isTrue();
+    }
+
+    @Test
+    void concurrentCallersNeverGetMoreThanTheBucketsCapacity() throws Exception {
+        String key = freshKey();
+        var limit = RateLimit.perSecond(1, 5);
+        int callers = 32;
+        var executor = Executors.newFixedThreadPool(callers);
+        var start = new CountDownLatch(1);
+        try {
+            var results = new ArrayList<Future<Boolean>>();
+            for (int i = 0; i < callers; i++) {
+                results.add(executor.submit(() -> {
+                    start.await();
+                    return store.tryAcquire(key, 1, limit);
+                }));
+            }
+            start.countDown();
+            int granted = 0;
+            for (var result : results) {
+                if (result.get()) {
+                    granted++;
+                }
+            }
+
+            // One permit a second leaks in while the callers race, so a sixth is allowed only if the race took over a second.
+            assertThat(granted).isBetween(5, 6);
         } finally {
             executor.shutdownNow();
         }

@@ -22,6 +22,7 @@ public final class InProcessEphemeralDatastore implements SystemEphemeralDatasto
     private final Epoch epoch = new Epoch(nodeId);
     private final InstantSource clock;
     private final Map<String, Map<String, Entry>> keys = new HashMap<>();
+    private final Map<String, Bucket> buckets = new HashMap<>();
 
     public InProcessEphemeralDatastore() {
         this(InstantSource.system());
@@ -86,6 +87,38 @@ public final class InProcessEphemeralDatastore implements SystemEphemeralDatasto
         return true;
     }
 
+    @Override
+    public synchronized boolean tryAcquire(String key, int amount, RateLimit limit) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("amount must not be negative, got " + amount);
+        }
+        // Levels are in units of 1/period of a permit, so leaking is exact: each elapsed millisecond
+        // drains `permits` units, and one permit is `period` units.
+        long period = limit.periodMillis();
+        long capacity = limit.capacity() * period;
+        long now = clock.instant().toEpochMilli();
+        Bucket bucket = buckets.get(key);
+        long level = 0;
+        if (bucket != null) {
+            long elapsed = Math.min(Math.max(0, now - bucket.at()), capacity);
+            level = Math.max(0, bucket.level() - elapsed * limit.permits());
+            now = Math.max(now, bucket.at());
+        }
+        if (level + amount * period > capacity) {
+            if (level == 0) {
+                buckets.remove(key);
+            }
+            return false;
+        }
+        level += amount * period;
+        if (level == 0) {
+            buckets.remove(key);
+        } else {
+            buckets.put(key, new Bucket(level, now));
+        }
+        return true;
+    }
+
     /** The key's live members, with the expired ones dropped; null if there are none and {@code create} is false. */
     private Map<String, Entry> liveMembers(String key, boolean create) {
         Map<String, Entry> members = keys.get(key);
@@ -119,6 +152,10 @@ public final class InProcessEphemeralDatastore implements SystemEphemeralDatasto
                     + "' was written with put, but the key is being claimed: a key is for claims or for put, never both.");
         }
         return SystemEphemeralDatastore.claimedAmount(entry.value());
+    }
+
+    /** A bucket's whole state: how full it was, and when. */
+    private record Bucket(long level, long at) {
     }
 
     private record Entry(byte[] value, Instant expiresAt) {

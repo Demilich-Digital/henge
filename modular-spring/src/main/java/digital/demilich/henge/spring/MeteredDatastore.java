@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -13,8 +14,9 @@ import java.util.function.Supplier;
  * what a lease that can't be renewed, or an advertisement that lapses, come down to.
  *
  * <p>Tags: {@code purpose} (who asked: the leases, the advertisements, or the routing of calls),
- * {@code operation} ({@code put}, {@code remove}, {@code read}, {@code claim}) and {@code outcome}
- * ({@code success} or {@code error}). A {@code claim} the cluster refuses is a success: the store did its job.
+ * {@code operation} ({@code put}, {@code remove}, {@code read}, {@code claim}, {@code tryAcquire}) and
+ * {@code outcome} ({@code success} or {@code error}). A {@code claim} or {@code tryAcquire} the
+ * cluster refuses is a success: the store did its job.
  */
 final class MeteredDatastore implements SystemEphemeralDatastore {
 
@@ -59,6 +61,11 @@ final class MeteredDatastore implements SystemEphemeralDatastore {
     @Override
     public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
         return timed("claim", () -> delegate.claim(key, localName, amount, capacity, ttl));
+    }
+
+    @Override
+    public boolean tryAcquire(String key, int amount, RateLimit limit) {
+        return timed("tryAcquire", () -> delegate.tryAcquire(key, amount, limit));
     }
 
     private <T> T timed(String operation, Supplier<T> call) {

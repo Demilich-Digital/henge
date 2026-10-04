@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
+import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastoreProvider;
 import digital.demilich.henge.redis.RedisEphemeralDatastore;
@@ -75,6 +76,11 @@ class ModularStoreSelectionTest {
         @Override
         public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
             return delegate.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+            return delegate.tryAcquire(key, amount, limit);
         }
 
         @Override

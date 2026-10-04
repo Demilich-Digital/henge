@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
+import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import java.time.Duration;
 import java.time.Instant;
@@ -53,6 +54,11 @@ class AdvertisedEndpointsTest {
         @Override
         public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
             return inner.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+            return inner.tryAcquire(key, amount, limit);
         }
     };
 

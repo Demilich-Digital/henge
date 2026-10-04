@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
+import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
@@ -73,6 +74,12 @@ class MicrometerSystemMetricsTest {
         public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
             check();
             return delegate.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+            check();
+            return delegate.tryAcquire(key, amount, limit);
         }
     }
 
