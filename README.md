@@ -175,6 +175,11 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   the service is embedded. The dispatcher's own failures use `400` (malformed request/arguments),
   `403` (bad secret) and `404` (unknown service/version/method); those bodies carry no exception
   type, so they stay distinguishable from an annotated business exception that reuses the code.
+- **Logging a failure.** The caller only gets the exception's type and message, so the serving
+  process logs the stack trace: a failure answered with a `5xx` at `ERROR`, a `4xx` at `DEBUG`.
+  `@ErrorLogLevel(ErrorLogLevel.Level.WARN)` (`digital.demilich.henge.core`) on the exception
+  overrides that, independently of its status — `NONE` turns it off, any other level logs there.
+  `ServiceVersionUnsupportedException` carries `DEBUG`: it's the caller's mistake.
 - The runtime wiring itself is just `BeanDefinitionRegistry` manipulation, `java.lang.reflect.Proxy`,
   and Spring's own `@Primary`/qualifier autowiring machinery — no bytecode generation there. See
   the Javadoc on
@@ -328,7 +333,7 @@ pattern for any module that calls into a `@ModularService`.
 
 | Module | Contents |
 |---|---|
-| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, the `ServiceTransport` seam, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, the `ServiceTransport` seam, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
 | `modular-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges and names). Declared to Gradle as an aggregating incremental processor. Depends only on `modular-core` — no Spring. |
 | `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
 | `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, registers the dispatcher in servlet web applications behind the `modular.server.enabled` property gate, ships configuration metadata for IDE completion of `modular.*`, and — when Spring Security is present — adds the dedicated security chain for `/_modular` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |

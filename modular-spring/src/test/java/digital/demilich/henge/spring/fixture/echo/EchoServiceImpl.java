@@ -2,6 +2,7 @@ package digital.demilich.henge.spring.fixture.echo;
 
 import digital.demilich.henge.core.ImmutableList;
 import digital.demilich.henge.core.ServiceVersion;
+import digital.demilich.henge.core.ServiceVersionUnsupportedException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @ServiceVersion(value = EchoService.class, version = 1)
@@ -20,6 +21,9 @@ public class EchoServiceImpl implements EchoService {
         switch (reason) {
             case "not-found" -> throw new EchoNotFoundException(reason);
             case "bad-status" -> throw new EchoBadStatusException(reason);
+            case "quiet" -> throw new EchoQuietException(reason);
+            case "warned" -> throw new EchoWarnedException(reason);
+            case "unsupported" -> throw new ServiceVersionUnsupportedException(reason);
             default -> throw new EchoFailureException(reason);
         }
     }

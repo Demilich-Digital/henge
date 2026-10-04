@@ -19,6 +19,8 @@ import java.lang.annotation.Target;
  * public class WidgetNotFoundException extends RuntimeException { ... }
  * }</pre>
  *
+ * <p>How the serving process logs it is chosen separately, with {@link ErrorLogLevel}.
+ *
  * <p>Only the status changes: the caller still gets the original exception type reconstructed, as
  * with any other business exception (see the README). Has no effect when the service is embedded,
  * since no HTTP response is involved. Must be a {@code 4xx} or {@code 5xx} code: {@code modular-processor}

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.exc.StreamReadException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import digital.demilich.henge.core.ErrorLogLevel;
 import digital.demilich.henge.core.ErrorStatus;
 import java.io.IOException;
 import java.io.InputStream;
@@ -209,16 +210,24 @@ class ModularDispatcherController {
     /**
      * The caller only gets the exception's type and message, and Spring doesn't log an exception an
      * {@code @ExceptionHandler} handles -- without this, the stack trace of a failure in a split
-     * service would exist nowhere. A {@code 4xx} (an {@link ErrorStatus} the service chose) is the
-     * caller's mistake rather than this process's, so it's only logged at debug.
+     * service would exist nowhere. By default a {@code 5xx} is logged at error and a {@code 4xx} (an
+     * {@link ErrorStatus} the service chose: the caller's mistake, not this process's) at debug;
+     * {@link ErrorLogLevel} on the exception overrides that, including turning it off.
      */
     private static void logFailure(String service, int version, String method, HttpStatusCode status, Throwable cause) {
+        ErrorLogLevel override = cause.getClass().getAnnotation(ErrorLogLevel.class);
+        ErrorLogLevel.Level level = override != null
+                ? override.value()
+                : status.is5xxServerError() ? ErrorLogLevel.Level.ERROR : ErrorLogLevel.Level.DEBUG;
         String message = "Modular service '" + service + "' version " + version + " failed in '" + method
                 + "'; answering " + status.value();
-        if (status.is5xxServerError()) {
-            log.error(message, cause);
-        } else if (log.isDebugEnabled()) {
-            log.debug(message, cause);
+        switch (level) {
+            case NONE -> { }
+            case TRACE -> log.trace(message, cause);
+            case DEBUG -> log.debug(message, cause);
+            case INFO -> log.info(message, cause);
+            case WARN -> log.warn(message, cause);
+            case ERROR -> log.error(message, cause);
         }
     }
 

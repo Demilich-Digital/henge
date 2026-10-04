@@ -56,6 +56,7 @@ class ModularDispatcherControllerLoggingTest {
                 List.of(ModularServiceDescriptor.of("echo-service", 1, EchoService.class, "echo-service-1")));
         controller = new ModularDispatcherController(
                 context, registry, ModularTransportSupport.objectMapper(), new ModularProperties(new MockEnvironment()));
+        records.clear(); // the controller's own startup line ("modular.transport.secret is not set ...")
     }
 
     @AfterEach
@@ -86,5 +87,34 @@ class ModularDispatcherControllerLoggingTest {
         explode("not-found"); // EchoNotFoundException is @ErrorStatus(404)
 
         assertThat(records).noneMatch(logRecord -> logRecord.getLevel().intValue() >= Level.WARNING.intValue());
+    }
+
+    @Test
+    void errorLogLevelCanSilenceAFailure() {
+        explode("quiet"); // unannotated status, so a 500 -- but @ErrorLogLevel(NONE)
+
+        assertThat(records).isEmpty();
+    }
+
+    @Test
+    void errorLogLevelOverridesTheStatusBasedDefault() {
+        explode("warned"); // @ErrorStatus(409), which would default to debug
+
+        assertThat(records).singleElement().satisfies(logRecord -> {
+            assertThat(logRecord.getLevel()).isEqualTo(Level.WARNING);
+            assertThat(logRecord.getMessage()).contains("409");
+        });
+    }
+
+    @Test
+    void callingOutsideTheVersionRangeIsTheCallersMistakeNotAnError() {
+        logger.setLevel(Level.ALL);
+        try {
+            explode("unsupported"); // ServiceVersionUnsupportedException: 501, @ErrorLogLevel(DEBUG)
+
+            assertThat(records).singleElement().satisfies(logRecord -> assertThat(logRecord.getLevel()).isEqualTo(Level.FINE));
+        } finally {
+            logger.setLevel(null);
+        }
     }
 }
