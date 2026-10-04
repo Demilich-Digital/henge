@@ -1,8 +1,10 @@
 package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.Lease;
+import digital.demilich.henge.core.LeasedResource;
 import digital.demilich.henge.core.ModularService;
 import digital.demilich.henge.core.RequiresLease;
+import digital.demilich.henge.core.ResourceProvider;
 import digital.demilich.henge.core.ServiceNames;
 import digital.demilich.henge.core.ServiceVersion;
 import java.lang.reflect.Constructor;
@@ -27,7 +29,9 @@ import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.context.EnvironmentAware;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.context.annotation.ImportBeanDefinitionRegistrar;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.env.Environment;
+import org.springframework.util.ClassUtils;
 import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.type.AnnotationMetadata;
@@ -102,6 +106,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         Set<String> basePackages = resolveBasePackages(importingClassMetadata);
         Set<Class<?>> serviceInterfaces = discoverServiceInterfaces(basePackages, classLoader);
         Map<Class<?>, Map<Integer, Class<?>>> localImpls = discoverServiceVersionImpls(basePackages, serviceInterfaces, classLoader);
+        Map<String, ProviderDeclaration> providers = discoverLeasedResources(basePackages, classLoader);
         ModularProperties properties = new ModularProperties(environment);
         ServeSpec serveSpec = ServeSpec.parse(properties.getServe());
 
@@ -109,7 +114,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         List<ModularTopologyCatalog.Entry> catalogEntries = new ArrayList<>();
         List<String> serviceBeanNames = new ArrayList<>();
         Set<String> leasedBeanNames = new LinkedHashSet<>();
-        Set<String> declaredLeaseNames = new LinkedHashSet<>();
+        Set<String> declaredLeaseNames = new LinkedHashSet<>(providers.keySet());
+        Set<String> providersInUse = new LinkedHashSet<>();
         Map<String, Class<?>> namesToInterfaces = new LinkedHashMap<>();
 
         for (Class<?> serviceInterface : serviceInterfaces) {
@@ -166,17 +172,17 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                                 + "modular.services." + name + ".versions." + version + ".mode=internal-rest with a matching "
                                 + ".url pointing at the process that hosts it.");
                     }
-                    List<RequiresLease> declaredLeases = List.of(implClass.getAnnotationsByType(RequiresLease.class));
-                    if (declaredLeases.isEmpty()) {
+                    if (!declaresLeases(implClass)) {
                         definition = new RootBeanDefinition(implClass);
                     } else {
                         definition = new RootBeanDefinition(ModularLeasedServiceFactoryBean.class);
                         LeasedImplementation leased =
-                                leasedImplementation(properties, serviceInterface, name, version, implClass, declaredLeases);
+                                leasedImplementation(properties, serviceInterface, name, version, implClass, providers);
                         definition.getConstructorArgumentValues().addIndexedArgumentValue(0, leased);
                         definition.setDependsOn(LEASE_KEEPER_BEAN_NAME);
                         leasedBeanNames.add(beanName);
-                        declaredLeases.forEach(lease -> declaredLeaseNames.add(lease.value()));
+                        leased.needs().forEach(need -> declaredLeaseNames.add(need.name()));
+                        providersInUse.addAll(leased.resourceParameters().values());
                     }
                     embedded.add(ModularServiceDescriptor.of(name, version, serviceInterface, beanName));
                 } else {
@@ -228,6 +234,14 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 .addConstructorArgValue(serviceBeanNames)
                 .getBeanDefinition());
 
+        for (String lease : providersInUse) {
+            // Built through the bean factory like an implementation, so it can take what it needs, but
+            // never an autowire candidate: the resource it makes is what a service asks for.
+            RootBeanDefinition provider = new RootBeanDefinition(providers.get(lease).providerClass());
+            provider.setAutowireCandidate(false);
+            registry.registerBeanDefinition(ModularLeaseKeeper.providerBeanName(lease), provider);
+        }
+
         if (!leasedBeanNames.isEmpty()) {
             // The datastore (constructor argument 0) is autowired; only the TTL is given.
             BeanDefinition keeper = BeanDefinitionBuilder.genericBeanDefinition(ModularLeaseKeeper.class).getBeanDefinition();
@@ -260,19 +274,44 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
         if (implClass == null) {
             return List.of();
         }
-        return Arrays.stream(implClass.getAnnotationsByType(RequiresLease.class))
-                .map(declared -> new ModularTopologyCatalog.LeaseDeclaration(declared.value(),
-                        properties.leaseAmount(declared.value()), properties.leaseCapacity(declared.value())))
+        Set<String> names = new LinkedHashSet<>();
+        for (Constructor<?> constructor : implClass.getDeclaredConstructors()) {
+            for (Parameter parameter : constructor.getParameters()) {
+                RequiresLease declared = parameter.getAnnotation(RequiresLease.class);
+                if (declared != null) {
+                    names.add(declared.value());
+                }
+            }
+        }
+        return names.stream()
+                .map(lease -> new ModularTopologyCatalog.LeaseDeclaration(lease, properties.leaseAmount(lease), properties.leaseCapacity(lease)))
                 .toList();
+    }
+
+    /** Whether any constructor of {@code implClass} takes a leased parameter. */
+    private static boolean declaresLeases(Class<?> implClass) {
+        for (Constructor<?> constructor : implClass.getDeclaredConstructors()) {
+            for (Parameter parameter : constructor.getParameters()) {
+                if (parameter.isAnnotationPresent(RequiresLease.class)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** A {@link ResourceProvider} found by scanning: the lease it builds the resource of, and the type of that resource. */
+    private record ProviderDeclaration(String lease, Class<?> providerClass, Class<?> resourceType) {
     }
 
     /**
      * Everything a leased implementation needs, checked now so a mistake fails startup naming the
-     * property or parameter to fix: each lease's capacity and this service's amount are configured and
-     * the amount fits the capacity, and every {@code Lease} constructor parameter says which lease it is.
+     * property or parameter to fix: each lease's capacity and amount are configured and the amount
+     * fits the capacity, a {@code Lease} parameter says which lease it is, and a parameter that asks
+     * for a resource has a provider whose resource fits it.
      */
     private LeasedImplementation leasedImplementation(ModularProperties properties, Class<?> serviceInterface,
-            String name, int version, Class<?> implClass, List<RequiresLease> declaredLeases) {
+            String name, int version, Class<?> implClass, Map<String, ProviderDeclaration> providers) {
         String who = name + "@" + version + " (" + implClass.getName() + ")";
         if (properties.getRemoteUrlTemplate() != null) {
             throw new IllegalStateException(who + " declares @RequiresLease, which can't be combined with "
@@ -280,61 +319,107 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                     + "and a process that is refused a lease doesn't. Route to it with an explicit "
                     + "modular.services." + name + ".url instead.");
         }
-        List<LeaseNeed> needs = new ArrayList<>();
-        Set<String> names = new LinkedHashSet<>();
-        for (RequiresLease declared : declaredLeases) {
-            String lease = declared.value();
-            if (!ServiceNames.isValidServiceName(lease)) {
-                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but a lease name must be "
-                        + "lowercase kebab case ([a-z0-9]+ separated by single '-'): it is a modular.leases.<name> property key.");
-            }
-            if (!names.add(lease)) {
-                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\") twice.");
-            }
-            Integer capacity = properties.leaseCapacity(lease);
-            if (capacity == null) {
-                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.leases."
-                        + lease + ".capacity isn't set: the lease has no cluster-wide capacity to share out.");
-            }
-            Integer amount = properties.leaseAmount(lease);
-            if (amount == null) {
-                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.leases."
-                        + lease + ".amount isn't set: how much of the lease does one node claim?");
-            }
-            if (amount > capacity) {
-                throw new IllegalStateException("modular.leases." + lease + ".amount=" + amount
-                        + " exceeds modular.leases." + lease + ".capacity=" + capacity + ": " + who + " could never be granted it.");
-            }
-            needs.add(new LeaseNeed(lease, amount, capacity));
-        }
-
-        Map<Integer, String> leaseParameters = new LinkedHashMap<>();
         Constructor<?> constructor;
         try {
             constructor = BeanUtils.getResolvableConstructor(implClass);
         } catch (IllegalStateException e) {
             throw new IllegalStateException(who + " declares @RequiresLease, so it needs one constructor Henge can pass its "
-                    + "Lease to: give it a single constructor, or mark one @Autowired.", e);
-        }
-        Parameter[] parameters = constructor.getParameters();
-        for (int i = 0; i < parameters.length; i++) {
-            if (parameters[i].getType() != Lease.class) {
-                continue;
-            }
-            RequiresLease marked = parameters[i].getAnnotation(RequiresLease.class);
-            String lease = marked != null ? marked.value() : (names.size() == 1 ? names.iterator().next() : null);
-            if (lease == null) {
-                throw new IllegalStateException(who + " declares several leases " + names + ", so its Lease constructor "
-                        + "parameter '" + parameters[i].getName() + "' must say which one with @RequiresLease(\"...\").");
-            }
-            if (!names.contains(lease)) {
-                throw new IllegalStateException(who + ": constructor parameter '" + parameters[i].getName()
-                        + "' asks for lease '" + lease + "', which the class doesn't declare (declared: " + names + ").");
-            }
-            leaseParameters.put(i, lease);
+                    + "leases to: give it a single constructor, or mark one @Autowired.", e);
         }
 
-        return new LeasedImplementation(serviceInterface, name, version, implClass, needs, leaseParameters);
+        Map<String, LeaseNeed> needs = new LinkedHashMap<>();
+        Map<Integer, String> leaseParameters = new LinkedHashMap<>();
+        Map<Integer, String> resourceParameters = new LinkedHashMap<>();
+        Parameter[] parameters = constructor.getParameters();
+        for (int i = 0; i < parameters.length; i++) {
+            Parameter parameter = parameters[i];
+            RequiresLease marked = parameter.getAnnotation(RequiresLease.class);
+            if (marked == null) {
+                if (parameter.getType() == Lease.class) {
+                    throw new IllegalStateException(who + ": constructor parameter '" + parameter.getName() + "' is a Lease, so it "
+                            + "must say which one with @RequiresLease(\"...\").");
+                }
+                continue;
+            }
+            String lease = marked.value();
+            if (!ServiceNames.isValidServiceName(lease)) {
+                throw new IllegalStateException(who + ": parameter '" + parameter.getName() + "' declares @RequiresLease(\"" + lease
+                        + "\"), but a lease name must be lowercase kebab case ([a-z0-9]+ separated by single '-'): it is a "
+                        + "modular.leases.<name> property key.");
+            }
+            if (!needs.containsKey(lease)) {
+                needs.put(lease, leaseNeed(properties, who, lease));
+            }
+            if (parameter.getType() == Lease.class) {
+                leaseParameters.put(i, lease);
+                continue;
+            }
+            ProviderDeclaration provider = providers.get(lease);
+            if (provider == null) {
+                throw new IllegalStateException(who + ": parameter '" + parameter.getName() + "' asks for the resource of lease '"
+                        + lease + "', but no @LeasedResource(\"" + lease + "\") provider was found. Add one, or take a Lease "
+                        + "parameter instead and build the resource yourself.");
+            }
+            if (!ClassUtils.isAssignable(parameter.getType(), provider.resourceType())) {
+                throw new IllegalStateException(who + ": parameter '" + parameter.getName() + "' is a "
+                        + parameter.getType().getName() + ", but the provider of lease '" + lease + "' ("
+                        + provider.providerClass().getName() + ") makes a " + provider.resourceType().getName() + ".");
+            }
+            resourceParameters.put(i, lease);
+        }
+
+        return new LeasedImplementation(serviceInterface, name, version, implClass, List.copyOf(needs.values()),
+                leaseParameters, resourceParameters);
+    }
+
+    private static LeaseNeed leaseNeed(ModularProperties properties, String who, String lease) {
+        Integer capacity = properties.leaseCapacity(lease);
+        if (capacity == null) {
+            throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.leases."
+                    + lease + ".capacity isn't set: the lease has no cluster-wide capacity to share out.");
+        }
+        Integer amount = properties.leaseAmount(lease);
+        if (amount == null) {
+            throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.leases."
+                    + lease + ".amount isn't set: how much of the lease does one node claim?");
+        }
+        if (amount > capacity) {
+            throw new IllegalStateException("modular.leases." + lease + ".amount=" + amount
+                    + " exceeds modular.leases." + lease + ".capacity=" + capacity + ": " + who + " could never be granted it.");
+        }
+        return new LeaseNeed(lease, amount, capacity);
+    }
+
+    /** Every {@code @LeasedResource} provider in the scanned packages, by the lease it builds the resource of. */
+    private Map<String, ProviderDeclaration> discoverLeasedResources(Set<String> basePackages, ClassLoader classLoader) {
+        Map<String, ProviderDeclaration> found = new LinkedHashMap<>();
+        LeasedResourceScanner scanner = new LeasedResourceScanner(classLoader);
+        for (String basePackage : basePackages) {
+            for (BeanDefinition candidate : scanner.findCandidateComponents(basePackage)) {
+                Class<?> providerClass = resolveClass(candidate.getBeanClassName(), classLoader);
+                String lease = providerClass.getAnnotation(LeasedResource.class).value();
+                if (!ResourceProvider.class.isAssignableFrom(providerClass)) {
+                    throw new IllegalStateException(providerClass.getName() + " is annotated @LeasedResource(\"" + lease
+                            + "\") but does not implement ResourceProvider.");
+                }
+                if (!ServiceNames.isValidServiceName(lease)) {
+                    throw new IllegalStateException(providerClass.getName() + " is annotated @LeasedResource(\"" + lease
+                            + "\"), but a lease name must be lowercase kebab case ([a-z0-9]+ separated by single '-'): it is a "
+                            + "modular.leases.<name> property key.");
+                }
+                Class<?> resourceType = ResolvableType.forClass(providerClass).as(ResourceProvider.class).getGeneric(0).resolve();
+                if (resourceType == null) {
+                    throw new IllegalStateException(providerClass.getName() + " is a ResourceProvider whose resource type can't be "
+                            + "told: implement ResourceProvider<SomeType> with a concrete type.");
+                }
+                ProviderDeclaration existing = found.put(lease, new ProviderDeclaration(lease, providerClass, resourceType));
+                if (existing != null) {
+                    throw new IllegalStateException("Two providers for lease '" + lease + "': " + existing.providerClass().getName()
+                            + " and " + providerClass.getName() + " -- a lease has at most one @LeasedResource.");
+                }
+            }
+        }
+        return found;
     }
 
     private static void addServiceVersionQualifier(RootBeanDefinition definition, Class<?> serviceInterface, int version) {
@@ -494,6 +579,16 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
             super(false);
             setResourceLoader(new DefaultResourceLoader(classLoader));
             addIncludeFilter(new AnnotationTypeFilter(ServiceVersion.class));
+        }
+    }
+
+    /** Finds {@link LeasedResource} providers: concrete classes, which is what a provider is. */
+    private static final class LeasedResourceScanner extends ClassPathScanningCandidateComponentProvider {
+
+        LeasedResourceScanner(ClassLoader classLoader) {
+            super(false);
+            setResourceLoader(new DefaultResourceLoader(classLoader));
+            addIncludeFilter(new AnnotationTypeFilter(LeasedResource.class));
         }
     }
 }

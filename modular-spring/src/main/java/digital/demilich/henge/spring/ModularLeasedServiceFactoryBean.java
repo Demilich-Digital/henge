@@ -75,6 +75,8 @@ class ModularLeasedServiceFactoryBean implements SmartFactoryBean<Object>, Appli
             LeaseNeed need = leased.needs().stream().filter(n -> n.name().equals(leaseName)).findFirst().orElseThrow();
             definition.getConstructorArgumentValues().addIndexedArgumentValue(index, new Lease(need.name(), need.amount()));
         });
+        leased.resourceParameters().forEach((index, leaseName) ->
+                definition.getConstructorArgumentValues().addIndexedArgumentValue(index, keeper.resource(leaseName)));
         registry.registerBeanDefinition(implBeanName, definition);
         try {
             Object implementation = applicationContext.getBean(implBeanName);

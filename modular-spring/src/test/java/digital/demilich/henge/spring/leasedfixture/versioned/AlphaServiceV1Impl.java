@@ -5,12 +5,11 @@ import digital.demilich.henge.core.RequiresLease;
 import digital.demilich.henge.core.ServiceVersion;
 
 @ServiceVersion(value = AlphaService.class, version = 1)
-@RequiresLease("shared-db")
 public class AlphaServiceV1Impl implements AlphaService {
 
     private final Lease lease;
 
-    public AlphaServiceV1Impl(Lease lease) {
+    public AlphaServiceV1Impl(@RequiresLease("shared-db") Lease lease) {
         this.lease = lease;
     }
 

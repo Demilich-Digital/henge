@@ -336,9 +336,9 @@ pattern for any module that calls into a `@ModularService`.
 
 | Module | Contents |
 |---|---|
-| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, `@RequiresLease` / `Lease`, the `ServiceTransport` seam, the `SystemEphemeralDatastore` contract and its `InProcessEphemeralDatastore`, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
+| `modular-core` | `@ModularService`, `@ServiceVersion`, `@ServiceMethod`, `@AddedIn`, `@DeprecatedSince`, `@ErrorStatus`, `@ErrorLogLevel`, `@RequiresLease` / `Lease`, `@LeasedResource` / `ResourceProvider`, the `ServiceTransport` seam, the `SystemEphemeralDatastore` contract and its `InProcessEphemeralDatastore`, `RemoteServiceException`, `ServiceVersionUnsupportedException`. The only Spring dependency in this module is `spring-beans`, for `@ServiceVersion`'s `@Qualifier` meta-annotation — nothing else. |
 | `modular-processor` | The compile-time half: generates `{Interface}Skeleton` classes for `@AddedIn`/`@DeprecatedSince`, validates `@ServiceVersion` implementations against them, and enforces the boundary rules (immutable boundary types, no checked exceptions, no generics/overloads/statics, sane version ranges and names). Declared to Gradle as an aggregating incremental processor. Depends only on `modular-core` — no Spring. |
-| `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, leases (`@RequiresLease` enforcement and renewal), service advertisements and advertisement-based routing, retries, the topology endpoint and page, datastore selection (`modular.store.type`), plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
+| `modular-spring` | The actual mechanism, and Boot-free: `@EnableModularServices`, the bean-wiring registrar, the internal-rest transport, the dispatcher controller, leases (`@RequiresLease` enforcement, renewal and their resources), service advertisements and advertisement-based routing, retries, the topology endpoint and page, datastore selection (`modular.store.type`), plus `ModularTransportConfiguration`/`ModularDispatcherConfiguration`/`ModularConfiguration` — plain `@Configuration` classes a non-Boot consumer `@Import`s explicitly. Depends only on `spring-context`/`spring-web` (plus `spring-webmvc` at the consumer's own request for dispatch) — no Spring Boot anywhere. |
 | `modular-spring-boot-starter` | A thin classpath-autodetection layer on top of `modular-spring`: `@AutoConfiguration` that imports the same transport wiring automatically, registers the dispatcher in servlet web applications behind the `modular.server.enabled` property gate, ships configuration metadata for IDE completion of `modular.*`, and — when Spring Security is present — adds the dedicated security chain for `/_modular` (see "Spring Security" above). These are the things a Boot classpath gets "for free" that a plain-Spring one doesn't. |
 | `modular-redis` | `RedisEphemeralDatastore`: a `SystemEphemeralDatastore` on Redis 7.4+ (hash-field TTLs, one Lua script per operation, so `claim` is atomic across nodes). Needs Lettuce; no Spring. Add the module and set `modular.store.type=redis` and `modular.store.redis.uri`. |
 | `examples/example-contracts` | `GreetingService` / `AuditService` — the two `@ModularService` interfaces used by the demo; `AuditService` has an `@AddedIn(2)` method. |
@@ -539,15 +539,27 @@ Every node can host every service, so a resource with a hard cap, like a databas
 connections, would see its pool count grow with the number of nodes. Declare what a service needs and
 Henge keeps the cluster under the cap by not constructing the service on a node that can't get it:
 
+A lease has a provider that builds its resource once per node, and any number of services that ask for it:
+
 ```java
-@ServiceVersion(value = OrderService.class, version = 1)
-@RequiresLease("orders-db")
-public class OrderServiceImpl implements OrderService {
-    public OrderServiceImpl(Lease ordersDb) {
-        config.setMaximumPoolSize(ordersDb.amount());   // size the resource FROM the lease
+@LeasedResource("orders-db")
+public class OrdersDb implements ResourceProvider<DataSource> {
+    public DataSource open(Lease lease) {
+        HikariConfig config = /* ... */;
+        config.setMaximumPoolSize(lease.amount());       // size the resource FROM the lease
+        return new HikariDataSource(config);
     }
+    // close() defaults to closing an AutoCloseable, which a pool is
+}
+
+@ServiceVersion(value = OrderService.class, version = 1)
+public class OrderServiceImpl implements OrderService {
+    public OrderServiceImpl(@RequiresLease("orders-db") DataSource orders) { ... }
 }
 ```
+
+Every service and version that asks for `orders-db` is handed the same `DataSource`. The provider is
+built through Spring like an implementation, so it can take configuration in its constructor.
 
 ```yaml
 modular:
@@ -558,22 +570,30 @@ modular:
 ```
 
 A lease is a node-level claim: every service on a node that declares `orders-db` shares the node's one
-claim of `modular.leases.orders-db.amount`, however many services and versions that is. All of a
-service's leases are acquired before its implementation is constructed, or none are. If they are
+claim of `modular.leases.orders-db.amount`, however many services and versions that is, and the one
+resource its provider builds. All of a service's leases are acquired before its implementation is
+constructed, or none are. If they are
 refused, the service is reached over `internal-rest` like any other remote one: at its explicit
 `modular.services.<name>.url` if there is one, otherwise wherever it is advertised (see "Service
 advertisements"). `modular.remote-url-template` can't be combined with leases, since the template
 assumes every node behind the name hosts the service. A claim is renewed on a heartbeat and handed back
-when the last service on it lets go, whether it was stopped or failed to start; a crashed node gives
+(and its resource closed) when the last service on it lets go, whether it was stopped or failed to start; a crashed node gives
 its share back after the lease's 30-second TTL.
 
 What Henge does and doesn't do:
 
+- **A provider is optional.** A lease with none works too: take a `Lease` parameter
+  (`@RequiresLease("orders-db") Lease ordersDb`) and build the resource yourself, sized from
+  `ordersDb.amount()`. That is the explicit way around a provider, and then each service that does it
+  opens its own, so services sharing a lease that way share the claim but not a pool: give one that
+  needs its own share its own lease.
 - **It keeps books; it never sees a connection.** Size the real resource from `Lease.amount()`, and
-  keep the resource inside the service: a shared pool bean (or JPA, Flyway, ...) opens its connections
-  whether or not the service was built here. Services sharing a lease share its claim, not a pool:
-  each one that builds its own from `Lease.amount()` opens that many connections, so give a service
-  that needs its own share its own lease.
+  keep it out of beans the application shares: a shared pool bean (or JPA, Flyway, ...) opens its
+  connections whether or not the service was built here. A provider's resource is exactly that: built
+  only where the lease was granted.
+- **Mistakes fail startup.** A parameter asking for a resource whose lease has no provider, a resource
+  that doesn't fit the parameter's type, two providers for one lease, and a `Lease` parameter that
+  doesn't say which lease it is all say what to fix.
 - **An amount larger than the capacity fails startup**, since no node could ever be granted it.
 - **The cap is soft.** Shared state lives in a `SystemEphemeralDatastore` (in-process by default, so a
   single node always grants what fits). To share it across nodes, add `modular-redis` and set

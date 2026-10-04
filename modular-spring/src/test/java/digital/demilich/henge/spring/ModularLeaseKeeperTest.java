@@ -1,14 +1,19 @@
 package digital.demilich.henge.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
+import digital.demilich.henge.core.Lease;
+import digital.demilich.henge.core.ResourceProvider;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
 class ModularLeaseKeeperTest {
 
@@ -114,5 +119,86 @@ class ModularLeaseKeeperTest {
 
         assertThat(keeper.hosts("a@1")).isFalse();
         assertThat(store.read("lease:db").members()).isEmpty();
+    }
+
+    /** Opens an {@code Object} sized from the lease, counting what it opened and closed. */
+    private static final class CountingProvider implements ResourceProvider<Object> {
+        final AtomicInteger opened = new AtomicInteger();
+        final AtomicInteger closed = new AtomicInteger();
+        int lastAmount;
+
+        @Override
+        public Object open(Lease lease) {
+            opened.incrementAndGet();
+            lastAmount = lease.amount();
+            return new Object();
+        }
+
+        @Override
+        public void close(Object resource) {
+            closed.incrementAndGet();
+        }
+    }
+
+    private void providerFor(String lease, ResourceProvider<?> provider) {
+        var beans = new DefaultListableBeanFactory();
+        beans.registerSingleton(ModularLeaseKeeper.providerBeanName(lease), provider);
+        keeper.setBeanFactory(beans);
+    }
+
+    @Test
+    void aResourceIsOpenedOnceSharedAndClosedWhenItsLastHolderLetsGo() {
+        var provider = new CountingProvider();
+        providerFor("db", provider);
+        var need = new LeaseNeed("db", 7, 10);
+
+        keeper.acquireAll("a@1", List.of(need));
+        keeper.acquireAll("b@1", List.of(need));
+
+        assertThat(provider.opened).hasValue(1);
+        assertThat(provider.lastAmount).isEqualTo(7);
+        assertThat(keeper.resource("db")).isSameAs(keeper.resource("db"));
+
+        keeper.release("a@1");
+        assertThat(provider.closed).hasValue(0);
+        keeper.release("b@1");
+        assertThat(provider.closed).hasValue(1);
+        assertThat(store.read("lease:db").members()).isEmpty();
+    }
+
+    @Test
+    void aRefusedLeaseNeverOpensItsResource() {
+        var provider = new CountingProvider();
+        providerFor("db", provider);
+        store.claim("lease:db", "other-node", 8, 10, Duration.ofSeconds(30));
+
+        assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNotNull();
+
+        assertThat(provider.opened).hasValue(0);
+    }
+
+    @Test
+    void aResourceThatFailsToOpenHandsBackEverythingClaimedAndOpened() {
+        var good = new CountingProvider();
+        var bad = new ResourceProvider<Object>() {
+            @Override
+            public Object open(Lease lease) {
+                throw new IllegalStateException("database is down");
+            }
+        };
+        var beans = new DefaultListableBeanFactory();
+        beans.registerSingleton(ModularLeaseKeeper.providerBeanName("a-db"), good);
+        beans.registerSingleton(ModularLeaseKeeper.providerBeanName("b-db"), bad);
+        keeper.setBeanFactory(beans);
+
+        assertThatThrownBy(() -> keeper.acquireAll("a@1", List.of(new LeaseNeed("a-db", 5, 10), new LeaseNeed("b-db", 5, 10))))
+                .hasMessageContaining("provider of lease 'b-db' failed to open its resource")
+                .hasRootCauseMessage("database is down");
+
+        // 'a-db' was opened before 'b-db' failed, and is closed again along with both claims.
+        assertThat(good.closed).hasValue(good.opened.get());
+        assertThat(store.read("lease:a-db").members()).isEmpty();
+        assertThat(store.read("lease:b-db").members()).isEmpty();
+        assertThat(keeper.hosts("a@1")).isFalse();
     }
 }

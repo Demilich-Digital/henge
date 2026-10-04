@@ -4,13 +4,11 @@ import digital.demilich.henge.core.Lease;
 import digital.demilich.henge.core.RequiresLease;
 import digital.demilich.henge.core.ServiceVersion;
 
-/** Two leases, and a {@code Lease} parameter that doesn't say which: rejected at startup. */
+/** A {@code Lease} parameter that doesn't say which lease it is: rejected at startup. */
 @ServiceVersion(value = TwoLeaseService.class, version = 1)
-@RequiresLease("db-a")
-@RequiresLease("db-b")
 public class TwoLeaseServiceImpl implements TwoLeaseService {
 
-    public TwoLeaseServiceImpl(Lease lease) {
+    public TwoLeaseServiceImpl(@RequiresLease("db-a") Lease a, Lease b) {
     }
 
     @Override

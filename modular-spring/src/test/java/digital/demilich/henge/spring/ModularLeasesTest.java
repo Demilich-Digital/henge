@@ -7,6 +7,9 @@ import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.spring.leasedfixture.ledger.LedgerService;
 import digital.demilich.henge.spring.leasedfixture.ledger.ReportService;
+import digital.demilich.henge.spring.leasedfixture.provided.FakePool;
+import digital.demilich.henge.spring.leasedfixture.provided.PooledOneService;
+import digital.demilich.henge.spring.leasedfixture.provided.PooledTwoService;
 import digital.demilich.henge.spring.leasedfixture.two.TwoLeaseService;
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -28,6 +31,31 @@ class ModularLeasesTest {
     @Configuration
     @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.versioned")
     static class VersionedConfig {
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.provided")
+    static class ProvidedConfig {
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.failing")
+    static class FailingConfig {
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.noprovider")
+    static class NoProviderConfig {
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.mismatch")
+    static class MismatchConfig {
+    }
+
+    @Configuration
+    @EnableModularServices(basePackages = "digital.demilich.henge.spring.leasedfixture.twoproviders")
+    static class TwoProvidersConfig {
     }
 
     @Configuration
@@ -340,6 +368,78 @@ class ModularLeasesTest {
             // db-a was granted, then db-b was refused: the service is remote, and db-a has no use here.
             assertThat(ctx.getBean(ModularServiceRegistry.class).hosted()).isEmpty();
             assertThat(ctx.getBean(SystemEphemeralDatastore.class).read("lease:db-a").members()).isEmpty();
+        }
+    }
+
+    private static Map<String, Object> lease(String name, int capacity, int amount) {
+        return Map.of("modular.leases." + name + ".capacity", capacity, "modular.leases." + name + ".amount", amount);
+    }
+
+    @Test
+    void servicesOnALeaseWithAProviderShareItsOneResource() {
+        FakePool.OPENED.set(0);
+        FakePool.CLOSED.set(0);
+        SystemEphemeralDatastore store;
+        try (var ctx = context(lease("pool-db", 100, 40), ProvidedConfig.class)) {
+            ctx.refresh();
+            store = ctx.getBean(SystemEphemeralDatastore.class);
+
+            String one = ctx.getBean(PooledOneService.class).pool();
+            String two = ctx.getBean(PooledTwoService.class).pool();
+            assertThat(one).isEqualTo(two).endsWith(":40");
+            assertThat(FakePool.OPENED).hasValue(1);
+            assertThat(FakePool.CLOSED).hasValue(0);
+            assertThat(store.read("lease:pool-db").members()).hasSize(1);
+        }
+
+        assertThat(FakePool.CLOSED).hasValue(1);
+        assertThat(store.read("lease:pool-db").members()).isEmpty();
+    }
+
+    @Test
+    void theResourceOfARefusedLeaseIsNeverOpened() {
+        FakePool.OPENED.set(0);
+        // 70 held elsewhere leaves 30, so a claim of 40 is refused.
+        try (var ctx = context(lease("pool-db", 100, 40), ProvidedConfig.class, ForeignHolderConfig.class,
+                ModularTransportConfiguration.class)) {
+            ctx.refresh();
+
+            assertThat(ctx.getBean(ModularServiceRegistry.class).hosted()).isEmpty();
+            assertThat(FakePool.OPENED).hasValue(0);
+        }
+    }
+
+    @Test
+    void aProviderThatFailsToOpenFailsStartupNamingTheLease() {
+        try (var ctx = context(lease("fail-db", 10, 5), FailingConfig.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("provider of lease 'fail-db' failed to open its resource")
+                    .hasStackTraceContaining("database is down");
+        }
+    }
+
+    @Test
+    void aResourceParameterWithoutAProviderFailsStartupSayingHowToFixIt() {
+        try (var ctx = context(lease("orphan-db", 10, 5), NoProviderConfig.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("asks for the resource of lease 'orphan-db', but no @LeasedResource(\"orphan-db\") provider was found")
+                    .hasStackTraceContaining("take a Lease parameter instead");
+        }
+    }
+
+    @Test
+    void aResourceThatDoesntFitTheParameterFailsStartup() {
+        try (var ctx = context(lease("mm-db", 10, 5), MismatchConfig.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("is a java.lang.Integer, but the provider of lease 'mm-db'")
+                    .hasStackTraceContaining("makes a java.lang.String");
+        }
+    }
+
+    @Test
+    void twoProvidersForOneLeaseFailStartup() {
+        try (var ctx = context(lease("dup-db", 10, 5), TwoProvidersConfig.class)) {
+            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("Two providers for lease 'dup-db'");
         }
     }
 }

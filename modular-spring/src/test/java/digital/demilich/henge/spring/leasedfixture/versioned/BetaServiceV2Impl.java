@@ -5,12 +5,11 @@ import digital.demilich.henge.core.RequiresLease;
 import digital.demilich.henge.core.ServiceVersion;
 
 @ServiceVersion(value = BetaService.class, version = 2)
-@RequiresLease("shared-db")
 public class BetaServiceV2Impl implements BetaService {
 
     private final Lease lease;
 
-    public BetaServiceV2Impl(Lease lease) {
+    public BetaServiceV2Impl(@RequiresLease("shared-db") Lease lease) {
         this.lease = lease;
     }
 

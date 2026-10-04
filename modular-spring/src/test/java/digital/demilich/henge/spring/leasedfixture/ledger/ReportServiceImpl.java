@@ -5,12 +5,11 @@ import digital.demilich.henge.core.RequiresLease;
 import digital.demilich.henge.core.ServiceVersion;
 
 @ServiceVersion(value = ReportService.class, version = 1)
-@RequiresLease("ledger-db")
 public class ReportServiceImpl implements ReportService {
 
     private final Lease lease;
 
-    public ReportServiceImpl(Lease lease) {
+    public ReportServiceImpl(@RequiresLease("ledger-db") Lease lease) {
         this.lease = lease;
     }
 

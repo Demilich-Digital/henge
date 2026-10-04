@@ -334,29 +334,29 @@ startup config error.
   - The resource is sized from `Lease.amount()`. Henge only does bookkeeping; it never sees a real
     connection.
 
-### Versions, and sharing a resource between them
+### Versions, and sharing a resource between them (built)
 
-Leases are declared on a version's implementation, so two versions of one service that use the same
-database each claim a lease, and each opens its own pool: the cluster's claim, and the database's real
-load, grow with the number of versions a node hosts. Two things address that.
+Leases used to be claimed per service version, so two versions of one service that used the same
+database each claimed a lease and each opened its own pool: the cluster's claim, and the database's
+real load, grew with the number of versions a node hosted. Now a lease is a claim and a resource per
+node, shared by everything on the node that uses it.
 
-**One claim per lease name, per node, reference counted (built); one resource per lease name (to
-build).** The claim is built: the keeper writes one member per lease for the node, every service that
-declares it joins, and the last one letting go (stopped, or failed to construct) hands it back, so a
-lease is never kept for consumers that didn't start. Because different leases are different keys with
+**The claim.** The keeper writes one member per lease for the node. Every service that declares the
+lease joins it, and the last one letting go (stopped, or failed to construct) hands it back, so a lease
+is never kept for consumers that didn't start. Because different leases are different keys with
 independent capacities, the order a node claims them in can't change what it ends up hosting, so there
-is no claim ordering or triage between versions or services. The resource is still per consumer.
-Claim dedup alone would only
-move the bookkeeping: if v1 and v2 share a claim and each still builds a pool of that size, the
-database sees twice the lease. So the resource itself must be one object, built once per node and
-owned by Henge rather than by an implementation constructor.
+is no claim ordering or triage between versions or services.
+
+**The resource.** Claim dedup alone would only move the bookkeeping: if v1 and v2 share a claim and each
+still builds a pool of that size, the database sees twice the lease. So the resource itself is one
+object, built once per node and owned by Henge rather than by an implementation constructor.
 
 - **A lease name is a resource.** `modular.leases.<name>.capacity` already names one real cluster
   resource, so the name is also the identity on a node: every version of every service that declares
   the lease shares one resource and one claim. A consumer that needs its own resource declares its own
   lease name. Sharing is opt-in by naming the same lease.
 - **The amount belongs to the lease, not to a service.** `modular.leases.<name>.amount` is what one
-  node claims, next to `capacity`; `modular.services.<name>.leases.<lease>` goes away. The resource is
+  node claims, next to `capacity`; `modular.services.<name>.leases.<lease>` is gone. The resource is
   built once at that size, and it can't depend on which consumers happen to be hosted, since sizing it
   from a changing mix would mean resizing a live pool. How the amount should change when several
   versions are live is the operator's to consider, and the one number they set.
@@ -377,8 +377,8 @@ owned by Henge rather than by an implementation constructor.
   no parameter (a gate with no resource) would have used it. The annotation names the lease on every
   such parameter. It can't be inferred from the type: two providers can produce one type, and an
   ordinary bean parameter must not silently become a leased resource.
-- **One claim per node per lease**, written when the first consumer is hosted, under the lease name
-  (not `service@version`).
+- **One claim per node per lease**, written when the first consumer is hosted, under one member for the
+  node (not `service@version`).
 - **Liveness is a reference count over declared edges, version → lease.** A resource is live while at
   least one hosted version (a binding whose target is `Local`) references it. The last reference going
   away closes the resource and releases the claim. These are declared edges, not inferred bean wiring;
@@ -386,10 +386,12 @@ owned by Henge rather than by an implementation constructor.
   allow.
 - **A service with several leases stays all-or-nothing.** A node that holds lease X for one service and
   is refused lease Y for another sends the second remote; X stays held by the first.
-- **The resource lives in a Henge-managed context above the versions'.** Spring's destroy ordering does
-  the teardown (pools close, executors stop), and a version's child context sits beneath it. This is the
-  same shape the isolated tier and eviction need; the one difference is that the resource is shared
-  between sibling contexts instead of private to one.
+- **The resource lives in a Henge-managed context above the versions' (not yet).** Today the keeper
+  holds the resource and closes it through its provider when the claim is handed back. Once each version
+  has a child context, the resource sits in a context above them, and Spring's destroy ordering does
+  the teardown (pools close, executors stop). That is the same shape the isolated tier and eviction
+  need; the one difference is that the resource is shared between sibling contexts instead of private
+  to one.
 - **The static check shrinks to one node's claim.** All consumers of a lease share a claim, so there is
   no sum over services to check: the lease's amount just has to fit its capacity.
 - **What the refcount counts.** Every hosted version that holds the lease, whichever form it uses. The

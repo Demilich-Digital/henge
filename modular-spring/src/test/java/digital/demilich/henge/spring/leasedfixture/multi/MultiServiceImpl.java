@@ -6,8 +6,6 @@ import digital.demilich.henge.core.ServiceVersion;
 
 /** Needs two leases, each named on its parameter. */
 @ServiceVersion(value = MultiService.class, version = 1)
-@RequiresLease("db-a")
-@RequiresLease("db-b")
 public class MultiServiceImpl implements MultiService {
 
     private final Lease a;
