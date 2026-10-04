@@ -5,7 +5,10 @@ import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 /**
@@ -30,11 +33,61 @@ final class ServiceBinding {
         Object invoke(ServiceInvocation invocation) throws Throwable;
     }
 
-    private record Local(Object implementation) implements Target {
+    /**
+     * The implementation here, and a count of the calls running in it, so it can be retired: once
+     * {@link #close} has been called no call enters, and it returns when those that did have finished.
+     */
+    private static final class Local implements Target {
+
+        private final Object implementation;
+        private final AtomicInteger inFlight = new AtomicInteger();
+        private volatile boolean closed;
+
+        Local(Object implementation) {
+            this.implementation = implementation;
+        }
+
+        Object implementation() {
+            return implementation;
+        }
 
         @Override
         public HengeMode mode() {
             return HengeMode.EMBEDDED;
+        }
+
+        /** Whether a call may run here; if so it must be matched by {@link #exit}. False once closed. */
+        boolean enter() {
+            inFlight.incrementAndGet();
+            // Counted before the check, so a close that sees no calls running also keeps out any that
+            // are about to start.
+            if (closed) {
+                exit();
+                return false;
+            }
+            return true;
+        }
+
+        void exit() {
+            if (inFlight.decrementAndGet() == 0 && closed) {
+                synchronized (this) {
+                    notifyAll();
+                }
+            }
+        }
+
+        /** Keeps new calls out and waits for the running ones; whether they all finished within {@code timeout}. */
+        synchronized boolean close(Duration timeout) throws InterruptedException {
+            closed = true;
+            long deadline = System.nanoTime() + timeout.toNanos();
+            while (inFlight.get() > 0) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return false;
+                }
+                TimeUnit.NANOSECONDS.timedWait(this, remaining);
+            }
+            return true;
         }
 
         @Override
@@ -78,7 +131,7 @@ final class ServiceBinding {
 
     private final String serviceName;
     private final int serviceVersion;
-    private final Target target;
+    private volatile Target target;
     private final Supplier<List<ServiceCallInterceptor>> interceptorSource;
     private volatile List<ServiceCallInterceptor> interceptors;
 
@@ -117,6 +170,22 @@ final class ServiceBinding {
         return target instanceof Local;
     }
 
+    /**
+     * Stops hosting the implementation: new calls go to {@code transport} from now on, and this waits up
+     * to {@code timeout} for the calls already running in the implementation. Returns whether they all
+     * finished; the caller decides what to do with an implementation that is still busy. Does nothing,
+     * and returns true, for a binding that isn't local. The implementation itself is the caller's to
+     * destroy once this returns.
+     */
+    synchronized boolean retire(ServiceTransport transport, Duration timeout) throws InterruptedException {
+        if (!(target instanceof Local local)) {
+            return true;
+        }
+        // Switched before the wait, so a call that finds the implementation closed finds the new target.
+        target = new Remote(serviceName, transport);
+        return local.close(timeout);
+    }
+
     /** A call from a caller in this process: through the interceptors, then to the target. */
     Object call(ServiceInvocation invocation) throws Throwable {
         return new Step(invocation, interceptors(), 0).proceed();
@@ -127,11 +196,32 @@ final class ServiceBinding {
      * exceptions {@link Method#invoke} throws.
      */
     Object invokeLocal(Method method, Object[] args) throws InvocationTargetException, IllegalAccessException {
-        if (!(target instanceof Local local)) {
+        if (!(target instanceof Local local) || !local.enter()) {
             throw new IllegalStateException("Henge service '" + serviceName + "' version " + serviceVersion
                     + " is not hosted by this process");
         }
-        return method.invoke(local.implementation(), args);
+        try {
+            return method.invoke(local.implementation(), args);
+        } finally {
+            local.exit();
+        }
+    }
+
+    private Object invokeTarget(ServiceInvocation invocation) throws Throwable {
+        while (true) {
+            Target current = target;
+            if (!(current instanceof Local local)) {
+                return current.invoke(invocation);
+            }
+            if (local.enter()) {
+                try {
+                    return local.invoke(invocation);
+                } finally {
+                    local.exit();
+                }
+            }
+            // Retired after this read: the target has already changed, so reading it again finds the new one.
+        }
     }
 
     private List<ServiceCallInterceptor> interceptors() {
@@ -161,7 +251,7 @@ final class ServiceBinding {
             if (index < chain.size()) {
                 return chain.get(index).intercept(invocation, new Step(invocation, chain, index + 1));
             }
-            return target.invoke(invocation);
+            return invokeTarget(invocation);
         }
 
         @Override

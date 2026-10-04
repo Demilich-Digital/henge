@@ -35,7 +35,7 @@ class HengeServiceAdvertiser implements SmartLifecycle {
     private final Duration ttl;
     private final SystemMetrics metrics;
 
-    private List<HengeServiceDescriptor> advertised = List.of();
+    private volatile List<HengeServiceDescriptor> advertised = List.of();
     private ScheduledExecutorService heartbeat;
     private boolean running;
 
@@ -68,8 +68,8 @@ class HengeServiceAdvertiser implements SmartLifecycle {
         running = true;
     }
 
-    /** Writes (or renews) every advertisement; also the heartbeat. */
-    void renew() {
+    /** Writes (or renews) every advertisement; also the heartbeat. Synchronized so a withdrawal is never undone by a renewal in flight. */
+    synchronized void renew() {
         byte[] value = advertisement.encode();
         for (HengeServiceDescriptor service : advertised) {
             try {
@@ -80,6 +80,14 @@ class HengeServiceAdvertiser implements SmartLifecycle {
                 log.warn("Advertising " + service.name() + "@" + service.version() + " failed; will retry on the next heartbeat", e);
             }
         }
+    }
+
+    /** Stops advertising one service version, now and on every later heartbeat; the others carry on. */
+    synchronized void withdraw(String service, int version) {
+        advertised = advertised.stream()
+                .filter(hosted -> !(hosted.name().equals(service) && hosted.version() == version))
+                .toList();
+        datastore.remove(ServiceAdvertisement.key(service, version), MEMBER);
     }
 
     @Override

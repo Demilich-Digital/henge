@@ -3,7 +3,9 @@ package digital.demilich.henge.spring;
 import digital.demilich.henge.core.Lease;
 import digital.demilich.henge.core.ServiceTransport;
 import java.lang.reflect.Proxy;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.BeansException;
@@ -12,6 +14,7 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.SmartFactoryBean;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
@@ -51,6 +54,7 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
     private HengeLeaseKeeper keeper;
     private ServiceBinding binding;
     private Object proxy;
+    private final AtomicBoolean retired = new AtomicBoolean();
 
     HengeServiceBindingFactoryBean(ServiceBindingSpec spec) {
         this.spec = spec;
@@ -100,20 +104,58 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
     }
 
     private ServiceBinding remote() {
-        ServiceTransport transport;
+        return ServiceBinding.remote(spec.serviceName(), spec.version(), transport(), this::interceptors);
+    }
+
+    private ServiceTransport transport() {
         try {
-            transport = applicationContext.getBean(ServiceTransport.class);
+            return applicationContext.getBean(ServiceTransport.class);
         } catch (NoSuchBeanDefinitionException e) {
             // Only reachable without the Boot starter, which always provides one.
             throw new IllegalStateException("Henge service '" + spec.serviceName() + "' version '" + spec.version()
                     + "' is internal-rest, but there is no ServiceTransport bean to call it with -- @Import "
                     + "HengeTransportConfiguration (or HengeConfiguration, to also serve embedded services).", e);
         }
-        return ServiceBinding.remote(spec.serviceName(), spec.version(), transport, this::interceptors);
     }
 
     private List<ServiceCallInterceptor> interceptors() {
         return applicationContext.getBeanProvider(ServiceCallInterceptor.class).orderedStream().toList();
+    }
+
+    /**
+     * Stops hosting this service version and gives back what it held: new calls go to the transport, the
+     * calls already running in the implementation get up to {@code drainTimeout} to finish, the
+     * implementation is destroyed (so whatever it owns is closed), and only then is its share of its leases
+     * released, since it stands on the lease's resource. Does nothing for a version that isn't hosted here,
+     * and the second of two concurrent retirements. An implementation still busy after the timeout is
+     * destroyed anyway, since a service that never finishes would otherwise hold its leases forever.
+     *
+     * <p>Not synchronized: the dispatcher asks {@link #binding()} whether this version is hosted, and must
+     * not wait out a drain to be told no.
+     */
+    void retire(Duration drainTimeout) throws InterruptedException {
+        ServiceBinding current = binding();
+        if (!current.isLocal() || !retired.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            if (!current.retire(transport(), drainTimeout)) {
+                log.warn(spec.localName() + " still had calls running after " + drainTimeout + "; destroying it anyway");
+            }
+        } finally {
+            destroyImplementation();
+            if (keeper != null) {
+                keeper.release(spec.localName());
+            }
+        }
+    }
+
+    private void destroyImplementation() {
+        ConfigurableApplicationContext context = (ConfigurableApplicationContext) applicationContext;
+        String implBeanName = beanName + ".impl";
+        DefaultListableBeanFactory beanFactory = (DefaultListableBeanFactory) context.getBeanFactory();
+        beanFactory.destroySingleton(implBeanName);
+        beanFactory.removeBeanDefinition(implBeanName);
     }
 
     private Object constructImplementation() {

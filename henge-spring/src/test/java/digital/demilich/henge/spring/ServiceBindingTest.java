@@ -9,7 +9,13 @@ import digital.demilich.henge.spring.fixture.echo.EchoService;
 import digital.demilich.henge.spring.fixture.echo.EchoServiceImpl;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
@@ -162,5 +168,98 @@ class ServiceBindingTest {
                 .hasCauseInstanceOf(java.io.IOException.class);
         assertThatThrownBy(() -> runtime.echo("x")).isExactlyInstanceOf(IllegalStateException.class);
         assertThat(seen[0].serviceName()).isEqualTo("echo-service");
+    }
+
+    @Test
+    void aRetiredBindingSendsCallsToTheTransportAndNoLongerHostsTheImplementation() throws Exception {
+        ServiceBinding binding = local();
+        EchoService proxy = proxyOver(binding);
+
+        assertThat(binding.retire(invocation -> "remote", Duration.ofSeconds(1))).isTrue();
+
+        assertThat(binding.isLocal()).isFalse();
+        assertThat(proxy.echo("x")).isEqualTo("remote");
+        assertThat(implementation.getCallCount()).isZero();
+        assertThatThrownBy(() -> binding.invokeLocal(EchoService.class.getMethod("echo", String.class), new Object[] {"x"}))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void retiringWaitsForTheCallsAlreadyRunningInTheImplementation() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        EchoServiceImpl slow = new EchoServiceImpl() {
+            @Override
+            public String echo(String value) {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    throw new IllegalStateException(e);
+                }
+                return "slow:" + value;
+            }
+        };
+        ServiceBinding binding = ServiceBinding.local("echo-service", 1, slow, List::of);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<String> running = pool.submit(() -> proxyOver(binding).echo("x"));
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<Boolean> retiring = pool.submit(() -> binding.retire(invocation -> "remote", Duration.ofSeconds(10)));
+
+            // New calls already go elsewhere while the old one is still running, and retirement waits for it.
+            while (binding.isLocal()) {
+                Thread.onSpinWait();
+            }
+            assertThat(proxyOver(binding).echo("y")).isEqualTo("remote");
+            assertThat(retiring.isDone()).isFalse();
+
+            release.countDown();
+            assertThat(running.get(5, TimeUnit.SECONDS)).isEqualTo("slow:x");
+            assertThat(retiring.get(5, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void retiringGivesUpWaitingAfterTheTimeoutAndSaysSo() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        EchoServiceImpl stuck = new EchoServiceImpl() {
+            @Override
+            public String echo(String value) {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    throw new IllegalStateException(e);
+                }
+                return value;
+            }
+        };
+        ServiceBinding binding = ServiceBinding.local("echo-service", 1, stuck, List::of);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            pool.submit(() -> proxyOver(binding).echo("x"));
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(binding.retire(invocation -> "remote", Duration.ofMillis(50))).isFalse();
+            assertThat(binding.isLocal()).isFalse();
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void retiringARemoteBindingDoesNothing() throws Exception {
+        ServiceBinding remote = ServiceBinding.remote("echo-service", 1, invocation -> "first", List::of);
+
+        assertThat(remote.retire(invocation -> "second", Duration.ofSeconds(1))).isTrue();
+
+        assertThat(proxyOver(remote).echo("x")).isEqualTo("first");
     }
 }

@@ -374,7 +374,7 @@ costly or harmful, and only if others can take it.
    `ThreadLocal`s, global JDBC driver registration) leak; class metadata stays loaded; activating a child
    context costs tens to hundreds of milliseconds plus warmup, so roles must not thrash.
 
-### The service binding (built; retargeting and draining are not)
+### The service binding (built, with retirement; strict mode and switching back to local are not)
 
 One `ServiceBinding` per `service@version`, and one JDK proxy over it, registered under the version's
 bean name, as primary and qualifier. Every injection point holds that proxy: an embedded implementation,
@@ -394,10 +394,19 @@ a leased one and a remote one are all a binding that differs only in its target.
 - **Hosting follows the target.** A version is hosted here when its binding's target is local, so the
   advertiser, the topology report and the dispatcher's registry follow a switch with no further wiring.
 
-Not built until eviction needs them: retargeting (a target that can change, so a mutable field where
-there is a final one now), draining and its in-flight counting, and strict mode, each an addition to the
-binding and not a new proxy. Retargeting away from local must destroy the implementation before it
-releases the version's lease reference, since the implementation stands on the lease's resource.
+- **Retirement** (built, nothing triggers it yet). `HengeServiceRegistry.retire(name, version, grace,
+  drainTimeout)` stops hosting one version, in the order a caller can follow without a failed call:
+  withdraw its advertisement, wait `grace` (callers that already read it keep being served), switch the
+  target to remote, wait up to `drainTimeout` for the calls already running in the implementation, destroy
+  the hidden `.impl` bean (so whatever it owns closes), then release the version's share of its leases. The
+  lease goes last because the implementation stands on its resource; the shared resource closes only with
+  the last holder. Calls are counted at the two entry points, a call that raced the switch retries on the
+  new target, and an implementation still busy at the timeout is destroyed anyway, with a warning. There is
+  no child context yet: the implementation is a runtime-registered bean, and Spring's destroy logic closes
+  what it owns, nothing more.
+
+Not built until it is needed: switching back from remote to local (a refusal and a retirement are both
+final for the process's life), and strict mode, each an addition to the binding and not a new proxy.
 
 Callers hold the interface, so an implementation is not something to inject by its concrete class: it is
 the hidden bean `<name>-<version>.impl`. It is still the only bean of its class, so

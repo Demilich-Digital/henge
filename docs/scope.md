@@ -63,7 +63,7 @@ The [ladder's](philosophy.md#every-layer-is-opt-in) top rung, in phases, each us
 
 1. **Switchable proxies and a child context per service**: a service that can move between embedded and
    remote while the process runs, and be torn down cleanly. Its first use is de-allocation on a lost
-   lease. The stable proxy is built; switching, draining and the child contexts aren't.
+   lease. The stable proxy is built, and a service can be retired (drained and destroyed, its lease released); nothing triggers that yet, and the child contexts aren't built.
 2. **Eviction**: a process that stops hosting a service under memory pressure or misbehavior, draining
    first.
 3. A **built-in DHT** as the ephemeral store, with no separate system to run.
