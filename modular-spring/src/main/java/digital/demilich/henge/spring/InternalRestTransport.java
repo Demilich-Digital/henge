@@ -4,8 +4,6 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
-import digital.demilich.henge.core.ServiceNotServedException;
-import digital.demilich.henge.core.ServiceUnreachableException;
 import digital.demilich.henge.core.ServiceTransport;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -124,7 +122,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
                 if (endpoint.advertised()) {
                     advertisedEndpoints.failed(invocation.serviceName(), invocation.serviceVersion(), endpoint.baseUrl());
                 }
-                if (attempt >= retryPolicy.maxAttempts() || !retries(notDelivered.kind, endpoint)) {
+                if (attempt >= retryPolicy.maxAttempts() || !retries(notDelivered.kind)) {
                     throw attempt == 1 ? notDelivered.failure : gaveUp(notDelivered, attempt);
                 }
                 log.debug("Retrying " + invocation.serviceName() + "#" + invocation.methodName() + " after attempt " + attempt
@@ -148,25 +146,23 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         }
     }
 
-    private boolean retries(Undelivered kind, Endpoint endpoint) {
+    private boolean retries(Undelivered kind) {
         return switch (kind) {
             case CONNECT -> retryPolicy.onConnectFailure();
-            // The same configured url would only say it again.
-            case NOT_SERVED -> retryPolicy.onNotServed() && endpoint.advertised();
+            case NOT_SERVED -> retryPolicy.onNotServed();
         };
     }
 
-    /** The same kind of failure, saying how many times it was tried. */
+    /**
+     * What to throw once the attempts are used up: a transport failure says how many times it was tried;
+     * an exception rebuilt from a {@code 404} is thrown as it came, so a caller still catches its own type.
+     */
     private static RuntimeException gaveUp(NotDelivered notDelivered, int attempts) {
-        String message = notDelivered.failure.getMessage() + " (gave up after " + attempts + " attempts)";
-        return switch (notDelivered.kind) {
-            case CONNECT -> new ServiceUnreachableException(message, notDelivered.failure);
-            case NOT_SERVED -> {
-                ServiceNotServedException notServed = new ServiceNotServedException(message);
-                notServed.initCause(notDelivered.failure);
-                yield notServed;
-            }
-        };
+        if (notDelivered.failure instanceof RemoteServiceException transportFailure) {
+            return new RemoteServiceException(transportFailure.getMessage() + " (gave up after " + attempts + " attempts)",
+                    transportFailure);
+        }
+        return notDelivered.failure;
     }
 
     private static void pause(java.time.Duration backoff, RuntimeException failure) {
@@ -241,12 +237,13 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         } catch (RestClientResponseException e) {
             RemoteServiceException fallback = new RemoteServiceException("Modular service call failed: " + invocation.serviceName() + "#"
                     + invocation.methodName() + " -> " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
-            RuntimeException reconstructed = RemoteExceptionReconstructor.reconstruct(
+            RuntimeException failure = RemoteExceptionReconstructor.reconstruct(
                     e.getResponseBodyAsString(), beanClassLoader, objectMapper, fallback);
-            if (reconstructed instanceof ServiceNotServedException) {
-                throw new NotDelivered(Undelivered.NOT_SERVED, reconstructed);
+            // A 404 is defined to mean nothing happened (see @ErrorStatus), so it may be tried again.
+            if (e.getStatusCode().value() == 404) {
+                throw new NotDelivered(Undelivered.NOT_SERVED, failure);
             }
-            throw reconstructed;
+            throw failure;
         } catch (RestClientException e) {
             // The immediate exception's own message is often a generic wrapper (e.g. "Error while
             // extracting response..."); the actually-useful detail -- "connect timed out",
@@ -258,7 +255,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
             String message = "Modular service call failed: " + invocation.serviceName() + "#" + invocation.methodName()
                     + " (" + root.getMessage() + ")";
             if (isConnectFailure(e)) {
-                throw new NotDelivered(Undelivered.CONNECT, new ServiceUnreachableException(message, e));
+                throw new NotDelivered(Undelivered.CONNECT, new RemoteServiceException(message, e));
             }
             throw new RemoteServiceException(message, e);
         }

@@ -5,9 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.RemoteServiceException;
-import digital.demilich.henge.core.ServiceNotServedException;
-import digital.demilich.henge.core.ServiceUnreachableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
+import digital.demilich.henge.spring.fixture.echo.EchoNotFoundException;
 import digital.demilich.henge.spring.fixture.echo.EchoService;
 import digital.demilich.henge.spring.fixture.echo.EchoServiceImpl;
 import digital.demilich.henge.spring.fixture.echo.EchoTestConfig;
@@ -229,10 +228,8 @@ class ModularAdvertisementRoutingTest {
             for (int i = 0; i < 4; i++) {
                 try {
                     echo.echo("n" + i);
-                } catch (ServiceNotServedException e) {
-                    assertThat(e).hasMessageContaining("does not host");
-                    // Rebuilt from the remote's reply, with the transport's own diagnosis chained in.
-                    assertThat(e).hasCauseInstanceOf(RemoteServiceException.class);
+                } catch (RemoteServiceException e) {
+                    assertThat(e).hasMessageContaining("404").hasMessageContaining("does not host");
                     failures++;
                 }
             }
@@ -248,23 +245,96 @@ class ModularAdvertisementRoutingTest {
         try (var client = startClient(Map.of("modular.services.echo-service.url", deadUrl(),
                 "modular.transport.retry.backoff", "0"), null)) {
             assertThatThrownBy(() -> client.getBean(EchoService.class).echo("hi"))
-                    .isInstanceOf(ServiceUnreachableException.class)
+                    .isInstanceOf(RemoteServiceException.class)
                     .hasMessageContaining("gave up after 3 attempts");
         }
     }
 
     @Test
-    void aConfiguredUrlIsNotRetriedOnNotServedBecauseItWouldSayTheSameAgain() throws Exception {
+    void aConfiguredUrlIsRetriedOnA404TooSinceAProxyInFrontMayReachAnotherProcess() throws Exception {
         int emptyPort = freePort();
         RunningServer empty = startServer(Map.of("modular.services.echo-service.mode", "internal-rest",
                 "modular.services.echo-service.url", "http://localhost:1"), null, emptyPort);
-        try (var client = startClient(Map.of("modular.services.echo-service.url", "http://localhost:" + emptyPort), null)) {
+        try (var client = startClient(Map.of("modular.services.echo-service.url", "http://localhost:" + emptyPort,
+                "modular.transport.retry.backoff", "0"), null)) {
             assertThatThrownBy(() -> client.getBean(EchoService.class).echo("hi"))
-                    .isInstanceOf(ServiceNotServedException.class)
+                    .isInstanceOf(RemoteServiceException.class)
                     .hasMessageContaining("does not host")
-                    .hasMessageNotContaining("gave up");
+                    .hasMessageContaining("gave up after 3 attempts");
         } finally {
             empty.stop();
+        }
+    }
+
+    @Test
+    void aPlain404FromSomethingThatIsntAHengeProcessIsRetriedToo() throws Exception {
+        // A web application with no /_modular at all, like a load balancer's default backend.
+        Tomcat tomcat = new Tomcat();
+        tomcat.setPort(0);
+        tomcat.getConnector();
+        Context tomcatContext = tomcat.addContext("", null);
+        var web = new AnnotationConfigWebApplicationContext();
+        web.register(WebMvcSupport.class);
+        Tomcat.addServlet(tomcatContext, "dispatcher", new DispatcherServlet(web)).setLoadOnStartup(1);
+        tomcatContext.addServletMappingDecoded("/*", "dispatcher");
+        tomcat.start();
+        try (var client = startClient(Map.of("modular.services.echo-service.url",
+                "http://localhost:" + tomcat.getConnector().getLocalPort(), "modular.transport.retry.backoff", "0"), null)) {
+            assertThatThrownBy(() -> client.getBean(EchoService.class).echo("hi"))
+                    .isInstanceOf(RemoteServiceException.class)
+                    .hasMessageContaining("404")
+                    .hasMessageContaining("gave up after 3 attempts");
+        } finally {
+            web.close();
+            tomcat.stop();
+            tomcat.destroy();
+        }
+    }
+
+    @Test
+    void aBusiness404IsRetriedTooAndStillSurfacesAsTheCallersOwnExceptionType() throws Exception {
+        int port = freePort();
+        RunningServer server = startServer(Map.of(), null, port);
+        try (var client = startClient(Map.of("modular.services.echo-service.url", "http://localhost:" + port,
+                "modular.transport.retry.backoff", "0"), null)) {
+            assertThatThrownBy(() -> client.getBean(EchoService.class).explode("not-found"))
+                    .isInstanceOf(EchoNotFoundException.class)
+                    .hasMessage("not-found");
+
+            // @ErrorStatus(404) is "nothing happened", so it's tried max-attempts times.
+            assertThat(server.context().getBean(EchoServiceImpl.class).getExplodeCount()).isEqualTo(3);
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    void aBusiness404IsNotRetriedWhenThePolicyOnlyCoversConnectFailures() throws Exception {
+        int port = freePort();
+        RunningServer server = startServer(Map.of(), null, port);
+        try (var client = startClient(Map.of("modular.services.echo-service.url", "http://localhost:" + port,
+                "modular.transport.retry.on", "connect"), null)) {
+            assertThatThrownBy(() -> client.getBean(EchoService.class).explode("not-found"))
+                    .isInstanceOf(EchoNotFoundException.class);
+
+            assertThat(server.context().getBean(EchoServiceImpl.class).getExplodeCount()).isEqualTo(1);
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    void anyOtherFailureOfTheImplementationRanTheMethodAndIsNeverRetried() throws Exception {
+        int port = freePort();
+        RunningServer server = startServer(Map.of(), null, port);
+        try (var client = startClient(Map.of("modular.services.echo-service.url", "http://localhost:" + port,
+                "modular.transport.retry.backoff", "0"), null)) {
+            assertThatThrownBy(() -> client.getBean(EchoService.class).explode("boom")).hasMessage("boom");
+            assertThatThrownBy(() -> client.getBean(EchoService.class).explode("bad-status")).isNotNull();
+
+            assertThat(server.context().getBean(EchoServiceImpl.class).getExplodeCount()).isEqualTo(2);
+        } finally {
+            server.stop();
         }
     }
 

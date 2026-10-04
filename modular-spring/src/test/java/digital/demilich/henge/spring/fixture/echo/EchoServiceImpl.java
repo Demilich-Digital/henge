@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class EchoServiceImpl implements EchoService {
 
     private final AtomicInteger callCount = new AtomicInteger();
+    private final AtomicInteger explodeCount = new AtomicInteger();
 
     @Override
     public String echo(String value) {
@@ -18,6 +19,7 @@ public class EchoServiceImpl implements EchoService {
 
     @Override
     public void explode(String reason) {
+        explodeCount.incrementAndGet();
         switch (reason) {
             case "not-found" -> throw new EchoNotFoundException(reason);
             case "bad-status" -> throw new EchoBadStatusException(reason);
@@ -36,6 +38,10 @@ public class EchoServiceImpl implements EchoService {
     @Override
     public Measurement measure(Measurement measurement) {
         return measurement;
+    }
+
+    public int getExplodeCount() {
+        return explodeCount.get();
     }
 
     public int getCallCount() {

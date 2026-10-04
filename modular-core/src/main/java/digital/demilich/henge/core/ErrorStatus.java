@@ -27,6 +27,13 @@ import java.lang.annotation.Target;
  * rejects anything else at compile time, and the dispatcher logs and ignores it (answering
  * {@code 500}) for a class compiled without the processor.
  *
+ * <p><b>{@code 404} means nothing happened.</b> {@code internal-rest} treats every {@code 404} as a
+ * call that did not run (the process doesn't serve the service, or a proxy in front of it doesn't)
+ * and may repeat it, on another process if there is one (see {@code modular.transport.retry.*}).
+ * So an exception annotated {@code @ErrorStatus(404)} must be thrown before the method has any
+ * effect: "not found" is a fine reason, a half-finished write is not. If a failure can follow side
+ * effects, give it another status.
+ *
  * <p>The dispatcher itself answers {@code 400} (malformed request), {@code 403} (bad secret) and
  * {@code 404} (unknown service/version/method) for its own failures — those responses carry no
  * exception type, so they stay distinguishable from an annotated business exception even when it

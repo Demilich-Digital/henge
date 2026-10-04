@@ -174,9 +174,8 @@ solid; the operational maturity for scaling like a "real" microservice fleet isn
   gets the original exception reconstructed; only the wire status changes, and it has no effect when
   the service is embedded. The dispatcher's own failures use `400` (malformed request/arguments),
   `403` (bad secret) and `404` (unknown service/version/method); those bodies carry no exception
-  type, so they stay distinguishable from an annotated business exception that reuses the code. The
-  one exception is a `404` for a service version this process doesn't serve, which is a real type,
-  `ServiceNotServedException`, rebuilt on the caller like any other (see "Retries" below).
+  type, so they stay distinguishable from an annotated business exception that reuses the code.
+  Every `404` is treated as "nothing happened", and retried: see "Retries" below.
 - **Logging a failure.** The caller only gets the exception's type and message, so the serving
   process logs the stack trace: a failure answered with a `5xx` at `ERROR`, a `4xx` at `DEBUG`.
   `@ErrorLogLevel(ErrorLogLevel.Level.WARN)` (`digital.demilich.henge.core`) on the exception
@@ -598,18 +597,23 @@ no retries yet: a call that reaches a host that has just died fails, and the nex
 for every method, whatever it does, and needs no idempotency declaration:
 
 - **`connect`**: the connection couldn't be made (refused, unknown host, no route, a connect
-  timeout). Thrown as `ServiceUnreachableException`, a `RemoteServiceException`.
-- **`not-served`**: the process answered that it doesn't serve that service version (a host that
-  advertised it and has since withdrawn it, or one that wasn't granted its lease). Thrown as
-  `ServiceNotServedException`, sent by the dispatcher and rebuilt on the caller like any other
-  exception, so an application can catch it too.
+  timeout).
+- **`not-served`**: any `404`. **A `404` means nothing happened**: the process doesn't serve that
+  service version (it never did, withdrew it, or wasn't granted its lease), or it isn't a Henge
+  process at all, like a proxy or load balancer's default backend. It is also what an
+  `@ErrorStatus(404)` exception thrown by a method answers with, so such an exception must be thrown
+  before the method has had any effect: "not found" is fine, a half-finished write is not (give that
+  one another status). If you'd rather not retry a legitimate "not found", set
+  `modular.transport.retry.on=connect`.
 
-A retry goes to the next advertised host, and a host that just failed isn't offered again until the
-advertisements are next read (unless it's the only one). A configured `url` is retried on `connect`
-only, since the same url would answer `not-served` again. Anything that may have started is never
-retried: a read timeout, a 5xx, an exception the implementation threw. Whether *that* is safe is a
-question about the method, and has no answer here yet. Giving up says so:
-`... (gave up after 3 attempts)`.
+A retry goes to the next advertised host where there is one, and otherwise to the same url, which is
+what a load balancer or a Kubernetes Service in front of several processes wants. A host that just
+failed isn't offered again until the advertisements are next read (unless it's the only one).
+Anything that may have started is never retried: a read timeout, a reset, a 5xx, any other exception
+the implementation threw. Whether *that* is safe is a question about the method, and has no answer
+here yet. When the attempts run out, a failed connection or a plain `404` says so
+(`... (gave up after 3 attempts)`, a `RemoteServiceException`), and an `@ErrorStatus(404)` exception
+is thrown as it came, so a caller still catches its own type.
 
 ### Finding each other through Redis
 
