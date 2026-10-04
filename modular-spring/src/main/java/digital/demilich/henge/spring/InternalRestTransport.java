@@ -39,10 +39,19 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
      */
     private volatile ClassLoader beanClassLoader = ClassUtils.getDefaultClassLoader();
 
+    private final AdvertisedEndpoints advertisedEndpoints;
+
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties) {
+        this(restClient, objectMapper, properties, null);
+    }
+
+    /** @param advertisedEndpoints where to look for a service with no configured url; null to not look */
+    InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, ModularProperties properties,
+            AdvertisedEndpoints advertisedEndpoints) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.advertisedEndpoints = advertisedEndpoints;
         requireKnownPlaceholders(properties.getRemoteUrlTemplate());
         properties.getServerPathPrefix(); // validated at startup, not on the first call
     }
@@ -75,11 +84,15 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         if (url == null || url.isBlank()) {
             url = resolveFromTemplate(invocation.serviceName(), invocation.serviceVersion());
         }
+        if ((url == null || url.isBlank()) && advertisedEndpoints != null) {
+            url = advertisedEndpoints.next(invocation.serviceName(), invocation.serviceVersion());
+        }
         if (url == null || url.isBlank()) {
             throw new RemoteServiceException("No url configured for modular service '" + invocation.serviceName()
-                    + "' version '" + invocation.serviceVersion() + "' (set modular.services." + invocation.serviceName()
-                    + ".url, modular.services." + invocation.serviceName() + ".versions." + invocation.serviceVersion()
-                    + ".url for a per-version override, or modular.remote-url-template for a shared convention)");
+                    + "' version '" + invocation.serviceVersion() + "', and no process advertises it (set modular.services."
+                    + invocation.serviceName() + ".url, modular.services." + invocation.serviceName() + ".versions."
+                    + invocation.serviceVersion() + ".url for a per-version override, modular.remote-url-template for a "
+                    + "shared convention, or run a process that hosts it with modular.advertise.url set)");
         }
 
         // "http://audit:8080/" is a natural way to write a base URL; without this it would produce

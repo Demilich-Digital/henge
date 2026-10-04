@@ -9,6 +9,8 @@ dependencies {
     implementation(project(":examples:example-contracts"))
     runtimeOnly(project(":examples:example-services"))
     implementation(project(":modular-spring-boot-starter"))
+    // Only used when modular.store.type=redis; see the README's "Finding each other through Redis".
+    runtimeOnly(project(":modular-redis"))
     implementation("org.springframework.boot:spring-boot-starter-web")
 }
 

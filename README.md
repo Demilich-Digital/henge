@@ -576,8 +576,41 @@ Once a process is fully started it advertises every service version it actually 
 `SystemEphemeralDatastore`, as `adv:<service>@<version>` with its `modular.advertise.url`: a leased
 service only if its lease was granted, never one that's `internal-rest` here. The entry is renewed
 every 10 seconds and expires after 30, so a crashed process disappears on its own; a graceful stop
-withdraws first. In a monolith this is redundant (nothing else reads it), but it runs the same
-way. Nothing routes by these yet.
+withdraws first.
+
+A caller finds a host the same way. For an `internal-rest` service the url is resolved in order: an
+explicit `modular.services.<name>.url`, then `modular.remote-url-template`, then **whoever advertises
+it**. Callers cache the advertisers per service version and re-read them at most every 10 seconds, so
+the datastore sees a read per service per interval however many calls are made, and calls rotate
+through everything advertised. If a read comes back empty from a *different* storage (the store was
+restarted and hosts haven't re-advertised yet) the previous answer is kept one more interval; an empty
+read from the same storage is believed. With nobody advertising, the call fails saying so. There are
+no retries yet: a call that reaches a host that has just died fails, and the next one tries the next.
+
+### Finding each other through Redis
+
+The same jar, two processes, and no address configured between them: each only says where *it* can
+be reached, and they share a datastore.
+
+```bash
+docker run -d --name henge-redis -p 6379:6379 redis:8
+
+STORE="--modular.store.type=redis --modular.store.redis.uri=redis://localhost:6379"
+
+java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --server.port=8082 \
+  --modular.serve=audit-service --modular.advertise.url=http://localhost:8082 $STORE
+
+java -jar examples/example-app/build/libs/example-app-0.1.0-SNAPSHOT.jar --server.port=8080 \
+  --modular.serve=greeting-service --modular.advertise.url=http://localhost:8080 $STORE
+```
+
+```bash
+curl http://localhost:8080/api/greet/Alice   # -> "Hello, Alice!" (greeting found audit through Redis)
+curl http://localhost:8082/api/audit         # -> ["greeted:Alice"], recorded by the other process
+```
+
+Stop the audit process and it withdraws its advertisements at once; start it again, on any port, and
+the greeting process picks it up within one refresh interval, with nothing reconfigured.
 
 ## Using this without Spring Boot
 

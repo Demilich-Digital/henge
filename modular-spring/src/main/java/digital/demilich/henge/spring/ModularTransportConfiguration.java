@@ -1,6 +1,9 @@
 package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.ServiceTransport;
+import digital.demilich.henge.core.SystemEphemeralDatastore;
+import java.time.InstantSource;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
@@ -31,9 +34,19 @@ public class ModularTransportConfiguration {
         return new ModularProperties(environment);
     }
 
+    /**
+     * Where a service with no configured url is looked up: among the processes that advertise it on
+     * the datastore, refreshed as often as they heartbeat. Without a datastore bean (a process that
+     * doesn't use {@link EnableModularServices}) there is nothing to look in.
+     */
     @Bean
-    public ServiceTransport internalRestTransport(ModularProperties modularProperties) {
+    public ServiceTransport internalRestTransport(
+            ModularProperties modularProperties, ObjectProvider<SystemEphemeralDatastore> datastore) {
+        SystemEphemeralDatastore available = datastore.getIfAvailable();
+        AdvertisedEndpoints advertised = available == null ? null
+                : new AdvertisedEndpoints(available, ModularLeaseKeeper.DEFAULT_TTL.dividedBy(3), InstantSource.system());
         return new InternalRestTransport(
-                ModularTransportSupport.restClient(modularProperties), ModularTransportSupport.objectMapper(), modularProperties);
+                ModularTransportSupport.restClient(modularProperties), ModularTransportSupport.objectMapper(), modularProperties,
+                advertised);
     }
 }
