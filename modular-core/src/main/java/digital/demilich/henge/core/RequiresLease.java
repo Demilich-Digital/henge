@@ -15,8 +15,8 @@ import java.lang.annotation.Target;
  * remotely instead.
  *
  * <p>{@code @RequiresLease("orders-db")} names the resource; its cluster-wide capacity is
- * {@code modular.leases.orders-db.capacity}, and what one instance of the service claims is
- * {@code modular.services.<service>.leases.orders-db}. The constructor receives what was granted
+ * {@code modular.leases.orders-db.capacity}, and what one node claims is
+ * {@code modular.leases.orders-db.amount}, shared by every service on the node that declares it. The constructor receives what was granted
  * as a {@link Lease} parameter. With one declared lease any {@code Lease} parameter is it; with
  * several, mark each parameter {@code @RequiresLease("orders-db")} to say which.
  *

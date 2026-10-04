@@ -155,7 +155,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
                 Class<?> implClass = implsByVersion.get(version);
                 if (implClass != null) {
-                    List<LeaseNeed> configured = configuredLeaseNeeds(properties, name, implClass);
+                    List<LeaseNeed> configured = configuredLeaseNeeds(properties, implClass);
                     if (!configured.isEmpty()) {
                         allLeasedServices.put(qualifiedName, configured);
                     }
@@ -201,7 +201,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
                 catalogEntries.add(new ModularTopologyCatalog.Entry(name, version, serviceInterface.getName(), isDefault, mode,
                         modeSource, implClass == null ? null : implClass.getName(), beanName,
-                        leaseDeclarations(properties, name, implClass), config.resolveUrl(version)));
+                        leaseDeclarations(properties, implClass), config.resolveUrl(version)));
 
                 addServiceVersionQualifier(definition, serviceInterface, version);
                 definition.setPrimary(isDefault);
@@ -271,13 +271,13 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
     /** Every lease {@code implClass} declares, with whatever the configuration says about it; none if there is no implementation. */
     private static List<ModularTopologyCatalog.LeaseDeclaration> leaseDeclarations(
-            ModularProperties properties, String name, Class<?> implClass) {
+            ModularProperties properties, Class<?> implClass) {
         if (implClass == null) {
             return List.of();
         }
         return Arrays.stream(implClass.getAnnotationsByType(RequiresLease.class))
                 .map(declared -> new ModularTopologyCatalog.LeaseDeclaration(declared.value(),
-                        properties.service(name).leaseAmount(declared.value()), properties.leaseCapacity(declared.value())))
+                        properties.leaseAmount(declared.value()), properties.leaseCapacity(declared.value())))
                 .toList();
     }
 
@@ -286,11 +286,11 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
      * amount), for the check below; unlike {@link #leasedImplementation} it never throws, since a
      * service this process doesn't host has no obligation to be configured here.
      */
-    private static List<LeaseNeed> configuredLeaseNeeds(ModularProperties properties, String name, Class<?> implClass) {
+    private static List<LeaseNeed> configuredLeaseNeeds(ModularProperties properties, Class<?> implClass) {
         List<LeaseNeed> needs = new ArrayList<>();
         for (RequiresLease declared : implClass.getAnnotationsByType(RequiresLease.class)) {
             Integer capacity = properties.leaseCapacity(declared.value());
-            Integer amount = properties.service(name).leaseAmount(declared.value());
+            Integer amount = properties.leaseAmount(declared.value());
             if (capacity != null && amount != null) {
                 needs.add(new LeaseNeed(declared.value(), amount, capacity));
             }
@@ -356,7 +356,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                         + "each service that declares it claims " + total.getValue() + " (" + String.join(", ", claimants.get(lease))
                         + "). The capacity is cluster-wide and each of those services has to run somewhere, so no deployment "
                         + "of this jar, however it's split, can host them all. Raise modular.leases." + lease + ".capacity, or "
-                        + "lower the amounts under modular.services.<service>.leases." + lease + ".");
+                        + "lower modular.leases." + lease + ".amount.");
             }
         }
     }
@@ -391,13 +391,13 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.leases."
                         + lease + ".capacity isn't set: the lease has no cluster-wide capacity to share out.");
             }
-            Integer amount = properties.service(name).leaseAmount(lease);
+            Integer amount = properties.leaseAmount(lease);
             if (amount == null) {
-                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.services."
-                        + name + ".leases." + lease + " isn't set: how much of the lease does one instance claim?");
+                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.leases."
+                        + lease + ".amount isn't set: how much of the lease does one node claim?");
             }
             if (amount > capacity) {
-                throw new IllegalStateException("modular.services." + name + ".leases." + lease + "=" + amount
+                throw new IllegalStateException("modular.leases." + lease + ".amount=" + amount
                         + " exceeds modular.leases." + lease + ".capacity=" + capacity + ": " + who + " could never be granted it.");
             }
             needs.add(new LeaseNeed(lease, amount, capacity));

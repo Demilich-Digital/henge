@@ -219,8 +219,8 @@ public class ModularProperties {
         return dotted.toUpperCase(Locale.ROOT).replace('.', '_').replace('-', '_');
     }
 
-    private static final Pattern DOTTED_SERVICE_KEY = Pattern.compile("mode|url|versions\\.\\d+\\.(mode|url)|leases\\.[^.]+");
-    private static final Pattern ENV_SERVICE_KEY = Pattern.compile("MODE|URL|VERSIONS_\\d+_(MODE|URL)|LEASES_.+");
+    private static final Pattern DOTTED_SERVICE_KEY = Pattern.compile("mode|url|versions\\.\\d+\\.(mode|url)");
+    private static final Pattern ENV_SERVICE_KEY = Pattern.compile("MODE|URL|VERSIONS_\\d+_(MODE|URL)");
 
     /**
      * Every {@code modular.services.*} property (dotted, or as a {@code MODULAR_SERVICES_*}
@@ -261,7 +261,7 @@ public class ModularProperties {
             return propertyName + ": no @ModularService is named '" + name + "'" + suggestion(name, serviceNames);
         }
         if (dot < 0 || !DOTTED_SERVICE_KEY.matcher(rest.substring(dot + 1)).matches()) {
-            return propertyName + ": not a known key (mode, url, versions.<n>.mode, versions.<n>.url, leases.<lease>)";
+            return propertyName + ": not a known key (mode, url, versions.<n>.mode, versions.<n>.url)";
         }
         return null;
     }
@@ -280,7 +280,7 @@ public class ModularProperties {
             }
         }
         return propertyName + ": doesn't match any discovered service and key (MODULAR_SERVICES_<NAME>_MODE, _URL, "
-                + "_VERSIONS_<n>_MODE, _VERSIONS_<n>_URL or _LEASES_<LEASE>; discovered: " + serviceNames + ")";
+                + "_VERSIONS_<n>_MODE or _VERSIONS_<n>_URL; discovered: " + serviceNames + ")";
     }
 
     private static String suggestion(String name, Set<String> serviceNames) {
@@ -324,8 +324,16 @@ public class ModularProperties {
     }
 
     /**
+     * {@code modular.leases.<lease>.amount}: what one node claims of the lease, shared by every service
+     * on that node that declares it; {@code null} if unset. A positive integer.
+     */
+    public Integer leaseAmount(String lease) {
+        return positiveInt(environment, "modular.leases." + lease + ".amount");
+    }
+
+    /**
      * Every {@code modular.leases.*} property that names a lease no service declares, or a key other
-     * than {@code capacity}, as one line each. Nothing else would read one, so a typo would leave the
+     * than {@code capacity} or {@code amount}, as one line each. Nothing else would read one, so a typo would leave the
      * real lease without its capacity (which is itself an error) or, worse, a stale entry unnoticed.
      */
     public List<String> unknownLeaseProperties(Set<String> leaseNames) {
@@ -346,8 +354,8 @@ public class ModularProperties {
                 String lease = dot < 0 ? rest : rest.substring(0, dot);
                 if (!leaseNames.contains(lease)) {
                     problems.add(propertyName + ": no @RequiresLease names '" + lease + "'" + suggestion(lease, leaseNames));
-                } else if (dot < 0 || !rest.substring(dot + 1).equals("capacity")) {
-                    problems.add(propertyName + ": not a known key (capacity)");
+                } else if (dot < 0 || !Set.of("capacity", "amount").contains(rest.substring(dot + 1))) {
+                    problems.add(propertyName + ": not a known key (capacity, amount)");
                 }
             }
         }
@@ -392,14 +400,6 @@ public class ModularProperties {
         /** Per-version url, falling back to the service-level value. {@code null} if neither is set. */
         public String resolveUrl(int version) {
             return resolve("url", version);
-        }
-
-        /**
-         * {@code modular.services.<name>.leases.<lease>}: how much of the lease one instance of this
-         * service (any version) claims; {@code null} if unset. A positive integer.
-         */
-        public Integer leaseAmount(String lease) {
-            return positiveInt(environment, "modular.services." + name + ".leases." + lease);
         }
 
         private String resolve(String key, int version) {

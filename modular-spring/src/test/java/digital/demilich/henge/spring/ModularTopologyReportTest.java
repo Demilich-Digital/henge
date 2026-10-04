@@ -114,8 +114,7 @@ class ModularTopologyReportTest {
     private static Map<String, Object> leases() {
         Map<String, Object> properties = new HashMap<>();
         properties.put("modular.leases.ledger-db.capacity", 100);
-        properties.put("modular.services.ledger-service.leases.ledger-db", 40);
-        properties.put("modular.services.report-service.leases.ledger-db", 20);
+        properties.put("modular.leases.ledger-db.amount", 30);
         return properties;
     }
 
@@ -153,7 +152,7 @@ class ModularTopologyReportTest {
             assertThat(ledger.implementation()).endsWith("LedgerServiceImpl");
             assertThat(ledger.leases()).singleElement().satisfies(lease -> {
                 assertThat(lease.name()).isEqualTo("ledger-db");
-                assertThat(lease.amount()).isEqualTo(40);
+                assertThat(lease.amount()).isEqualTo(30);
                 assertThat(lease.capacity()).isEqualTo(100);
             });
             assertThat(ledger.advertisedBy()).singleElement().satisfies(advertiser -> {
@@ -168,7 +167,7 @@ class ModularTopologyReportTest {
                 assertThat(lease.capacity()).isEqualTo(100);
                 assertThat(lease.claimed()).isEqualTo(60);
                 assertThat(lease.holders()).extracting(holder -> holder.service() + " " + holder.amount())
-                        .containsExactlyInAnyOrder("ledger-service@1 40", "report-service@1 20");
+                        .containsExactlyInAnyOrder("ledger-service@1 30", "report-service@1 30");
             });
         }
     }
@@ -176,17 +175,18 @@ class ModularTopologyReportTest {
     @Test
     void aServiceWhoseLeaseWasRefusedIsReportedRemoteAndRoutedLikeACall() {
         Map<String, Object> properties = leases();
+        properties.put("modular.leases.ledger-db.amount", 40);
         try (var ctx = context(properties, LeasedConfig.class, CrowdedConfig.class, ModularTransportConfiguration.class)) {
             ctx.refresh();
 
-            // 70 is held elsewhere, so only 30 is left: report (20) fits, ledger (40) doesn't.
+            // 70 is held elsewhere, so only 30 is left: a claim of 40 fits for neither service.
             Report report = reportOf(ctx);
-            assertThat(service(report, "report-service@1").state()).isEqualTo(State.HOSTED);
+            assertThat(service(report, "report-service@1").state()).isEqualTo(State.LEASE_REFUSED);
             Service ledger = service(report, "ledger-service@1");
             assertThat(ledger.state()).isEqualTo(State.LEASE_REFUSED);
             assertThat(ledger.route().source()).isEqualTo(RouteSource.NONE);
             assertThat(report.leases()).singleElement().satisfies(lease -> {
-                assertThat(lease.claimed()).isEqualTo(70 + 20);
+                assertThat(lease.claimed()).isEqualTo(70);
                 assertThat(lease.holders()).anyMatch(holder -> holder.node().equals("another-node") && !holder.self());
             });
 
@@ -202,6 +202,7 @@ class ModularTopologyReportTest {
     @Test
     void aConfiguredUrlBeatsTheAdvertisements() {
         Map<String, Object> properties = leases();
+        properties.put("modular.leases.ledger-db.amount", 40);
         properties.put("modular.services.ledger-service.url", "http://configured:1");
         try (var ctx = context(properties, LeasedConfig.class, CrowdedConfig.class, ModularTransportConfiguration.class)) {
             ctx.refresh();

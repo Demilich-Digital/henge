@@ -100,8 +100,7 @@ class ModularStoreSelectionTest {
         var ctx = new AnnotationConfigApplicationContext();
         Map<String, Object> all = new HashMap<>(Map.of(
                 "modular.leases.ledger-db.capacity", 100,
-                "modular.services.ledger-service.leases.ledger-db", 40,
-                "modular.services.report-service.leases.ledger-db", 40));
+                "modular.leases.ledger-db.amount", 40));
         all.putAll(properties);
         ctx.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", all));
         ctx.register(configs);

@@ -14,7 +14,7 @@
     },
     {
       "name": "modular.leases",
-      "description": "Per lease, by name: modular.leases.<lease>.capacity, the cluster-wide capacity services share out with @RequiresLease. What one instance of a service claims is modular.services.<name>.leases.<lease>."
+      "description": "Per lease, by name: modular.leases.<lease>.capacity, the cluster-wide capacity services share out with @RequiresLease, and modular.leases.<lease>.amount, what one node claims of it."
     },
     {
       "name": "modular.server",

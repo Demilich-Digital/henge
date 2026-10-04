@@ -519,7 +519,7 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.serve` | unset | `name[@version]` entries, comma-separated or as a YAML list, naming what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
 | `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`; any other placeholder fails startup) used for any `internal-rest` service without an explicit `url`. |
 | `modular.leases.<lease>.capacity` | — | Cluster-wide capacity of a resource that services claim shares of with `@RequiresLease`. A positive integer; required for every declared lease. |
-| `modular.services.<name>.leases.<lease>` | — | How much of the lease one instance of the service claims. A positive integer, at most the capacity; required for every lease the implementation declares. |
+| `modular.leases.<lease>.amount` | — | How much of the lease one node claims, however many services on it declare it. A positive integer, at most the capacity; required for every declared lease. |
 | `modular.store.type` | `in-process` | Which `SystemEphemeralDatastore` holds this process's shared state (leases, service advertisements): `in-process`, or the type of an adapter on the classpath (`redis`, from `modular-redis`). Setting it while also defining a datastore bean fails startup. |
 | `modular.store.redis.uri` | — | For `type=redis`: a Lettuce URI, e.g. `redis://host:6379/0`; `rediss://` for TLS, `redis://:password@host` for a password, options as query parameters (`?timeout=5s`). Required. |
 | `modular.transport.retry.max-attempts` | `3` | Calls made at most per invocation, the first included; `1` turns retries off. See "Retries". |
@@ -554,10 +554,7 @@ modular:
   leases:
     orders-db:
       capacity: 180          # cluster-wide; set below the real limit as a margin
-  services:
-    order-service:
-      leases:
-        orders-db: 20        # what one instance claims
+      amount: 20             # what one node claims
 ```
 
 All of a service's leases are acquired before its implementation is constructed, or none are. If
