@@ -151,8 +151,8 @@ public class ModularProperties {
         return dotted.toUpperCase(Locale.ROOT).replace('.', '_').replace('-', '_');
     }
 
-    private static final Pattern DOTTED_SERVICE_KEY = Pattern.compile("mode|url|versions\\.\\d+\\.(mode|url)");
-    private static final Pattern ENV_SERVICE_KEY = Pattern.compile("MODE|URL|VERSIONS_\\d+_(MODE|URL)");
+    private static final Pattern DOTTED_SERVICE_KEY = Pattern.compile("mode|url|versions\\.\\d+\\.(mode|url)|leases\\.[^.]+");
+    private static final Pattern ENV_SERVICE_KEY = Pattern.compile("MODE|URL|VERSIONS_\\d+_(MODE|URL)|LEASES_.+");
 
     /**
      * Every {@code modular.services.*} property (dotted, or as a {@code MODULAR_SERVICES_*}
@@ -193,7 +193,7 @@ public class ModularProperties {
             return propertyName + ": no @ModularService is named '" + name + "'" + suggestion(name, serviceNames);
         }
         if (dot < 0 || !DOTTED_SERVICE_KEY.matcher(rest.substring(dot + 1)).matches()) {
-            return propertyName + ": not a known key (mode, url, versions.<n>.mode, versions.<n>.url)";
+            return propertyName + ": not a known key (mode, url, versions.<n>.mode, versions.<n>.url, leases.<lease>)";
         }
         return null;
     }
@@ -212,7 +212,7 @@ public class ModularProperties {
             }
         }
         return propertyName + ": doesn't match any discovered service and key (MODULAR_SERVICES_<NAME>_MODE, _URL, "
-                + "_VERSIONS_<n>_MODE or _VERSIONS_<n>_URL; discovered: " + serviceNames + ")";
+                + "_VERSIONS_<n>_MODE, _VERSIONS_<n>_URL or _LEASES_<LEASE>; discovered: " + serviceNames + ")";
     }
 
     private static String suggestion(String name, Set<String> serviceNames) {
@@ -247,6 +247,61 @@ public class ModularProperties {
         return previous[b.length()];
     }
 
+    /**
+     * {@code modular.leases.<lease>.capacity}: the cluster-wide capacity of a resource that services
+     * claim shares of with {@code @RequiresLease}; {@code null} if unset. A positive integer.
+     */
+    public Integer leaseCapacity(String lease) {
+        return positiveInt(environment, "modular.leases." + lease + ".capacity");
+    }
+
+    /**
+     * Every {@code modular.leases.*} property that names a lease no service declares, or a key other
+     * than {@code capacity}, as one line each. Nothing else would read one, so a typo would leave the
+     * real lease without its capacity (which is itself an error) or, worse, a stale entry unnoticed.
+     */
+    public List<String> unknownLeaseProperties(Set<String> leaseNames) {
+        Set<String> problems = new LinkedHashSet<>();
+        if (!(environment instanceof ConfigurableEnvironment configurable)) {
+            return List.of();
+        }
+        for (PropertySource<?> source : configurable.getPropertySources()) {
+            if (!(source instanceof EnumerablePropertySource<?> enumerable)) {
+                continue;
+            }
+            for (String propertyName : enumerable.getPropertyNames()) {
+                if (!propertyName.startsWith("modular.leases.")) {
+                    continue;
+                }
+                String rest = propertyName.substring("modular.leases.".length());
+                int dot = rest.indexOf('.');
+                String lease = dot < 0 ? rest : rest.substring(0, dot);
+                if (!leaseNames.contains(lease)) {
+                    problems.add(propertyName + ": no @RequiresLease names '" + lease + "'" + suggestion(lease, leaseNames));
+                } else if (dot < 0 || !rest.substring(dot + 1).equals("capacity")) {
+                    problems.add(propertyName + ": not a known key (capacity)");
+                }
+            }
+        }
+        return List.copyOf(problems);
+    }
+
+    private static Integer positiveInt(Environment environment, String key) {
+        String raw = environment.getProperty(key);
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            int value = Integer.parseInt(raw.trim());
+            if (value > 0) {
+                return value;
+            }
+        } catch (NumberFormatException e) {
+            // reported below, same as a non-positive number
+        }
+        throw new IllegalStateException(key + "=" + raw + " is not a positive integer");
+    }
+
     public ServiceConfig service(String name) {
         return new ServiceConfig(environment, name);
     }
@@ -269,6 +324,14 @@ public class ModularProperties {
         /** Per-version url, falling back to the service-level value. {@code null} if neither is set. */
         public String resolveUrl(int version) {
             return resolve("url", version);
+        }
+
+        /**
+         * {@code modular.services.<name>.leases.<lease>}: how much of the lease one instance of this
+         * service (any version) claims; {@code null} if unset. A positive integer.
+         */
+        public Integer leaseAmount(String lease) {
+            return positiveInt(environment, "modular.services." + name + ".leases." + lease);
         }
 
         private String resolve(String key, int version) {

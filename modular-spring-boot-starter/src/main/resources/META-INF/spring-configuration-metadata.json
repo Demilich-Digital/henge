@@ -9,6 +9,10 @@
       "description": "Per service, by name: modular.services.<name>.mode (embedded | internal-rest) and .url, overridable per version as modular.services.<name>.versions.<n>.mode / .url. Unrecognized keys or service names fail startup."
     },
     {
+      "name": "modular.leases",
+      "description": "Per lease, by name: modular.leases.<lease>.capacity, the cluster-wide capacity services share out with @RequiresLease. What one instance of a service claims is modular.services.<name>.leases.<lease>."
+    },
+    {
       "name": "modular.server",
       "description": "The /_modular dispatch endpoint this process serves."
     },

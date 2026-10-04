@@ -118,7 +118,7 @@ public final class InProcessEphemeralDatastore implements SystemEphemeralDatasto
             throw new IllegalStateException("Member '" + localName + "' of '" + key
                     + "' was written with put, but the key is being claimed: a key is for claims or for put, never both.");
         }
-        return ByteBuffer.wrap(entry.value()).getInt();
+        return SystemEphemeralDatastore.claimedAmount(entry.value());
     }
 
     private record Entry(byte[] value, Instant expiresAt) {

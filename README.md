@@ -508,11 +508,60 @@ keys below (say `.mdoe`) fails startup instead of being silently ignored.
 | `modular.services.<name>.versions.<n>.mode` / `.url` | inherit the service-level value | Per-version override; `<n>` is an integer. |
 | `modular.serve` | unset | `name[@version]` entries, comma-separated or as a YAML list, naming what this process hosts; everything else discovered defaults to `internal-rest`. Names that match no `@ModularService` fail at startup. |
 | `modular.remote-url-template` | unset | URL template (`{service}`, `{version}`; any other placeholder fails startup) used for any `internal-rest` service without an explicit `url`. |
+| `modular.leases.<lease>.capacity` | — | Cluster-wide capacity of a resource that services claim shares of with `@RequiresLease`. A positive integer; required for every declared lease. |
+| `modular.services.<name>.leases.<lease>` | — | How much of the lease one instance of the service claims. A positive integer, at most the capacity; required for every lease the implementation declares. |
 | `modular.server.enabled` | `true` | Boot starter only: whether this process serves `/_modular/**` at all (a non-web application never does). |
 | `modular.server.path-prefix` | `/_modular` | Path prefix of the dispatch endpoint, for both the server and the client side. Must start with `/` and not end with one. |
 | `modular.transport.secret` | unset | Optional shared secret sent as `Modular-Internal-Secret` and required by the dispatcher; with Spring Security it becomes an authentication. |
 | `modular.transport.connect-timeout` | `2s` | A bare number is milliseconds; `2s`/`500ms` and ISO-8601 (`PT2S`) work too. `0` means no timeout. |
 | `modular.transport.read-timeout` | `10s` | Same format. |
+
+## Leases: sharing a scarce resource
+
+Every node can host every service, so a resource with a hard cap, like a database that accepts 200
+connections, would see its pool count grow with the number of nodes. Declare what a service needs and
+Henge keeps the cluster under the cap by not constructing the service on a node that can't get it:
+
+```java
+@ServiceVersion(value = OrderService.class, version = 1)
+@RequiresLease("orders-db")
+public class OrderServiceImpl implements OrderService {
+    public OrderServiceImpl(Lease ordersDb) {
+        config.setMaximumPoolSize(ordersDb.amount());   // size the resource FROM the lease
+    }
+}
+```
+
+```yaml
+modular:
+  leases:
+    orders-db:
+      capacity: 180          # cluster-wide; set below the real limit as a margin
+  services:
+    order-service:
+      leases:
+        orders-db: 20        # what one instance claims
+```
+
+All of a service's leases are acquired before its implementation is constructed, or none are. If
+they are refused, the service is reached over `internal-rest` like any other remote one, which needs
+an explicit `modular.services.<name>.url` (`modular.remote-url-template` can't be combined with
+leases, since the template assumes every node behind the name hosts the service). A lease is held for
+the life of the process and renewed on a heartbeat, so a crashed node gives its share back after the
+lease's 30-second TTL.
+
+What Henge does and doesn't do:
+
+- **It keeps books; it never sees a connection.** Size the real resource from `Lease.amount()`, and
+  keep the resource inside the service: a shared pool bean (or JPA, Flyway, ...) opens its connections
+  whether or not the service was built here.
+- **Over-allocating inside one process fails startup.** If a process's own services claim more of a
+  lease than its capacity and no other process holds any of it, nothing else could host the refused
+  service either, so startup fails and says who holds what. Raise the capacity, lower the amounts, or
+  host fewer of the services here with `--modular.serve`.
+- **The cap is soft.** Shared state lives in a `SystemEphemeralDatastore` (in-process by default, so a
+  single node always grants what fits); declare your own bean of that type to share it across nodes.
+  See `docs/design/self-orchestration.md`.
 
 ## Using this without Spring Boot
 

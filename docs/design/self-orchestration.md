@@ -1,6 +1,7 @@
 # Design: self-orchestration
 
-Status: draft, branch `self-management`. Nothing here is implemented yet.
+Status: draft, branch `self-management`. Implemented so far: the datastore contract with its in-process
+adapter (phase 1) and `@RequiresLease` (phase 2). Everything else is design only.
 
 ## Summary
 

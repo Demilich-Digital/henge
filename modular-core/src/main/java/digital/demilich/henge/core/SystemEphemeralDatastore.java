@@ -1,5 +1,6 @@
 package digital.demilich.henge.core;
 
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.Map;
 
@@ -46,6 +47,14 @@ public interface SystemEphemeralDatastore {
      * @throws IllegalArgumentException if {@code amount} or {@code capacity} is negative
      */
     boolean claim(String key, String localName, int amount, int capacity, Duration ttl);
+
+    /** The amount a member written by {@link #claim} holds, decoded from its value. */
+    static int claimedAmount(byte[] value) {
+        if (value.length != Integer.BYTES) {
+            throw new IllegalArgumentException("Not a claimed amount: " + value.length + " bytes, expected " + Integer.BYTES);
+        }
+        return ByteBuffer.wrap(value).getInt();
+    }
 
     /** A member's identity: the node that owns it, and its name under that node. */
     record MemberId(String nodeId, String localName) {

@@ -1,16 +1,21 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.Lease;
 import digital.demilich.henge.core.ModularService;
+import digital.demilich.henge.core.RequiresLease;
 import digital.demilich.henge.core.ServiceNames;
 import digital.demilich.henge.core.ServiceVersion;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
@@ -60,6 +65,7 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
     private static final String REGISTRY_BEAN_NAME = "modularServiceRegistry";
     private static final String DATASTORE_INSTALLER_BEAN_NAME = "modularDatastoreInstaller";
+    static final String LEASE_KEEPER_BEAN_NAME = "modularLeaseKeeper";
     private static final String IMPORTED_BY_ATTRIBUTE = ModularServiceRegistrar.class.getName() + ".importedBy";
 
     private Environment environment;
@@ -98,6 +104,8 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
 
         List<ModularServiceDescriptor> embedded = new ArrayList<>();
         List<String> serviceBeanNames = new ArrayList<>();
+        Set<String> leasedBeanNames = new LinkedHashSet<>();
+        Set<String> declaredLeaseNames = new LinkedHashSet<>();
         Map<String, Class<?>> namesToInterfaces = new LinkedHashMap<>();
 
         for (Class<?> serviceInterface : serviceInterfaces) {
@@ -152,7 +160,17 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                                 + "modular.services." + name + ".versions." + version + ".mode=internal-rest with a matching "
                                 + ".url pointing at the process that hosts it.");
                     }
-                    definition = new RootBeanDefinition(implClass);
+                    List<RequiresLease> declaredLeases = List.of(implClass.getAnnotationsByType(RequiresLease.class));
+                    if (declaredLeases.isEmpty()) {
+                        definition = new RootBeanDefinition(implClass);
+                    } else {
+                        definition = new RootBeanDefinition(ModularLeasedServiceFactoryBean.class);
+                        definition.getConstructorArgumentValues().addIndexedArgumentValue(0,
+                                leasedImplementation(properties, serviceInterface, name, version, implClass, declaredLeases));
+                        definition.setDependsOn(LEASE_KEEPER_BEAN_NAME);
+                        leasedBeanNames.add(beanName);
+                        declaredLeases.forEach(lease -> declaredLeaseNames.add(lease.value()));
+                    }
                     embedded.add(ModularServiceDescriptor.of(name, version, serviceInterface, beanName));
                 } else {
                     definition = new RootBeanDefinition(ModularServiceProxyFactoryBean.class);
@@ -175,6 +193,12 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                     + String.join("\n  ", unknownProperties));
         }
 
+        List<String> unknownLeaseProperties = properties.unknownLeaseProperties(declaredLeaseNames);
+        if (!unknownLeaseProperties.isEmpty()) {
+            throw new IllegalStateException("Unrecognized modular.leases configuration -- nothing reads these:\n  "
+                    + String.join("\n  ", unknownLeaseProperties));
+        }
+
         // A name that matches no discovered interface (almost always a typo) would otherwise leave
         // every service in this process as an internal-rest proxy, silently hosting nothing.
         Set<String> unknownServeNames = new LinkedHashSet<>(serveSpec.names());
@@ -192,11 +216,91 @@ class ModularServiceRegistrar implements ImportBeanDefinitionRegistrar, Environm
                 .addConstructorArgValue(serviceBeanNames)
                 .getBeanDefinition());
 
-        BeanDefinition registryDefinition =BeanDefinitionBuilder.genericBeanDefinition(ModularServiceRegistry.class)
+        if (!leasedBeanNames.isEmpty()) {
+            // The datastore (constructor argument 0) is autowired; only the TTL is given.
+            BeanDefinition keeper = BeanDefinitionBuilder.genericBeanDefinition(ModularLeaseKeeper.class).getBeanDefinition();
+            keeper.getConstructorArgumentValues().addIndexedArgumentValue(1, ModularLeaseKeeper.DEFAULT_TTL);
+            registry.registerBeanDefinition(LEASE_KEEPER_BEAN_NAME, keeper);
+        }
+
+        BeanDefinition registryDefinition = BeanDefinitionBuilder.genericBeanDefinition(ModularServiceRegistry.class)
                 .addConstructorArgValue(embedded)
+                .addConstructorArgValue(leasedBeanNames)
                 .getBeanDefinition();
         registryDefinition.setAttribute(IMPORTED_BY_ATTRIBUTE, importingClassMetadata.getClassName());
         registry.registerBeanDefinition(REGISTRY_BEAN_NAME, registryDefinition);
+    }
+
+    /**
+     * Everything a leased implementation needs, checked now so a mistake fails startup naming the
+     * property or parameter to fix: each lease's capacity and this service's amount are configured and
+     * the amount fits the capacity, and every {@code Lease} constructor parameter says which lease it is.
+     */
+    private LeasedImplementation leasedImplementation(ModularProperties properties, Class<?> serviceInterface,
+            String name, int version, Class<?> implClass, List<RequiresLease> declaredLeases) {
+        String who = name + "@" + version + " (" + implClass.getName() + ")";
+        if (properties.getRemoteUrlTemplate() != null) {
+            throw new IllegalStateException(who + " declares @RequiresLease, which can't be combined with "
+                    + "modular.remote-url-template: the template assumes every process behind the name hosts the service, "
+                    + "and a process that is refused a lease doesn't. Route to it with an explicit "
+                    + "modular.services." + name + ".url instead.");
+        }
+        List<LeaseNeed> needs = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
+        for (RequiresLease declared : declaredLeases) {
+            String lease = declared.value();
+            if (!ServiceNames.isValidServiceName(lease)) {
+                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but a lease name must be "
+                        + "lowercase kebab case ([a-z0-9]+ separated by single '-'): it is a modular.leases.<name> property key.");
+            }
+            if (!names.add(lease)) {
+                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\") twice.");
+            }
+            Integer capacity = properties.leaseCapacity(lease);
+            if (capacity == null) {
+                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.leases."
+                        + lease + ".capacity isn't set: the lease has no cluster-wide capacity to share out.");
+            }
+            Integer amount = properties.service(name).leaseAmount(lease);
+            if (amount == null) {
+                throw new IllegalStateException(who + " declares @RequiresLease(\"" + lease + "\"), but modular.services."
+                        + name + ".leases." + lease + " isn't set: how much of the lease does one instance claim?");
+            }
+            if (amount > capacity) {
+                throw new IllegalStateException("modular.services." + name + ".leases." + lease + "=" + amount
+                        + " exceeds modular.leases." + lease + ".capacity=" + capacity + ": " + who + " could never be granted it.");
+            }
+            needs.add(new LeaseNeed(lease, amount, capacity));
+        }
+
+        Map<Integer, String> leaseParameters = new LinkedHashMap<>();
+        Constructor<?> constructor;
+        try {
+            constructor = BeanUtils.getResolvableConstructor(implClass);
+        } catch (IllegalStateException e) {
+            throw new IllegalStateException(who + " declares @RequiresLease, so it needs one constructor Henge can pass its "
+                    + "Lease to: give it a single constructor, or mark one @Autowired.", e);
+        }
+        Parameter[] parameters = constructor.getParameters();
+        for (int i = 0; i < parameters.length; i++) {
+            if (parameters[i].getType() != Lease.class) {
+                continue;
+            }
+            RequiresLease marked = parameters[i].getAnnotation(RequiresLease.class);
+            String lease = marked != null ? marked.value() : (names.size() == 1 ? names.iterator().next() : null);
+            if (lease == null) {
+                throw new IllegalStateException(who + " declares several leases " + names + ", so its Lease constructor "
+                        + "parameter '" + parameters[i].getName() + "' must say which one with @RequiresLease(\"...\").");
+            }
+            if (!names.contains(lease)) {
+                throw new IllegalStateException(who + ": constructor parameter '" + parameters[i].getName()
+                        + "' asks for lease '" + lease + "', which the class doesn't declare (declared: " + names + ").");
+            }
+            leaseParameters.put(i, lease);
+        }
+
+        boolean remoteUrlConfigured = properties.service(name).resolveUrl(version) != null;
+        return new LeasedImplementation(serviceInterface, name, version, implClass, needs, leaseParameters, remoteUrlConfigured);
     }
 
     private static void addServiceVersionQualifier(RootBeanDefinition definition, Class<?> serviceInterface, int version) {
