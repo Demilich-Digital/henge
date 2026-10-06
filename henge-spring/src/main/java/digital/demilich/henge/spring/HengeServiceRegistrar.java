@@ -78,6 +78,7 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
     private static final String REGISTRY_BEAN_NAME = "hengeServiceRegistry";
     private static final String DATASTORE_INSTALLER_BEAN_NAME = "hengeDatastoreInstaller";
     private static final String ADVERTISER_BEAN_NAME = "hengeServiceAdvertiser";
+    private static final String SCHEDULED_JOBS_BEAN_NAME = "hengeScheduledJobs";
     private static final String TOPOLOGY_CATALOG_BEAN_NAME = "hengeTopologyCatalog";
     static final String LEASE_KEEPER_BEAN_NAME = "hengeLeaseKeeper";
     static final String TRUNK_BEAN_NAME = "hengeTrunkConfiguration";
@@ -249,6 +250,13 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
         registry.registerBeanDefinition(DATASTORE_INSTALLER_BEAN_NAME, BeanDefinitionBuilder
                 .genericBeanDefinition(HengeDatastoreInstaller.class)
                 .addConstructorArgValue(serviceBeanNames)
+                .getBeanDefinition());
+
+        // Finds @HengeScheduled methods on the application's beans; an infrastructure bean, like Spring's own
+        // scheduling post-processor, so it is not offered for auto-proxying or injection.
+        registry.registerBeanDefinition(SCHEDULED_JOBS_BEAN_NAME, BeanDefinitionBuilder
+                .genericBeanDefinition(HengeScheduledJobs.class)
+                .setRole(BeanDefinition.ROLE_INFRASTRUCTURE)
                 .getBeanDefinition());
 
         for (String lease : providersInUse) {

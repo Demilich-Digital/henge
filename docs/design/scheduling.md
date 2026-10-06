@@ -1,6 +1,9 @@
 # Design: scheduled jobs
 
-**Status.** Design only; nothing here is built.
+**Status.** Step 1 of the [build order](#build-order) is built: `@HengeScheduled` with the fire claim, cron
+only. Not built: the run claim and `maxRuntime` (so a run that outlasts its interval can overlap the next
+fire), the startup and compile-time checks for plain `@Scheduled`, `@HengeAcknowledgeThisRunsOnEveryNode`,
+metrics, and the guide chapter.
 
 A scheduled job in Spring runs once per process. Deploy three replicas and `@Scheduled(cron = "...")`
 runs three times, silently, and only in production: with one process it looks correct. It is the same
@@ -41,7 +44,9 @@ Two claims, both on the existing `claim` primitive, one per concern.
 
 **The fire** (deduplication). Key `cron:<job>@<nominal fire instant>`, capacity 1, TTL long enough to
 outlast clock skew and jitter. Every node computes the same instant from the cron expression, so skew
-doesn't matter, and the first `claim` wins. It is **not released on completion**: releasing it when a
+doesn't matter, and the first `claim` wins. A node only runs a fire less than five minutes late, and the
+claim is kept for ten, so it can't lapse while a node still believes the fire is due; a later one is
+skipped, which is the no-catch-up rule. It is **not released on completion**: releasing it when a
 fast job finishes lets a node whose clock is slightly behind find it free and run the fire again. Fire
 keys expire by themselves, so there is nothing to clean up, and a wipe looks like early expiry.
 
