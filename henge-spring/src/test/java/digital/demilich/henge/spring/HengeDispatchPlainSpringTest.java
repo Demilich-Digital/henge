@@ -43,7 +43,7 @@ class HengeDispatchPlainSpringTest {
         RunningServer server = startServer(Map.of());
         try {
             AnnotationConfigApplicationContext clientContext = startClient(Map.of(
-                    "henge.services.echo-service.mode", "internal-rest",
+                    "henge.store.type", "in-process", "henge.services.echo-service.mode", "internal-rest",
                     "henge.services.echo-service.url", "http://localhost:" + server.port()));
             try {
                 EchoService proxied = clientContext.getBean(EchoService.class);
@@ -83,7 +83,7 @@ class HengeDispatchPlainSpringTest {
         RunningServer server = startServer(Map.of());
         try {
             AnnotationConfigApplicationContext clientContext = startClient(Map.of(
-                    "henge.services.echo-service.mode", "internal-rest",
+                    "henge.store.type", "in-process", "henge.services.echo-service.mode", "internal-rest",
                     "henge.services.echo-service.url", "http://localhost:" + server.port()));
             try {
                 EchoService proxied = clientContext.getBean(EchoService.class);
@@ -110,7 +110,7 @@ class HengeDispatchPlainSpringTest {
         RunningServer server = startServer(Map.of("henge.transport.secret", "s3cr3t"));
         try {
             AnnotationConfigApplicationContext clientContext = startClient(Map.of(
-                    "henge.services.echo-service.mode", "internal-rest",
+                    "henge.store.type", "in-process", "henge.services.echo-service.mode", "internal-rest",
                     "henge.services.echo-service.url", "http://localhost:" + server.port(),
                     "henge.transport.secret", "s3cr3t"));
             try {
@@ -135,7 +135,7 @@ class HengeDispatchPlainSpringTest {
         RunningServer server = startServer(Map.of("henge.transport.secret", "s3cr3t"));
         try {
             AnnotationConfigApplicationContext noSecretClient = startClient(Map.of(
-                    "henge.services.echo-service.mode", "internal-rest",
+                    "henge.store.type", "in-process", "henge.services.echo-service.mode", "internal-rest",
                     "henge.services.echo-service.url", "http://localhost:" + server.port()));
             try {
                 EchoService proxied = noSecretClient.getBean(EchoService.class);
@@ -149,7 +149,7 @@ class HengeDispatchPlainSpringTest {
             }
 
             AnnotationConfigApplicationContext wrongSecretClient = startClient(Map.of(
-                    "henge.services.echo-service.mode", "internal-rest",
+                    "henge.store.type", "in-process", "henge.services.echo-service.mode", "internal-rest",
                     "henge.services.echo-service.url", "http://localhost:" + server.port(),
                     "henge.transport.secret", "wrong"));
             try {
@@ -190,7 +190,7 @@ class HengeDispatchPlainSpringTest {
             assertThat(explodeStatusAndBody(server, "bad-status").status()).isEqualTo(500);
 
             AnnotationConfigApplicationContext clientContext = startClient(Map.of(
-                    "henge.services.echo-service.mode", "internal-rest",
+                    "henge.store.type", "in-process", "henge.services.echo-service.mode", "internal-rest",
                     "henge.services.echo-service.url", "http://localhost:" + server.port()));
             try {
                 EchoService proxied = clientContext.getBean(EchoService.class);
@@ -233,7 +233,7 @@ class HengeDispatchPlainSpringTest {
         try {
             AnnotationConfigApplicationContext clientContext = startClient(Map.of(
                     "henge.server.path-prefix", "/rpc",
-                    "henge.services.echo-service.mode", "internal-rest",
+                    "henge.store.type", "in-process", "henge.services.echo-service.mode", "internal-rest",
                     "henge.services.echo-service.url", "http://localhost:" + server.port()));
             try {
                 assertThat(clientContext.getBean(EchoService.class).echo("hi")).isEqualTo("echo:hi");

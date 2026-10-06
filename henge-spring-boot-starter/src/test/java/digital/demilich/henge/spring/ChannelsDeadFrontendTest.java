@@ -92,7 +92,7 @@ class ChannelsDeadFrontendTest {
     void aTrunkThatKeepsAnsweringIsNeverDropped() throws Exception {
         try (ConfigurableApplicationContext backend = start(QUICK);
                 ConfigurableApplicationContext frontend = start(QUICK,
-                        "henge.services.feed-service.mode=internal-rest",
+                        "henge.store.type=in-process", "henge.services.feed-service.mode=internal-rest",
                         "henge.services.feed-service.url=http://localhost:" + portOf(backend))) {
             var client = new Client();
             WebSocket socket = connect(frontend, "orders", client);

@@ -9,6 +9,8 @@ import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastoreProvider;
 import digital.demilich.henge.redis.RedisEphemeralDatastore;
+import digital.demilich.henge.spring.fixture.counter.CounterTestConfig;
+import digital.demilich.henge.spring.fixture.echo.EchoTestConfig;
 import digital.demilich.henge.spring.leasedfixture.ledger.LedgerService;
 import java.time.Duration;
 import java.util.HashMap;
@@ -205,6 +207,68 @@ class HengeStoreSelectionTest {
             // Closing the context withdrew everything it had put there.
             assertThat(observer.read("lease:ledger-db").members()).isEmpty();
             assertThat(observer.read("adv:ledger-service@1").members()).isEmpty();
+        }
+    }
+
+    /** A context over a fixture that declares no leases, so none are configured. */
+    private static AnnotationConfigApplicationContext withoutLeases(Map<String, Object> properties, Class<?>... configs) {
+        var ctx = new AnnotationConfigApplicationContext();
+        ctx.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", new HashMap<>(properties)));
+        ctx.register(configs);
+        return ctx;
+    }
+
+    @Test
+    void aProcessThatHostsOnlyPartOfTheServicesFailsStartupWithoutAConfiguredStore() {
+        try (var ctx = withoutLeases(Map.of("henge.serve", "counter-service@1"), CounterTestConfig.class, HengeTransportConfiguration.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("This process hosts only part of the services (it reaches counter-service@2 over the network)")
+                    .hasStackTraceContaining("no ephemeral store is configured")
+                    .hasStackTraceContaining("Set henge.store.type (redis, with henge.store.redis.uri), or define a SystemEphemeralDatastore bean")
+                    .hasStackTraceContaining("say so with henge.store.type=in-process");
+        }
+    }
+
+    @Test
+    void aServiceConfiguredRemoteByItselfMakesTheProcessOneOfSeveralToo() {
+        try (var ctx = withoutLeases(Map.of("henge.services.echo-service.mode", "internal-rest",
+                "henge.services.echo-service.url", "http://elsewhere:8080"), EchoTestConfig.class, HengeTransportConfiguration.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("it reaches echo-service@1 over the network")
+                    .hasStackTraceContaining("no ephemeral store is configured");
+        }
+    }
+
+    @Test
+    void aMonolithNeedsNoStoreConfigured() {
+        try (var ctx = withoutLeases(Map.of(), CounterTestConfig.class, HengeTransportConfiguration.class)) {
+            ctx.refresh();
+            assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isNotNull();
+        }
+    }
+
+    @Test
+    void aPartialProcessThatNamesTheInProcessStoreHasSaidItsProcessesShareNothing() {
+        try (var ctx = withoutLeases(Map.of("henge.serve", "counter-service@1", "henge.store.type", "in-process"), CounterTestConfig.class, HengeTransportConfiguration.class)) {
+            ctx.refresh();
+            assertThat(((GuardedDatastore) ctx.getBean(SystemEphemeralDatastore.class)).delegate()).isInstanceOf(InProcessEphemeralDatastore.class);
+        }
+    }
+
+    @Test
+    void aPartialProcessOnAConfiguredStoreStarts() {
+        try (var ctx = withoutLeases(Map.of("henge.serve", "counter-service@1", "henge.store.type", "fake", "henge.store.fake.name", "node-a"),
+                CounterTestConfig.class, HengeTransportConfiguration.class)) {
+            ctx.refresh();
+            assertThat(((GuardedDatastore) ctx.getBean(SystemEphemeralDatastore.class)).delegate()).isSameAs(FakeDatastoreProvider.CREATED.get());
+        }
+    }
+
+    @Test
+    void aPartialProcessWithItsOwnStoreBeanStarts() {
+        try (var ctx = withoutLeases(Map.of("henge.serve", "counter-service@1"), CounterTestConfig.class, HengeTransportConfiguration.class, OwnStoreConfig.class)) {
+            ctx.refresh();
+            assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isNotNull();
         }
     }
 }

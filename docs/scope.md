@@ -36,8 +36,10 @@ scope excluded on purpose, the second is work deferred.
   due. A misfire policy would need a record.
 - **Exempting a third party's `@Scheduled`.** Spring's own classes are left alone, and any other bean with a
   `@Scheduled` method is refused unless it carries the acknowledgement, which a library's class can't.
-- **A warning for scheduled jobs on an in-process store with several processes.** Each is a cluster of one,
-  and runs every fire; nothing yet says so at startup.
+- **Telling replicas of a whole monolith from one monolith.** A process that reaches a service remotely
+  must have a store configured, but the whole jar run twice reaches nothing remotely, so it starts on the
+  in-process store and shares nothing. Leases, rate limits and scheduled jobs are then per process, and
+  nothing says so.
 - **Other transports** (gRPC, say). `ServiceTransport` is a seam, but the serving side and the wiring are
   REST-specific too.
 - **mTLS between processes.** The optional shared secret is the only built-in protection; the network is

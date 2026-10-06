@@ -118,11 +118,14 @@ None of this is all-or-nothing. Henge is a ladder, and every rung is somewhere a
 | Rung | You add | You get |
 |---|---|---|
 | 0. Monolith | `@HengeService` boundaries, the annotation processor | Monolith ergonomics, compile-time boundary rules, versions in the binary |
-| 1. Split | Flags, and your orchestrator's DNS | The same jar as independently deployed services, routed by the platform you already run |
+| 1. Split | Flags, your orchestrator's DNS, and a configured store | The same jar as independently deployed services, routed by the platform you already run |
 | 2. Shared store | A fast ephemeral store | Processes that find each other and fail over, with no addresses configured |
 | 3. Shared limits | Leases, rate limits | Resource caps and rate limits that hold across the whole cluster |
 | 4. Self-management | *Not built yet* | A cluster that decides its own topology |
 
-You can deploy on Kubernetes with flags and DNS, never run a shared store, and never use a lease or a
-rate limiter. Each rung has to be useful on its own, or it isn't done. The [guide](guide/01-project-setup.md)
+You can deploy on Kubernetes with flags and DNS, and never use a lease or a rate limiter. What you can't do
+is split without saying where the cluster's shared state lives: a process that hosts only part of the
+services refuses to start on the default in-process store, which is private to one process and so makes
+every process a cluster of one. Name a store, or name `in-process` to say that these processes share
+nothing. Each rung has to be useful on its own, or it isn't done. The [guide](guide/01-project-setup.md)
 climbs them in order.

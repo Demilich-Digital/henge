@@ -78,7 +78,7 @@ class ChannelsSplitTest {
     static void startBoth() {
         backend = start();
         frontend = start(
-                "henge.services.feed-service.mode=internal-rest",
+                "henge.store.type=in-process", "henge.services.feed-service.mode=internal-rest",
                 "henge.services.feed-service.url=http://localhost:" + portOf(backend));
     }
 

@@ -23,10 +23,10 @@ class SplitTest {
 
     @BeforeAll
     static void start() {
-        inventory = Shop.start("--henge.serve=inventory-service", "--shop.inventory.jdbc-url=jdbc:h2:mem:split;DB_CLOSE_DELAY=-1");
-        storefront = Shop.start("--henge.serve=order-service,notification-service",
+        inventory = Shop.start("--henge.store.type=in-process", "--henge.serve=inventory-service", "--shop.inventory.jdbc-url=jdbc:h2:mem:split;DB_CLOSE_DELAY=-1");
+        storefront = Shop.start("--henge.store.type=in-process", "--henge.serve=order-service,notification-service",
                 "--henge.services.inventory-service.url=" + inventory.url());
-        edge = Shop.start("--henge.serve=notification-service",
+        edge = Shop.start("--henge.store.type=in-process", "--henge.serve=notification-service",
                 "--henge.services.order-service.url=" + storefront.url(),
                 "--henge.services.inventory-service.url=" + inventory.url());
     }

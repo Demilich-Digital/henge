@@ -95,10 +95,10 @@ The same jar at every rung, as ever.
 
 ```bash
 # the storefront, which holds the orders
-java -jar $JAR --server.port=8081 --henge.serve=order-service,notification-service \
+java -jar $JAR --server.port=8081 --henge.store.type=in-process --henge.serve=order-service,notification-service \
   --henge.services.inventory-service.url=http://localhost:8082
 # the edge, which customers connect to, and holds no orders
-java -jar $JAR --server.port=8080 --henge.serve=notification-service \
+java -jar $JAR --server.port=8080 --henge.store.type=in-process --henge.serve=notification-service \
   --henge.services.order-service.url=http://localhost:8081 \
   --henge.services.inventory-service.url=http://localhost:8082
 ```

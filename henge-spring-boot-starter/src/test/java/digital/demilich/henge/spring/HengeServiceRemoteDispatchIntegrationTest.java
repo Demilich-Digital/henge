@@ -39,7 +39,7 @@ class HengeServiceRemoteDispatchIntegrationTest {
                     .properties(
                             "spring.main.banner-mode=off",
                             "henge.server.enabled=false",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             "henge.services.echo-service.url=http://localhost:" + serverPort)
                     .run();
             try {
@@ -71,7 +71,7 @@ class HengeServiceRemoteDispatchIntegrationTest {
                     .properties(
                             "spring.main.banner-mode=off",
                             "henge.server.enabled=false",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             // No henge.services.echo-service.url at all -- resolved via the
                             // template fallback instead (this fixture has only one service, so a
                             // literal template with no {service} placeholder is a legitimate,
@@ -104,7 +104,7 @@ class HengeServiceRemoteDispatchIntegrationTest {
                     .properties(
                             "spring.main.banner-mode=off",
                             "henge.server.enabled=false",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             "henge.services.echo-service.url=http://localhost:" + serverPort,
                             "henge.transport.secret=s3cr3t")
                     .run();
@@ -138,7 +138,7 @@ class HengeServiceRemoteDispatchIntegrationTest {
                     .properties(
                             "spring.main.banner-mode=off",
                             "henge.server.enabled=false",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             "henge.services.echo-service.url=http://localhost:" + serverPort)
                     .run();
             try {
@@ -194,7 +194,7 @@ class HengeServiceRemoteDispatchIntegrationTest {
                             "spring.main.banner-mode=off",
                             "henge.server.enabled=false",
                             "henge.server.path-prefix=/internal-rpc",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             "henge.services.echo-service.url=http://localhost:" + serverPort)
                     .run();
             try {

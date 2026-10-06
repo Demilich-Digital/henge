@@ -233,6 +233,7 @@ class HengeTopologyReportTest {
     void aServiceConfiguredRemoteIsRoutedByTheTemplateAndSaysWhereItsModeCameFrom() {
         // Not a leased service: a template can't be combined with those.
         Map<String, Object> properties = Map.of(
+                "henge.store.type", "in-process",
                 "henge.services.echo-service.mode", "internal-rest",
                 "henge.remote-url-template", "http://{service}-v{version}.svc:8080");
         try (var ctx = context(properties, EchoTestConfig.class)) {

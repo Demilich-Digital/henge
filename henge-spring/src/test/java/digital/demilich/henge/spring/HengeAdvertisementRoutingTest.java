@@ -70,10 +70,14 @@ class HengeAdvertisementRoutingTest {
         Context tomcatContext = tomcat.addContext("", null);
 
         AnnotationConfigWebApplicationContext serverContext = new AnnotationConfigWebApplicationContext();
-        serverContext.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", new HashMap<>(properties)));
+        Map<String, Object> all = new HashMap<>(properties);
         if (sharedStore != null) {
             serverContext.addBeanFactoryPostProcessor(beanFactory -> beanFactory.registerSingleton("sharedStore", sharedStore));
+        } else {
+            // No shared store: say that these processes share nothing, unless the test picked a store itself.
+            all.putIfAbsent("henge.store.type", "in-process");
         }
+        serverContext.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", all));
         serverContext.register(
                 EchoTestConfig.class, HengeTransportConfiguration.class, HengeDispatcherConfiguration.class, WebMvcSupport.class);
         Wrapper wrapper = Tomcat.addServlet(tomcatContext, "dispatcher", new DispatcherServlet(serverContext));
@@ -87,10 +91,13 @@ class HengeAdvertisementRoutingTest {
         var client = new AnnotationConfigApplicationContext();
         Map<String, Object> all = new HashMap<>(properties);
         all.put("henge.services.echo-service.mode", "internal-rest");
-        client.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", all));
         if (sharedStore != null) {
             client.addBeanFactoryPostProcessor(beanFactory -> beanFactory.registerSingleton("sharedStore", sharedStore));
+        } else {
+            // No shared store: say that these processes share nothing, unless the test picked a store itself.
+            all.putIfAbsent("henge.store.type", "in-process");
         }
+        client.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", all));
         client.register(EchoTestConfig.class, HengeTransportConfiguration.class);
         client.refresh();
         return client;

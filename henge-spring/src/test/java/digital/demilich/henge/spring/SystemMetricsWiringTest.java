@@ -93,7 +93,7 @@ class SystemMetricsWiringTest {
 
     @Test
     void aServiceConfiguredRemoteIsNotHostedHere() {
-        try (var ctx = context(Map.of("henge.services.echo-service.mode", "internal-rest"), EchoTestConfig.class)) {
+        try (var ctx = context(Map.of("henge.store.type", "in-process", "henge.services.echo-service.mode", "internal-rest"), EchoTestConfig.class)) {
             ctx.refresh();
 
             assertThat(ctx.getBean(MeterRegistry.class).get("henge.service.hosted")

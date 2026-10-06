@@ -55,7 +55,8 @@ with no message converters involved. The [wire protocol](reference/wire-protocol
 
 `HengeDatastoreInstaller` decides which `SystemEphemeralDatastore` the process uses: a bean the
 application defined, else the adapter that `henge.store.type` selects through `ServiceLoader`, else the
-in-process store. Everything Henge does with it (advertisements, lease claims, rate limits, routing
+in-process store, which it refuses (with the `service@version`s that make it a split) when the registrar
+found any service reached over the network and nothing was configured. Everything Henge does with it (advertisements, lease claims, rate limits, routing
 reads) goes through a metering wrapper when meters are on, which is where `henge.store.operations` comes
 from. The [design
 doc](design/self-orchestration.md) covers the store's model and where it's going.

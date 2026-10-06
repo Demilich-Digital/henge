@@ -162,7 +162,8 @@ class HengeServiceAdvertiserTest {
     void aServiceThatIsRemoteHereIsNotAdvertisedByThisProcess() {
         var ctx = new AnnotationConfigApplicationContext();
         ctx.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", Map.of(
-                "henge.serve", "counter-service@1", "henge.services.counter-service.url", "http://elsewhere:8080")));
+                "henge.store.type", "in-process", "henge.serve", "counter-service@1",
+                "henge.services.counter-service.url", "http://elsewhere:8080")));
         ctx.register(CounterTestConfig.class, HengeTransportConfiguration.class);
         ctx.refresh();
         try {

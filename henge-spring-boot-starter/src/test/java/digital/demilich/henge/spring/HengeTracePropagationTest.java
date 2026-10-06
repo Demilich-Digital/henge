@@ -96,7 +96,7 @@ class HengeTracePropagationTest {
         var builder = new SpringApplicationBuilder(EchoTestApp.class)
                 .web(WebApplicationType.NONE)
                 .properties("spring.main.banner-mode=off", "henge.server.enabled=false",
-                        "henge.services.echo-service.mode=internal-rest", "henge.services.echo-service.url=" + url)
+                        "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest", "henge.services.echo-service.url=" + url)
                 .initializers(ctx -> ((GenericApplicationContext) ctx).registerBean(ObservationRegistry.class, () -> tracer.registry));
         if (more.length > 0) {
             builder.properties(more);
@@ -164,7 +164,7 @@ class HengeTracePropagationTest {
             try (ConfigurableApplicationContext client = new SpringApplicationBuilder(EchoTestApp.class)
                     .web(WebApplicationType.NONE)
                     .properties("spring.main.banner-mode=off", "henge.server.enabled=false",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             "henge.services.echo-service.url=http://localhost:" + port)
                     .run()) {
                 assertThat(client.getBean(EchoService.class).echo("hi")).isEqualTo("echo:hi");

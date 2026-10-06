@@ -49,10 +49,12 @@ Because nothing records that a job ran:
 - **If the store can't be reached when a fire is due, the fire is skipped**, and counted. A skipped run is
   better than three duplicate ones. A process started without the store waits for it, alive and not ready
   ([chapter 5](05-the-ephemeral-store.md#fault-tolerance-when-the-store-is-away)); it runs no fires meanwhile.
-- **One process with no shared store is a cluster of one**, which is why everything works with no
-  configuration, and also why **several processes with no shared store each run every fire**: each is
-  alone in its own in-process store. Once you run more than one process, share a store
-  ([chapter 5](05-the-ephemeral-store.md)).
+- **A job is once per cluster only as far as the store is shared.** A monolith's in-process store is a
+  cluster of one, which is why jobs just run with no configuration. A process that hosts only part of the
+  services refuses to start without a store configured ([chapter 4](04-splitting.md#a-split-needs-a-store)),
+  and one that names `in-process` has said its processes share nothing, so each runs every fire. **Replicas
+  of a whole monolith can't be told apart from a single one**, so they start on the in-process store and
+  each run every fire: share a store between replicas ([chapter 5](05-the-ephemeral-store.md)).
 
 ## A run that outlasts its interval
 

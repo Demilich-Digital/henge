@@ -32,7 +32,7 @@ class ChannelsMetricsTest {
         MeterRegistry frontendMeters = new SimpleMeterRegistry();
         try (ConfigurableApplicationContext backend = start(null, backendMeters);
                 ConfigurableApplicationContext frontend = start(null, frontendMeters,
-                        "henge.services.feed-service.mode=internal-rest",
+                        "henge.store.type=in-process", "henge.services.feed-service.mode=internal-rest",
                         "henge.services.feed-service.url=http://localhost:" + portOf(backend))) {
             var clients = new Client[3];
             var sockets = new WebSocket[3];

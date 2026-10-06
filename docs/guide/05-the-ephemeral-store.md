@@ -27,8 +27,10 @@ store holds only state that is cheap to lose and quick to rebuild, which is what
 you run it without the care a database needs. The contract, and what kinds of system can implement it, is
 in [The ephemeral store](../ephemeral-store.md).
 
-Without configuration, every process has its own in-process store. That is why rungs 0 and 1 needed
-nothing: the store is always there, it just isn't shared.
+Without configuration, every process has its own in-process store. That is why rung 0, a monolith, needs
+nothing: the store is always there, it just isn't shared, and there is no one to share it with. A process
+that hosts only part of the services is not alone, and **refuses to start** on it: name a store, or name
+`henge.store.type=in-process` to say its processes share nothing ([chapter 4](04-splitting.md#a-split-needs-a-store)).
 
 ## Turning it on
 
@@ -100,7 +102,7 @@ Most systems that depend on a critical shared store stop when it does. Henge doe
 critical path, and Henge treats its being away as a **mode to ride out**, not an error to die of: a
 restart or a replacement of Redis is expected, and brief, and the cluster should barely notice it.
 
-A process with the default in-process store (one node, rungs 0 and 1) never has this problem: its store
+A process with the in-process store (one node, or processes that share nothing) never has this problem: its store
 is its own memory and can't be away. Everything below is about a **shared** store such as Redis.
 
 ### The approach

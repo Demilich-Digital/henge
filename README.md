@@ -20,7 +20,7 @@ Every layer is opt-in, and every rung is a place to stop:
 | Rung | You add | You get |
 |---|---|---|
 | 0. Monolith | `@HengeService` boundaries, the annotation processor | Monolith ergonomics, boundaries the compiler enforces, versions in the binary |
-| 1. Split | Flags, and your orchestrator's DNS | The same jar as independently deployed services, routed by Kubernetes (or whatever you run) |
+| 1. Split | Flags, your orchestrator's DNS, and a configured store | The same jar as independently deployed services, routed by Kubernetes (or whatever you run) |
 | 2. Shared store | A fast ephemeral store (Redis) | Processes that find each other and fail over, with no addresses configured |
 | 3. Shared limits | Leases, rate limits | Connection caps and rate limits that hold across the whole cluster |
 | 4. Self-management | *Not built yet* | A cluster that decides its own topology, by emergent behavior rather than central control |
@@ -45,10 +45,15 @@ curl -X POST localhost:8080/api/orders -H 'Content-Type: application/json' \
 The same jar as two services: inventory in one process, the storefront in another:
 
 ```bash
-java -jar $JAR --server.port=8082 --henge.serve=inventory-service
+java -jar $JAR --server.port=8082 --henge.serve=inventory-service --henge.store.type=in-process
 java -jar $JAR --server.port=8080 --henge.serve=order-service,notification-service \
-  --henge.services.inventory-service.url=http://localhost:8082
+  --henge.services.inventory-service.url=http://localhost:8082 --henge.store.type=in-process
 ```
+
+A process that hosts only part of the services is one of several, and refuses to start without a store
+configured, since the default in-process one is private to one process. `--henge.store.type=in-process`
+says these two share nothing, which is true of this demo; a real deployment points them at a shared store
+([chapter 5](docs/guide/05-the-ephemeral-store.md)).
 
 ```bash
 curl -X POST localhost:8080/api/orders -H 'Content-Type: application/json' \

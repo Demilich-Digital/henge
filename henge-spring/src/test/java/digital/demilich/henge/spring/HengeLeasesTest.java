@@ -195,6 +195,7 @@ class HengeLeasesTest {
     @Test
     void aServiceConfiguredInternalRestNeedsNoLease() {
         try (var ctx = context(Map.of(
+                "henge.store.type", "in-process",
                 "henge.serve", "report-service",
                 "henge.services.ledger-service.url", "http://elsewhere:8080",
                 "henge.leases.ledger-db.capacity", 100,

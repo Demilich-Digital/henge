@@ -100,7 +100,7 @@ class HengeObservationAutoConfigurationTest {
                     .properties(
                             "spring.main.banner-mode=off",
                             "henge.server.enabled=false",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             "henge.services.echo-service.url=http://localhost:" + serverPort)
                     .initializers(ctx -> ((GenericApplicationContext) ctx).registerBean(ObservationRegistry.class, () -> clientSide.registry))
                     .run();

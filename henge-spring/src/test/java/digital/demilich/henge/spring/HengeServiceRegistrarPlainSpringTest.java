@@ -60,7 +60,7 @@ class HengeServiceRegistrarPlainSpringTest {
         AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
         ctx.getEnvironment()
                 .getPropertySources()
-                .addFirst(new MapPropertySource("test", Map.of("henge.serve", "counter-service@1")));
+                .addFirst(new MapPropertySource("test", Map.of("henge.store.type", "in-process", "henge.serve", "counter-service@1")));
         ctx.register(CounterTestConfig.class, HengeTransportConfiguration.class);
         ctx.refresh();
         try {
@@ -152,7 +152,7 @@ class HengeServiceRegistrarPlainSpringTest {
         AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
         ctx.getEnvironment()
                 .getPropertySources()
-                .addFirst(new MapPropertySource("test", Map.of("henge.services.counter-service.mode", "internal-rest")));
+                .addFirst(new MapPropertySource("test", Map.of("henge.store.type", "in-process", "henge.services.counter-service.mode", "internal-rest")));
         ctx.register(CounterTestConfig.class); // no HengeTransportConfiguration
 
         assertThatThrownBy(ctx::refresh)

@@ -44,7 +44,7 @@ class SpringSecurityCompatibilityTest {
             ConfigurableApplicationContext client = new SpringApplicationBuilder(EchoTestApp.class)
                     .web(WebApplicationType.NONE)
                     .properties("spring.main.banner-mode=off", "henge.server.enabled=false",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             "henge.services.echo-service.url=http://localhost:" + port)
                     .run();
             try {
@@ -70,7 +70,7 @@ class SpringSecurityCompatibilityTest {
                     .web(WebApplicationType.NONE)
                     .properties("spring.main.banner-mode=off", "henge.server.enabled=false",
                             "henge.transport.secret=s3cr3t",
-                            "henge.services.echo-service.mode=internal-rest",
+                            "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                             "henge.services.echo-service.url=http://localhost:" + port + "/api")
                     .run();
             try {

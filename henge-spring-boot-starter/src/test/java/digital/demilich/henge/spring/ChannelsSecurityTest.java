@@ -50,7 +50,7 @@ class ChannelsSecurityTest {
                                 + "org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAutoConfiguration,"
                                 + "org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration",
                         "henge.transport.secret=s3cr3t",
-                        "henge.services.feed-service.mode=internal-rest",
+                        "henge.store.type=in-process", "henge.services.feed-service.mode=internal-rest",
                         "henge.services.feed-service.url=http://localhost:" + portOf(backend) + "/api")
                 .run();
     }

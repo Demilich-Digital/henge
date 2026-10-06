@@ -55,7 +55,7 @@ class HengeServiceMultiVersionTest {
     void nonDefaultVersionCanBeRemoteWhileDefaultStaysEmbedded() {
         contextRunner
                 .withPropertyValues(
-                        "henge.services.counter-service.versions.2.mode=internal-rest",
+                        "henge.store.type=in-process", "henge.services.counter-service.versions.2.mode=internal-rest",
                         "henge.services.counter-service.versions.2.url=http://localhost:0")
                 .run(ctx -> {
                     // v1 (default) is still the real local bean.
@@ -72,7 +72,7 @@ class HengeServiceMultiVersionTest {
     @Test
     void serveSpecOverridesLocalImplDefaultToRemote() {
         contextRunner
-                .withPropertyValues("henge.serve=counter-service@1")
+                .withPropertyValues("henge.store.type=in-process", "henge.serve=counter-service@1")
                 .run(ctx -> {
                     // v1 is served here -> real bean, unaffected.
                     assertThat(ctx.getBean(CounterServiceV1.class)).isNotNull();
@@ -91,7 +91,7 @@ class HengeServiceMultiVersionTest {
         contextRunner
                 .withPropertyValues(
                         "henge.serve=counter-service@2",
-                        "henge.services.counter-service.versions.2.mode=internal-rest",
+                        "henge.store.type=in-process", "henge.services.counter-service.versions.2.mode=internal-rest",
                         "henge.services.counter-service.versions.2.url=http://localhost:0")
                 .run(ctx -> {
                     assertThat(ctx).hasFailed();

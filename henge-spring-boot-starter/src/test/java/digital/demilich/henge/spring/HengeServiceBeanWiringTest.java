@@ -36,7 +36,7 @@ class HengeServiceBeanWiringTest {
     void internalRestModePrunesImplementationAndInstallsProxy() {
         contextRunner
                 .withPropertyValues(
-                        "henge.services.echo-service.mode=internal-rest",
+                        "henge.store.type=in-process", "henge.services.echo-service.mode=internal-rest",
                         "henge.services.echo-service.url=http://localhost:0")
                 .run(ctx -> {
                     assertThat(ctx).hasSingleBean(EchoService.class);

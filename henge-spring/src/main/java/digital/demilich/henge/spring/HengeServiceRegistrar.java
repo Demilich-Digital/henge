@@ -124,6 +124,8 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
         List<HengeServiceDescriptor> embedded = new ArrayList<>();
         List<HengeTopologyCatalog.Entry> catalogEntries = new ArrayList<>();
         List<String> serviceBeanNames = new ArrayList<>();
+        /** The versions this process reaches over the network: what makes it one of several processes. */
+        List<String> remoteServices = new ArrayList<>();
         boolean anyLeased = false;
         Set<String> declaredLeaseNames = new LinkedHashSet<>(providers.keySet());
         Set<String> providersInUse = new LinkedHashSet<>();
@@ -202,6 +204,7 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
                     embedded.add(HengeServiceDescriptor.of(name, version, serviceInterface, beanName));
                 } else {
                     bindingSpec = ServiceBindingSpec.remote(serviceInterface, name, version);
+                    remoteServices.add(qualifiedName);
                 }
 
                 RootBeanDefinition definition = new RootBeanDefinition(HengeServiceBindingFactoryBean.class);
@@ -250,6 +253,7 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
         registry.registerBeanDefinition(DATASTORE_INSTALLER_BEAN_NAME, BeanDefinitionBuilder
                 .genericBeanDefinition(HengeDatastoreInstaller.class)
                 .addConstructorArgValue(serviceBeanNames)
+                .addConstructorArgValue(remoteServices)
                 .getBeanDefinition());
 
         // Finds @HengeScheduled methods on the application's beans; an infrastructure bean, like Spring's own

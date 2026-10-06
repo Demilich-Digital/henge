@@ -53,9 +53,15 @@ class HengeDatastoreInstaller implements BeanFactoryPostProcessor, EnvironmentAw
     private Environment environment;
 
     private final List<String> serviceBeanNames;
+    private final List<String> remoteServices;
 
-    HengeDatastoreInstaller(List<String> serviceBeanNames) {
+    /**
+     * @param remoteServices the {@code service@version}s this process reaches over the network; any at all makes it
+     *     one of several processes, which the default in-process datastore can't serve
+     */
+    HengeDatastoreInstaller(List<String> serviceBeanNames, List<String> remoteServices) {
         this.serviceBeanNames = serviceBeanNames;
+        this.remoteServices = remoteServices;
     }
 
     @Override
@@ -65,7 +71,7 @@ class HengeDatastoreInstaller implements BeanFactoryPostProcessor, EnvironmentAw
 
     @Override
     public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
-        String datastoreBeanName = findOrRegisterDatastore(beanFactory, environment);
+        String datastoreBeanName = findOrRegisterDatastore(beanFactory, environment, remoteServices);
         HengeProperties properties = new HengeProperties(environment);
         Duration initialBackoff = properties.getStoreBackoffInitial();
         Duration maxBackoff = properties.getStoreBackoffMax();
@@ -90,10 +96,14 @@ class HengeDatastoreInstaller implements BeanFactoryPostProcessor, EnvironmentAw
         }
     }
 
-    private static String findOrRegisterDatastore(ConfigurableListableBeanFactory beanFactory, Environment environment) {
+    private static String findOrRegisterDatastore(ConfigurableListableBeanFactory beanFactory, Environment environment,
+            List<String> remoteServices) {
         String[] names = beanFactory.getBeanNamesForType(SystemEphemeralDatastore.class, true, false);
         String type = environment.getProperty("henge.store.type");
         if (names.length == 0) {
+            if ((type == null || type.isBlank()) && !remoteServices.isEmpty()) {
+                throw new IllegalStateException(unconfiguredStoreInASplit(remoteServices));
+            }
             ((BeanDefinitionRegistry) beanFactory).registerBeanDefinition(
                     DEFAULT_BEAN_NAME, configuredDatastore(type, beanFactory.getBeanClassLoader(), environment));
             return DEFAULT_BEAN_NAME;
@@ -114,6 +124,21 @@ class HengeDatastoreInstaller implements BeanFactoryPostProcessor, EnvironmentAw
                     + Arrays.toString(names) + "; Henge keeps its shared state in exactly one. Remove all but one, or mark one @Primary.");
         }
         return primaries.get(0);
+    }
+
+    /**
+     * A process that reaches any service over the network is one of several, and the in-process datastore
+     * is private to one: leases, rate limits, advertisements and scheduled jobs would each see a cluster of
+     * one. It is only the default that is refused. Naming {@code in-process} says the author knows, for a demo
+     * or a test whose processes share nothing.
+     */
+    static String unconfiguredStoreInASplit(List<String> remoteServices) {
+        return "This process hosts only part of the services (it reaches " + String.join(", ", remoteServices)
+                + " over the network), which makes it one of several processes, but no ephemeral store is configured. "
+                + "The default in-process store is private to one process, so each process would be a cluster of one: "
+                + "leases, rate limits, advertisements and scheduled jobs would not be shared. Set henge.store.type "
+                + "(redis, with henge.store.redis.uri), or define a SystemEphemeralDatastore bean. If these processes "
+                + "really share nothing (a demo, a test), say so with henge.store.type=in-process.";
     }
 
     /** The definition of the datastore {@code henge.store.type} names; the in-process one if it's unset. */

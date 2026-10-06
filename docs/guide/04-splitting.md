@@ -2,7 +2,8 @@
 
 **Rung 1: the same jar, as separate services.** You add command-line flags and whatever DNS your
 orchestrator already gives you. Henge tracks nothing about who runs where; Kubernetes (or ECS, Nomad,
-Consul, ...) does that, as it does for everything else you run.
+Consul, ...) does that, as it does for everything else you run. What it does need is to be told where
+the processes' shared state lives: see [A split needs a store](#a-split-needs-a-store).
 
 ## Embedded and internal-rest
 
@@ -22,13 +23,16 @@ so a process that hosts everything is already a valid host for any one of its se
 ```bash
 # Terminal 1: inventory only
 java -jar examples/shop-app/build/libs/shop-app-0.1.0-SNAPSHOT.jar --server.port=8082 \
-  --henge.serve=inventory-service
+  --henge.serve=inventory-service --henge.store.type=in-process
 
 # Terminal 2: the storefront: orders and notifications, and where to find inventory
 java -jar examples/shop-app/build/libs/shop-app-0.1.0-SNAPSHOT.jar --server.port=8080 \
   --henge.serve=order-service,notification-service \
-  --henge.services.inventory-service.url=http://localhost:8082
+  --henge.services.inventory-service.url=http://localhost:8082 --henge.store.type=in-process
 ```
+
+`--henge.store.type=in-process` is explained [below](#a-split-needs-a-store); leave it off and neither
+process starts.
 
 ```bash
 curl -X POST localhost:8080/api/orders -H 'Content-Type: application/json' \
@@ -43,6 +47,38 @@ Route public traffic to the processes that can serve it, or give every process e
 
 `henge.serve` takes `name` or `name@version`, comma-separated or as a YAML list, so a process can host
 version 2 of a service and not version 1. A name that matches no service fails startup.
+
+## A split needs a store
+
+A process that reaches any service over the network is one of several, and **refuses to start unless a store
+is configured**:
+
+```
+This process hosts only part of the services (it reaches inventory-service@1 over the network), which
+makes it one of several processes, but no ephemeral store is configured. The default in-process store is
+private to one process, so each process would be a cluster of one: leases, rate limits, advertisements and
+scheduled jobs would not be shared. Set henge.store.type (redis, with henge.store.redis.uri), or define a
+SystemEphemeralDatastore bean. If these processes really share nothing (a demo, a test), say so with
+henge.store.type=in-process.
+```
+
+The in-process store is a map in one process. It is correct for a process that is the whole cluster, a
+monolith, which is why that needs no configuration. Split it, and every lease, rate limit and scheduled job
+would quietly be enforced per process instead of per cluster, which is the very trap Henge exists to
+surface. So the default is refused, and the way out is to say something:
+
+- **A shared store** ([chapter 5](05-the-ephemeral-store.md)): `henge.store.type=redis`, or a
+  `SystemEphemeralDatastore` bean of your own.
+- **`henge.store.type=in-process`**, naming the default on purpose: these processes share nothing. That is
+  the truth of a demo on a laptop, or a test, and it is what the commands above say. Nothing is shared, so
+  nothing is enforced across them.
+
+It is the same bargain as `@HengeAcknowledgeThisRunsOnEveryNode`: the dangerous thing is possible, and
+must be typed.
+
+The check sees only what one process can: that it reaches a service remotely. A **replicated monolith**, the
+whole jar run twice with no flags, reaches nothing remotely and looks like any other monolith, so it starts
+on the in-process store and shares nothing. Share a store between replicas.
 
 ## Let the orchestrator route
 

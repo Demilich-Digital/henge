@@ -69,7 +69,9 @@ A bucket's keyspace is separate from the members'. Implementations must be threa
 ## What fits
 
 - **In-process** (the default): a map in the process. It is a correct store for a cluster of one, which
-  is why everything works with no configuration, and every limit holds per process.
+  is why a monolith works with no configuration, and every limit holds per process. It is for a process that
+  is the whole cluster, development and tests: a process that reaches any service over the network refuses
+  to start on the default, and has to name a store, or name `in-process` to say its processes share nothing.
 - **Redis**, 7.4 or later (`henge-redis`): hash-field TTLs give each member its own expiry, and every
   operation is one Lua script on one key, and Redis serializes each key, so there is one copy and nothing
   to merge. On Redis Cluster each key lives in one slot, so it shards with no cross-node coordination. The
