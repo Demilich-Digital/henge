@@ -69,8 +69,95 @@ A refused service is found by url or advertisement, so leases can't be combined 
 is there to make untrue. In practice, leases come with a shared store, and advertisements.
 
 Henge keeps the books; it never sees a connection. Keep the real resource inside the provider: a pool
-built as an ordinary shared bean (or by JPA, or Flyway) opens its connections on every process, granted
-or not.
+built as an ordinary shared bean opens its connections on every process, granted or not, which is
+the next section.
+
+## A DataSource, from lease to close
+
+**Spring's own DataSource doesn't fit a lease.** Spring Boot builds a pool from `spring.datasource.*`
+as an ordinary bean, and JPA, Flyway and schema initialization connect to it while the context starts,
+before any lease could be asked for. Every process opens its pool, granted or not, and the database sees
+pools times processes connections. Henge can't stop that after the fact, so it **refuses to start** with a
+`DataSource` bean in the context, naming the bean and where it came from:
+
+```
+This application has a DataSource bean, 'dataSource' (from ...DataSourceConfiguration$Hikari), and a bean's
+pool is opened on every process that runs the application, before a lease could be asked for ...
+```
+
+Two ways out. Take the pool out of Spring's hands, as below; or, if every process opening its own pool is
+what you want (an embedded database, a database that takes any number of connections), say so with
+`@HengeAcknowledgeThisOpensAPoolOnEveryNode`, on your `@Bean` method or, for the pool Boot builds, on your
+application class. It's the same bargain as `@HengeAcknowledgeThisRunsOnEveryNode` for `@Scheduled`: the
+dangerous thing is possible, and the consequence has to be typed where the code is.
+
+**1. Switch Spring's out.** Exclude the auto-configuration, and drop `spring.datasource.*`:
+
+```yaml
+spring:
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+```
+
+**2. Allocate in the provider.** `open` runs once, on a process that was granted the lease, and nowhere
+else. Build the pool there, sized from `lease.amount()`, and anything that has to touch the database
+before a service uses it (a schema, a migration) goes there too, so it runs only where the pool exists:
+
+```java
+@LeasedResource("inventory-db")
+public class InventoryDatabase implements ResourceProvider<DataSource> {
+
+    private final String jdbcUrl;
+    // credentials, and the rest of the configuration, come in the constructor like any bean's
+
+    @Override
+    public DataSource open(Lease lease) {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(jdbcUrl);
+        config.setMaximumPoolSize(lease.amount());   // this node's share, never more
+        config.setMinimumIdle(0);                    // don't hold connections the node isn't using
+        HikariDataSource pool = new HikariDataSource(config);
+        try {
+            Flyway.configure().dataSource(pool).load().migrate();
+        } catch (RuntimeException e) {
+            pool.close();                            // open() failed: nobody else will close it
+            throw e;
+        }
+        return pool;
+    }
+}
+```
+
+If `open` throws, startup fails, and what it had built is its own to clean up: Henge has no resource to
+close yet. The pool should also fail fast on a database that is away (Hikari's `initializationFailTimeout`),
+so a bad URL is an error at startup, not a hang.
+
+**3. Receive it in the service.** `@RequiresLease("inventory-db") DataSource database` in the constructor,
+as above. Build what you need from it there (a `JdbcTemplate`, a `JdbcClient`, an `EntityManagerFactory`).
+Those are yours, not beans, so nothing else in the application can reach the pool, which is the point.
+
+**4. Release it.** Nothing to write for the usual case. When the last service on the node that holds the
+lease is destroyed, in the order the context shuts down, Henge calls `close(resource)` on the provider and
+only then deletes the claim, so the capacity isn't offered to another process while this one still holds
+connections. `close` defaults to `AutoCloseable.close()`, which is right for Hikari. Override it when the
+resource needs more than that:
+
+```java
+@Override
+public void close(DataSource pool) {
+    ((HikariDataSource) pool).close();   // waits for borrowed connections to come back
+}
+```
+
+Rules for the end of the lease:
+
+- A service must not outlive the resource: don't hand the `DataSource` to a thread that keeps running
+  after the service is destroyed (a pool of workers you started, say). Stop those in the service's own
+  `@PreDestroy`, which runs first.
+- A failure in `close` is logged and the claim is still deleted; the process is going away anyway.
+- A process that crashes never calls `close`; its connections die with it, and its claim lapses with the
+  lease's 30-second time to live.
+- A lost lease (the over-capacity case in [Soft limits](#soft-limits)) doesn't close the pool yet.
 
 ## Rate limits
 
@@ -152,7 +239,7 @@ the processes worked out the rest. This is the smallest version of where Henge i
 
 A lease asked for with no configuration, an amount larger than the capacity (no process could ever be
 granted it), two providers for one lease, a resource type that doesn't fit the parameter, a rate limit
-that isn't configured, a period over an hour: each fails startup, naming what to fix.
+that isn't configured, a period over an hour, a `DataSource` bean: each fails startup, naming what to fix.
 
 ## Soft limits
 

@@ -1,6 +1,12 @@
 server:
   port: 8080
 
+spring:
+  autoconfigure:
+    # H2 is on the classpath, so Boot would build a DataSource of its own, opened on every process
+    # before a lease is asked for. Inventory's pool is the lease's: see InventoryDatabase.
+    exclude: org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+
 henge:
   leases:
     # Inventory's connection pool: however many processes host inventory, the database sees at
