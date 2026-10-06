@@ -45,7 +45,7 @@ whoever advertises it on the store → else the call fails, saying so.
 
 | Property | Default | Meaning |
 |---|---|---|
-| `henge.store.type` | `in-process` | Which store holds this process's shared state: `in-process`, or the type of an adapter on the classpath (`redis`, from `henge-redis`). Setting it while also defining a `SystemEphemeralDatastore` bean fails startup. |
+| `henge.store.type` | `in-process` | Which store holds this process's shared state: `in-process`, or the type of an adapter on the classpath (`redis`, from `henge-redis`). Setting it while also defining a `SystemEphemeralDatastore` bean fails startup. A store that is configured but can't be reached doesn't: the process starts not ready (see [operating](../guide/07-operating.md#starting-without-the-store)). |
 | `henge.store.redis.uri` | — | For `type=redis`: a Lettuce URI, e.g. `redis://host:6379/0`; `rediss://` for TLS, `redis://:password@host` for a password, options as query parameters (`?timeout=5s`). |
 | `henge.store.redis.cluster-nodes` | — | For `type=redis` on Redis Cluster, instead of `uri`: comma-separated seed URIs. The other nodes are discovered, and the topology refreshed on failover or resharding. Exactly one of `uri` and `cluster-nodes` is required. |
 | `henge.store.backoff.initial` | `500ms` | After a call to the store fails, the wait before the first retry; every use of the store in the process fails at once (`StoreUnavailableException`, a `503`) until it has passed. It doubles with each further failure. `0` turns the backoff off. |

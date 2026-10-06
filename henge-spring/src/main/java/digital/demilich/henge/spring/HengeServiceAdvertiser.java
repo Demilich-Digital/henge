@@ -2,7 +2,9 @@ package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -35,7 +37,9 @@ class HengeServiceAdvertiser implements SmartLifecycle {
     private final Duration ttl;
     private final SystemMetrics metrics;
 
+    /** What was last advertised: what {@link #stop} takes back. */
     private volatile List<HengeServiceDescriptor> advertised = List.of();
+    private final Set<String> withdrawn = new HashSet<>();
     private ScheduledExecutorService heartbeat;
     private boolean running;
 
@@ -54,9 +58,10 @@ class HengeServiceAdvertiser implements SmartLifecycle {
         if (running) {
             return;
         }
-        advertised = registry.hosted();
+        running = true;
+        registry.onReady(this::renew);
         renew();
-        if (!advertised.isEmpty()) {
+        if (registry.declaresAny()) {
             heartbeat = Executors.newSingleThreadScheduledExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "henge-advertiser");
                 thread.setDaemon(true);
@@ -65,11 +70,21 @@ class HengeServiceAdvertiser implements SmartLifecycle {
             long periodMillis = Math.max(1, ttl.toMillis() / 3);
             heartbeat.scheduleWithFixedDelay(this::renew, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
         }
-        running = true;
     }
 
-    /** Writes (or renews) every advertisement; also the heartbeat. Synchronized so a withdrawal is never undone by a renewal in flight. */
+    /**
+     * Writes (or renews) the advertisement of every service version hosted here and not withdrawn, as
+     * hosted now: a leased one that was waiting for the datastore joins once it has been decided. Nothing
+     * is advertised until the process is ready ({@link HengeBootGate}). Also the heartbeat. Synchronized
+     * so a withdrawal is never undone by a renewal in flight.
+     */
     synchronized void renew() {
+        if (!running || !registry.isReady()) {
+            return;
+        }
+        advertised = registry.hosted().stream()
+                .filter(service -> !withdrawn.contains(service.name() + "@" + service.version()))
+                .toList();
         byte[] value = advertisement.encode();
         for (HengeServiceDescriptor service : advertised) {
             try {
@@ -84,6 +99,7 @@ class HengeServiceAdvertiser implements SmartLifecycle {
 
     /** Stops advertising one service version, now and on every later heartbeat; the others carry on. */
     synchronized void withdraw(String service, int version) {
+        withdrawn.add(service + "@" + version);
         advertised = advertised.stream()
                 .filter(hosted -> !(hosted.name().equals(service) && hosted.version() == version))
                 .toList();

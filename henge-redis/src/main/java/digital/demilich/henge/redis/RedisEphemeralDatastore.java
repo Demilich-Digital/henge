@@ -1,6 +1,7 @@
 package digital.demilich.henge.redis;
 
 import digital.demilich.henge.core.RateLimit;
+import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandExecutionException;
@@ -137,7 +138,11 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
         this.shutdown = shutdown;
     }
 
-    /** Connects to the Redis at {@code uri}, e.g. {@code redis://host:6379/0}; {@link #close()} disconnects. */
+    /**
+     * Connects to the Redis at {@code uri}, e.g. {@code redis://host:6379/0}; {@link #close()} disconnects.
+     *
+     * @throws StoreUnavailableException if it can't be reached; a malformed {@code uri} is an {@link IllegalStateException}
+     */
     public static RedisEphemeralDatastore connect(String uri) {
         RedisURI redisUri = parse(uri);
         RedisClient client = RedisClient.create(redisUri);
@@ -147,7 +152,7 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
         } catch (RuntimeException e) {
             client.shutdown();
             // RedisURI's toString() masks the password.
-            throw new IllegalStateException("Can't connect to Redis at " + redisUri + ": " + e.getMessage(), e);
+            throw new StoreUnavailableException("Can't connect to Redis at " + redisUri + ": " + e.getMessage(), e);
         }
     }
 
@@ -179,7 +184,7 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
             return new RedisEphemeralDatastore(connection, connection.sync(), client::shutdown);
         } catch (RuntimeException e) {
             client.shutdown();
-            throw new IllegalStateException("Can't connect to the Redis Cluster at " + seeds + ": " + e.getMessage(), e);
+            throw new StoreUnavailableException("Can't connect to the Redis Cluster at " + seeds + ": " + e.getMessage(), e);
         }
     }
 

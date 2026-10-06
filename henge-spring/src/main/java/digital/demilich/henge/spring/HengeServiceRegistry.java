@@ -42,6 +42,25 @@ public class HengeServiceRegistry implements BeanFactoryAware {
         return byKey.values().stream().filter(this::hostedHere).toList();
     }
 
+    /** Whether any service version is declared here at all, hosted yet or not. */
+    boolean declaresAny() {
+        return !byKey.isEmpty();
+    }
+
+    /** Whether this process may take traffic yet: always, unless a {@link HengeBootGate} says not. */
+    boolean isReady() {
+        HengeBootGate gate = beanFactory == null ? null : beanFactory.getBeanProvider(HengeBootGate.class).getIfAvailable();
+        return gate == null || gate.isReady();
+    }
+
+    /** {@code listener} is called when {@link #isReady()} becomes true, if it wasn't already. */
+    void onReady(Runnable listener) {
+        HengeBootGate gate = beanFactory == null ? null : beanFactory.getBeanProvider(HengeBootGate.class).getIfAvailable();
+        if (gate != null) {
+            gate.onReady(listener);
+        }
+    }
+
     /** The binding of {@code descriptor}'s service version, created if it hasn't been. */
     ServiceBinding binding(HengeServiceDescriptor descriptor) {
         return beanFactory.getBean(BeanFactory.FACTORY_BEAN_PREFIX + descriptor.beanName(), HengeServiceBindingFactoryBean.class)

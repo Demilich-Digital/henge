@@ -90,10 +90,12 @@ class RateLimitFallbackTest {
         }
     };
 
-    private final RateLimitSubscriptions subscriptions = new RateLimitSubscriptions(store, Duration.ofSeconds(30), metrics);
+    private final HengeBootGate gate = new HengeBootGate(store);
+    private final RateLimitSubscriptions subscriptions = new RateLimitSubscriptions(store, Duration.ofSeconds(30), metrics, gate);
 
     @AfterEach
     void stopHeartbeat() {
+        gate.stop();
         subscriptions.destroy();
     }
 
@@ -208,10 +210,22 @@ class RateLimitFallbackTest {
     }
 
     @Test
-    void aNodeThatCantReachTheStoreCantBuildALimiter() {
+    void aNodeThatCantReachTheStoreRefusesAndIsNotReadyUntilItHas() throws Exception {
         down = true;
+        RateLimiter limiter = limiter();
+        gate.start();
 
-        assertThatThrownBy(this::limiter).isInstanceOf(StoreUnavailableException.class);
+        assertThat(gate.isReady()).isFalse();
+        assertThatThrownBy(limiter::tryAcquire).isInstanceOf(StoreUnavailableException.class);
+        assertThat(degraded).isEmpty(); // no share to take: it has never read N
+
+        down = false;
+        for (int i = 0; i < 100 && !gate.isReady(); i++) {
+            Thread.sleep(50);
+        }
+        assertThat(gate.isReady()).isTrue();
+        assertThat(limiter.tryAcquire()).isTrue();
+        assertThat(subscribersReported).last().isEqualTo(1);
     }
 
     @Test

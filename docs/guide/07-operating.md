@@ -65,6 +65,31 @@ it is brief.
   differently. Henge never retries a `503`; your clients may, and that is their choice.
 - **Logs say it once.** The start and the end of an outage are each logged once, not per call.
 
+### Starting without the store
+
+A process started while the store is away does not fail to start, because restarting it wouldn't bring
+the store back, and an orchestrator that sees a node crash will only replace it, over and over. It starts
+**alive, listening, and not ready**:
+
+- Everything but the health endpoints answers `503` with `Retry-After: 1` and `Connection: close`
+  (the starter's `HengeNotReadyFilter`), including `/_henge`.
+- With Spring Boot Actuator, `/actuator/health/liveness` stays `200`, and readiness stays
+  `REFUSING_TRAFFIC` (so `/actuator/health/readiness` is `503`) until the process has reached the store.
+  Kubernetes then leaves the pod alone but sends it nothing, and with a headless Service takes it out of the
+  DNS answers, so clients that dial the cluster by name land on the older nodes. Use the probes
+  Boot provides (`management.endpoint.health.probes.enabled=true`, on by default in Kubernetes):
+  liveness for `livenessProbe`, readiness for `readinessProbe`.
+- A service that needs a lease can't say whether this process hosts it, so its calls fail with
+  `StoreUnavailableException` until the store answers and it is decided. Rate limiters refuse until they
+  have counted their nodes. Nothing is advertised yet.
+- It retries every half second (the [backoff](../reference/configuration.md#the-ephemeral-store) permitting).
+  When the store answers, the leases are claimed, the limiters join, the node advertises, and readiness
+  turns `UP`, with no restart.
+
+Only this first contact is gated. A node that has been ready stays ready through a later outage, as above.
+Without Actuator there are no health endpoints, so the node reports nothing and every request is `503`.
+In plain Spring, inject the `HengeBootGate` bean and ask its `isReady()` from your own health check.
+
 If the store stays away, callers' routes go stale and eventually the calls fail on their own: Henge adds
 no deadline of its own.
 
@@ -115,6 +140,7 @@ the others.
 - [ ] Every process that shares a store configures the same leases and rate limits, the same way.
 - [ ] Lease capacities sit below the real limits, as a margin.
 - [ ] Services that keep state in memory are hosted by one process only.
+- [ ] On Kubernetes, `livenessProbe` and `readinessProbe` use the actuator's liveness and readiness groups, so a node that can't reach the store is left alone but sent nothing.
 - [ ] `henge.advertise.url` (with a shared store) is an address other processes can actually reach.
 
 ## Where next

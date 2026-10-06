@@ -99,7 +99,14 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
             if (heldByLease.containsKey(need.name())) {
                 continue;
             }
-            boolean granted = datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl);
+            boolean granted;
+            try {
+                granted = datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl);
+            } catch (RuntimeException e) {
+                // Asked again later, from nothing: what this call claimed is let go, as on a refusal.
+                claimedHere.forEach(claimed -> dropQuietly(claimed.name()));
+                throw e;
+            }
             metrics.leaseClaimed(need.name(), granted);
             if (!granted) {
                 claimedHere.forEach(claimed -> drop(claimed.name()));
@@ -168,6 +175,15 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
             if (held.holders.isEmpty()) {
                 drop(lease);
             }
+        }
+    }
+
+    private void dropQuietly(String lease) {
+        try {
+            drop(lease);
+        } catch (RuntimeException e) {
+            // The claim lapses with its TTL; nothing else to do for it.
+            GuardedDatastore.logFailure(log, "Handing back lease '" + lease + "' failed", e);
         }
     }
 

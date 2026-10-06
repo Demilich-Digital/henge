@@ -77,6 +77,9 @@ final class RateLimiters {
             try {
                 granted = delegate.tryAcquire(key, amount, limit);
             } catch (StoreUnavailableException e) {
+                if (subscription.nodes() == 0) {
+                    throw e; // never reached the store, so no share to take: refuse
+                }
                 metrics.rateLimitDegraded(name);
                 granted = local.tryAcquire(key, amount, share(limit, subscription.nodes()));
             }

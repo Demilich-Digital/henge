@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.RateLimit;
+import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastoreProvider;
 import digital.demilich.henge.redis.RedisEphemeralDatastore;
@@ -166,9 +167,14 @@ class HengeStoreSelectionTest {
     }
 
     @Test
-    void redisThatCantBeReachedFailsStartupNamingTheAddress() {
+    void redisThatCantBeReachedStartsTheProcessNotReadyRatherThanFailingIt() {
         try (var ctx = context(Map.of("henge.store.type", "redis", "henge.store.redis.uri", "redis://localhost:1/?timeout=1s"), LeasedConfig.class)) {
-            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("Can't connect to Redis at redis://localhost:1");
+            ctx.refresh();
+
+            assertThat(ctx.getBean(HengeBootGate.class).isReady()).isFalse();
+            assertThatThrownBy(() -> ctx.getBean(SystemEphemeralDatastore.class).read("anything"))
+                    .isInstanceOf(StoreUnavailableException.class)
+                    .hasStackTraceContaining("Can't connect to Redis at redis://localhost:1");
         }
     }
 

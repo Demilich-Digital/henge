@@ -3,6 +3,7 @@ package digital.demilich.henge.spring;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
+import digital.demilich.henge.core.StoreUnavailableException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -104,6 +105,25 @@ final class ServiceBinding {
         }
     }
 
+    /**
+     * A leased service that couldn't be decided yet, because the datastore its lease is claimed from
+     * couldn't be reached: not hosted here, and every call fails as the datastore being unavailable,
+     * until {@link #becomeLocal} or {@link #becomeRemote}.
+     */
+    private record Pending(String serviceName, int serviceVersion) implements Target {
+
+        @Override
+        public HengeMode mode() {
+            return HengeMode.EMBEDDED;
+        }
+
+        @Override
+        public Object invoke(ServiceInvocation invocation) {
+            throw new StoreUnavailableException("Henge service '" + serviceName + "' version " + serviceVersion
+                    + " is waiting for the ephemeral store to say whether this process hosts it");
+        }
+    }
+
     private record Remote(String serviceName, ServiceTransport transport) implements Target {
 
         @Override
@@ -155,6 +175,29 @@ final class ServiceBinding {
     static ServiceBinding remote(String serviceName, int serviceVersion, ServiceTransport transport,
             Supplier<List<ServiceCallInterceptor>> interceptorSource) {
         return new ServiceBinding(serviceName, serviceVersion, new Remote(serviceName, transport), interceptorSource);
+    }
+
+    /** A binding whose target is decided later, once the datastore can be reached: see {@link Pending}. */
+    static ServiceBinding pending(String serviceName, int serviceVersion, Supplier<List<ServiceCallInterceptor>> interceptorSource) {
+        return new ServiceBinding(serviceName, serviceVersion, new Pending(serviceName, serviceVersion), interceptorSource);
+    }
+
+    /** A {@link #pending} binding is hosted here, by {@code implementation}. */
+    synchronized void becomeLocal(Object implementation) {
+        requirePending();
+        target = new Local(implementation);
+    }
+
+    /** A {@link #pending} binding was refused its lease: it is reached through {@code transport}. */
+    synchronized void becomeRemote(ServiceTransport transport) {
+        requirePending();
+        target = new Remote(serviceName, transport);
+    }
+
+    private void requirePending() {
+        if (!(target instanceof Pending)) {
+            throw new IllegalStateException("Henge service '" + serviceName + "' version " + serviceVersion + " is already decided");
+        }
     }
 
     String serviceName() {

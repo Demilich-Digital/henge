@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
+import digital.demilich.henge.core.SystemEphemeralDatastore;
+import digital.demilich.henge.core.StoreUnavailableException;
+import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.Lease;
 import digital.demilich.henge.core.ResourceProvider;
 import java.time.Duration;
@@ -62,6 +65,59 @@ class HengeLeaseKeeperTest {
         assertThat(refused.name()).isEqualTo("db");
         // 'cache' was claimed first (names are claimed in order) and handed back.
         assertThat(store.read("lease:cache").members()).isEmpty();
+    }
+
+    @Test
+    void aStoreThatFailsMidwayLeavesNothingClaimedAndTheNextTryStartsFromNothing() {
+        // 'cache' is claimed first, then the store goes away on 'db'.
+        var flaky = new HengeLeaseKeeper(new SystemEphemeralDatastoreFailingOn("lease:db", store), Duration.ofSeconds(30), null);
+        var needs = List.of(new LeaseNeed("cache", 5, 10), new LeaseNeed("db", 5, 10));
+
+        assertThatThrownBy(() -> flaky.acquireAll("a@1", needs)).isInstanceOf(StoreUnavailableException.class);
+
+        assertThat(store.read("lease:cache").members()).isEmpty();
+        // Asked again once the store is back (here, by the keeper over the working one), both are claimed.
+        assertThat(keeper.acquireAll("a@1", needs)).isNull();
+        assertThat(store.read("lease:cache").members()).hasSize(1);
+        assertThat(store.read("lease:db").members()).hasSize(1);
+    }
+
+    /** Claims work, except on {@code failingKey}, where the store can't be reached. */
+    private record SystemEphemeralDatastoreFailingOn(String failingKey, SystemEphemeralDatastore delegate)
+            implements SystemEphemeralDatastore {
+
+        @Override
+        public String nodeId() {
+            return delegate.nodeId();
+        }
+
+        @Override
+        public void put(String key, String localName, byte[] value, Duration ttl) {
+            delegate.put(key, localName, value, ttl);
+        }
+
+        @Override
+        public void remove(String key, String localName) {
+            delegate.remove(key, localName);
+        }
+
+        @Override
+        public Snapshot read(String key) {
+            return delegate.read(key);
+        }
+
+        @Override
+        public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
+            if (key.equals(failingKey)) {
+                throw new StoreUnavailableException("down");
+            }
+            return delegate.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+            return delegate.tryAcquire(key, amount, limit);
+        }
     }
 
     @Test

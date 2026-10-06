@@ -6,9 +6,12 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.Ordered;
+import org.springframework.core.env.Environment;
 
 /**
  * Boot-specific classpath auto-detection layer on top of the plain-Spring
@@ -49,6 +52,26 @@ public class HengeAutoConfiguration {
     @ConditionalOnProperty(prefix = "henge.server", name = "enabled", havingValue = "true", matchIfMissing = true)
     @Import(HengeTopologyConfiguration.class)
     static class Topology {
+    }
+
+    /**
+     * A process that hasn't reached the ephemeral store yet answers every request with {@code 503} (but the
+     * health endpoints) and reports itself as not ready: see {@link HengeBootGate}.
+     */
+    @Bean
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+    @ConditionalOnMissingBean
+    FilterRegistrationBean<HengeNotReadyFilter> hengeNotReadyFilter(ObjectProvider<HengeBootGate> gate, Environment environment) {
+        var registration = new FilterRegistrationBean<>(new HengeNotReadyFilter(gate,
+                environment.getProperty("management.endpoints.web.base-path", "/actuator")));
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        return registration;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    HengeBootGateRunner hengeBootGateRunner(ObjectProvider<HengeBootGate> gate) {
+        return new HengeBootGateRunner(gate);
     }
 
     /** A request that failed for want of the ephemeral store is a {@code 503} at this process's edge, unless the application says otherwise. */

@@ -2,6 +2,7 @@ package digital.demilich.henge.spring;
 
 import digital.demilich.henge.core.Lease;
 import digital.demilich.henge.core.ServiceTransport;
+import digital.demilich.henge.core.StoreUnavailableException;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.util.List;
@@ -33,7 +34,9 @@ import org.springframework.context.ConfigurableApplicationContext;
  *       implementation constructed, which then gets its {@link Lease}s and resources as constructor
  *       arguments. Refused, the target is the transport instead, so the implementation (and whatever pool
  *       it would have opened) is never constructed on this node. A refusal means other processes hold the
- *       lease, so the service is reached at its configured url, or else wherever it is advertised;
+ *       lease, so the service is reached at its configured url, or else wherever it is advertised. If the
+ *       datastore can't be reached to ask, the decision waits ({@link HengeBootGate}) and calls fail
+ *       meanwhile as the datastore being unavailable;
  *   <li>the transport, for a service configured {@code internal-rest}.
  * </ul>
  *
@@ -94,13 +97,39 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
         }
         if (spec.leased() != null) {
             keeper = applicationContext.getBean(HengeLeaseKeeper.class);
-            LeaseNeed refused = keeper.acquireAll(spec.localName(), spec.leased().needs());
-            if (refused != null) {
-                log.info("Lease '" + refused.name() + "' is full; " + spec.localName() + " is reached remotely from this process");
-                return remote();
+            ServiceBinding pending = ServiceBinding.pending(spec.serviceName(), spec.version(), this::interceptors);
+            if (!decide(pending, false)) {
+                // The datastore can't be reached: this process starts anyway, not ready, and decides once it can.
+                applicationContext.getBean(HengeBootGate.class).await(spec.localName(), () -> decide(pending, true));
             }
+            return pending;
         }
         return ServiceBinding.local(spec.serviceName(), spec.version(), constructImplementation(), this::interceptors);
+    }
+
+    /**
+     * Claims the leases and makes {@code pending} hosted here if they are granted, reached remotely if
+     * not. False if the datastore couldn't be reached to ask, so it is still pending ({@code quiet}: it
+     * was already said so).
+     */
+    private boolean decide(ServiceBinding pending, boolean quiet) {
+        LeaseNeed refused;
+        try {
+            refused = keeper.acquireAll(spec.localName(), spec.leased().needs());
+        } catch (StoreUnavailableException e) {
+            if (!quiet) {
+                log.warn(spec.localName() + " needs a lease, and the ephemeral store can't be reached to claim it; "
+                        + "calls to it fail until it can be", e);
+            }
+            return false;
+        }
+        if (refused != null) {
+            log.info("Lease '" + refused.name() + "' is full; " + spec.localName() + " is reached remotely from this process");
+            pending.becomeRemote(transport());
+        } else {
+            pending.becomeLocal(constructImplementation());
+        }
+        return true;
     }
 
     private ServiceBinding remote() {

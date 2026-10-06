@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastore.Epoch;
 import java.time.Duration;
@@ -20,8 +21,8 @@ import org.springframework.lang.Nullable;
  * heartbeat, and reads the members back: that count is {@code N}, as of the last heartbeat.
  *
  * <p>A node registers when the limiter is built, whether or not it ever calls it. That only makes each
- * node's share smaller, never the cluster's total larger. Registering is done at once and fails if the
- * datastore can't be reached, so a node that has never read {@code N} doesn't start serving.
+ * node's share smaller, never the cluster's total larger. A node that has never read {@code N} doesn't
+ * serve: it is held not ready until it has.
  */
 class RateLimitSubscriptions implements DisposableBean {
 
@@ -42,7 +43,7 @@ class RateLimitSubscriptions implements DisposableBean {
             this.name = name;
         }
 
-        /** At least 1: this node. */
+        /** How many nodes, as last read: at least 1 (this node), or 0 if the datastore has never been reached to ask. */
         int nodes() {
             return nodes;
         }
@@ -51,20 +52,34 @@ class RateLimitSubscriptions implements DisposableBean {
     private final SystemEphemeralDatastore datastore;
     private final Duration ttl;
     private final SystemMetrics metrics;
+    private final HengeBootGate gate;
     private final Map<String, Subscription> subscriptions = new ConcurrentHashMap<>();
     private ScheduledExecutorService heartbeat;
 
     /** @param metrics null (there are none to report to) is as good as {@link SystemMetrics#NONE} */
-    RateLimitSubscriptions(SystemEphemeralDatastore datastore, Duration ttl, @Nullable SystemMetrics metrics) {
+    RateLimitSubscriptions(SystemEphemeralDatastore datastore, Duration ttl, @Nullable SystemMetrics metrics, HengeBootGate gate) {
+        this.gate = gate;
         this.metrics = metrics == null ? SystemMetrics.NONE : metrics;
         this.datastore = this.metrics.measured(datastore, "rate-limit");
         this.ttl = ttl;
     }
 
-    /** Registers this node as drawing on {@code name}, and reads who else is. Throws if the datastore can't be reached. */
+    /**
+     * Registers this node as drawing on {@code name}, and reads who else is. If the datastore can't be
+     * reached the count stays unknown, the limiter refuses until it is known, and the process is held not
+     * ready ({@link HengeBootGate}) until it is.
+     */
     Subscription subscribe(String name) {
         Subscription subscription = new Subscription(name);
-        renew(subscription);
+        try {
+            renew(subscription);
+        } catch (StoreUnavailableException e) {
+            log.warn("Rate limiter '" + name + "' can't be joined, as the ephemeral store can't be reached; it refuses until it can", e);
+            gate.await("rate limiter '" + name + "'", () -> {
+                renew(subscription);
+                return true;
+            });
+        }
         subscriptions.put(name, subscription);
         startHeartbeat();
         return subscription;
