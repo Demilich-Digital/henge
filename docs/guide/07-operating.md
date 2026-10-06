@@ -49,21 +49,18 @@ it explicitly, `NONE` included.
 
 ## When the store goes away
 
-The [ephemeral store](05-the-ephemeral-store.md) is on the critical path, so Henge treats an unreachable
-one as an outage to ride out, not a mode to run in. A restart or a replacement is the expected case, and
-it is brief.
+A restart or a replacement of the shared store is expected, and Henge rides it out: callers keep the
+hosts they last read, leases and their resources stay where they are, rate limits answer from a local
+share, and what can't be answered is a `503` (`StoreUnavailableException`) that the starter also
+answers at your own edge. The design, and what each part does, is in
+[Fault tolerance](05-the-ephemeral-store.md#fault-tolerance-when-the-store-is-away). What is yours to
+operate is below.
 
-- **What is already known keeps working.** A caller keeps routing to the hosts it last read, however
-  stale; a lease and its resource are kept, and re-claimed on the first heartbeat after the store
-  returns; nothing is evicted. Nothing new is learned, and this process's own advertisement lapses, so
-  traffic drains away from a node that can't renew it.
-- **Everything else fails fast.** After one failure every use of the store in the process fails at once
-  with `StoreUnavailableException`, for a backoff that doubles up to a cap (`henge.store.backoff.*`),
-  with one call at a time let through to find out. Nobody waits out a connect timeout per call.
-- **At the edge it is a `503`.** Over `internal-rest` the exception is a `503`, and a servlet application
-  on the starter answers it with a `503` too. Handle `StoreUnavailableException` yourself to answer
-  differently. Henge never retries a `503`; your clients may, and that is their choice.
-- **Logs say it once.** The start and the end of an outage are each logged once, not per call.
+- **Watch it.** `henge.store.operations` with `outcome=error`, and `henge.rate-limit.degraded`, say
+  that the store is away. The start and the end of an outage are each logged once.
+- **Tune the probing.** After one failure every use of the store fails at once, for a backoff that
+  doubles up to a cap (`henge.store.backoff.*`), with one call at a time let through to find out.
+- **Decide what a `503` means to your clients.** Henge never retries it; yours may.
 
 ### Starting without the store
 
@@ -86,12 +83,9 @@ the store back, and an orchestrator that sees a node crash will only replace it,
   When the store answers, the leases are claimed, the limiters join, the node advertises, and readiness
   turns `UP`, with no restart.
 
-Only this first contact is gated. A node that has been ready stays ready through a later outage, as above.
+Only this first contact is gated. A node that has been ready stays ready through a later outage.
 Without Actuator there are no health endpoints, so the node reports nothing and every request is `503`.
 In plain Spring, inject the `HengeBootGate` bean and ask its `isReady()` from your own health check.
-
-If the store stays away, callers' routes go stale and eventually the calls fail on their own: Henge adds
-no deadline of its own.
 
 ## Metrics and traces
 

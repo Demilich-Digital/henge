@@ -9,7 +9,7 @@ It is **not a cache**: Henge is not a system with a store bolted on to make it f
 critical path, and a process that can't reach it can't find its peers or claim a lease. What it holds is
 cheap to lose because every process rebuilds it on a heartbeat, which is a different thing from being
 optional. A process's in-memory copy of what it last read (its *routing table*) is the only cache-like
-part, and it is deliberately kept serving through an outage.
+part, and it is deliberately kept serving through an outage: see [Fault tolerance](guide/05-the-ephemeral-store.md#fault-tolerance-when-the-store-is-away).
 
 ## The model: convergent distributed state
 
