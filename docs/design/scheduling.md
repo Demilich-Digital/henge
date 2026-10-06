@@ -53,8 +53,10 @@ keys expire by themselves, so there is nothing to clean up, and a wipe looks lik
 **The run** (exclusion, "don't overlap"). Key `cron:<job>:running`, capacity 1, a short TTL renewed on a
 heartbeat while the job executes and released when it ends. A worker that dies stops renewing and gives
 the claim back one TTL later, the same way a lease does. Without it, a run that outlasts the interval
-overlaps the next fire, since the fires use different keys. It is on by default, and `overlap = true`
-turns it off.
+overlaps the next fire, since the fires use different keys. With `overlap = true` the key includes the
+fire, `cron:<job>:running@<instant>`, so no other fire holds it: a fire is never in the way of the last
+run, but each run is still visible, still renewed and cut off at `maxRuntime`, and a second node that won
+the same fire (a store failing over) is refused by it. The code has one path for both.
 
 Order: the node that wins the fire then tries the run claim. If that is refused, **the fire is
 skipped**, everywhere, and logged ("skipped: the last run is still going on node X", from a `read` of the

@@ -34,10 +34,12 @@ import org.springframework.scheduling.support.CronExpression;
  * that: so a claim can't lapse while a node still believes the fire is due. A late fire is skipped, never
  * caught up, and so is one whose claim can't be made because the store is away.
  *
- * <p><b>The run.</b> Unless a job allows overlap, the node that won the fire then claims
- * {@code cron:<job>:running} for as long as the method executes, renewed on a heartbeat of a third of
- * {@link #runTtl}, and released when it ends. A node that dies stops renewing and gives the claim back one
- * TTL later. If the claim is refused the fire is skipped, on every node alike: it is not queued. A run is
+ * <p><b>The run.</b> The node that won the fire then claims {@code cron:<job>:running} for as long as the
+ * method executes, renewed on a heartbeat of a third of {@link #runTtl}, and released when it ends. A node
+ * that dies stops renewing and gives the claim back one TTL later. If the claim is refused the fire is
+ * skipped, on every node alike: it is not queued. A job that allows overlap claims
+ * {@code cron:<job>:running@<instant>} instead, which no other fire holds, so a fire is never in the way
+ * of the last run, but a second winner of the same fire is. A run is
  * also cut off after the job's {@code maxRuntime}: its thread is interrupted and renewing stops, so a hung
  * run, which would otherwise keep reporting itself alive, can't block the job forever. A renewal the store
  * refuses means another node was given the job, and interrupts the run; one that can't be made because the
@@ -161,8 +163,8 @@ final class ClusterScheduler implements AutoCloseable {
             return;
         }
         // A name of its own for each run, so that a second run on this node isn't mistaken for a renewal of the first.
-        String runName = job.overlap() ? null : "run-" + UUID.randomUUID();
-        if (runName != null && !claimRun(job, nominal, runName)) {
+        String runName = "run-" + UUID.randomUUID();
+        if (!claimRun(job, nominal, runName)) {
             return;
         }
         run(job, nominal, runName);
@@ -170,25 +172,30 @@ final class ClusterScheduler implements AutoCloseable {
 
     /** Takes the job's run claim; false, having said why, if this fire must be skipped. */
     private boolean claimRun(Job job, Instant nominal, String runName) {
+        String key = runKey(job, nominal);
         boolean granted;
         try {
-            granted = datastore.claim(runKey(job), runName, 1, 1, runTtl);
+            granted = datastore.claim(key, runName, 1, 1, runTtl);
         } catch (RuntimeException e) {
             GuardedDatastore.logFailure(log, "Henge scheduled job '" + job.name() + "' skipped its fire at " + nominal
                     + ": the ephemeral store couldn't be asked whether the last run is over", e);
             return false;
         }
-        if (!granted) {
+        if (!granted && job.overlap()) {
+            // Nothing else is running under this key but this fire's own run: two nodes won the fire.
+            log.warn("Henge scheduled job '" + job.name() + "' skipped its fire at " + nominal + ": another node is already "
+                    + "running it" + runningOn(key) + ", so two nodes won the same fire (the store may have been failing over)");
+        } else if (!granted) {
             log.info("Henge scheduled job '" + job.name() + "' skipped its fire at " + nominal + ": the last run is still going"
-                    + runningOn(job) + ". Skipped, not queued.");
+                    + runningOn(key) + ". Skipped, not queued.");
         }
         return granted;
     }
 
     /** Where the job is running, as far as the store says, to explain a skip. */
-    private String runningOn(Job job) {
+    private String runningOn(String runKey) {
         try {
-            List<String> nodes = datastore.read(runKey(job)).members().keySet().stream().map(MemberId::nodeId).sorted().toList();
+            List<String> nodes = datastore.read(runKey).members().keySet().stream().map(MemberId::nodeId).sorted().toList();
             return nodes.isEmpty() ? "" : " on node " + String.join(", ", nodes);
         } catch (RuntimeException e) {
             return "";
@@ -221,11 +228,10 @@ final class ClusterScheduler implements AutoCloseable {
 
     private void run(Job job, Instant nominal, String runName) {
         Run run = new Run();
-        if (runName != null) {
-            long periodMillis = Math.max(1, runTtl.toMillis() / 3);
-            run.watching.add(watchdog.scheduleWithFixedDelay(() -> renew(job, runName, run), periodMillis, periodMillis,
-                    TimeUnit.MILLISECONDS));
-        }
+        String key = runKey(job, nominal);
+        long periodMillis = Math.max(1, runTtl.toMillis() / 3);
+        run.watching.add(watchdog.scheduleWithFixedDelay(() -> renew(job, key, runName, run), periodMillis, periodMillis,
+                TimeUnit.MILLISECONDS));
         run.watching.add(watchdog.schedule(() -> {
             log.warn("Henge scheduled job '" + job.name() + "' (fire at " + nominal + ") ran past its maxRuntime of "
                     + job.maxRuntime() + "; interrupting it. The next fire may start while it is still running if it "
@@ -239,20 +245,18 @@ final class ClusterScheduler implements AutoCloseable {
             log.error("Henge scheduled job '" + job.name() + "' failed (fire at " + nominal + ")", t);
         } finally {
             run.finish();
-            if (runName != null) {
-                try {
-                    datastore.remove(runKey(job), runName);
-                } catch (RuntimeException e) {
-                    // The claim lapses with its TTL; the next fire is skipped until it does.
-                    GuardedDatastore.logFailure(log, "Handing back the run of '" + job.name() + "' failed", e);
-                }
+            try {
+                datastore.remove(key, runName);
+            } catch (RuntimeException e) {
+                // The claim lapses with its TTL; until it does, the next fire of a job that doesn't overlap is skipped.
+                GuardedDatastore.logFailure(log, "Handing back the run of '" + job.name() + "' failed", e);
             }
         }
     }
 
-    private void renew(Job job, String runName, Run run) {
+    private void renew(Job job, String key, String runName, Run run) {
         try {
-            if (!datastore.claim(runKey(job), runName, 1, 1, runTtl)) {
+            if (!datastore.claim(key, runName, 1, 1, runTtl)) {
                 log.warn("Henge scheduled job '" + job.name() + "' lost its run claim to another node; interrupting this run");
                 run.interrupt();
                 throw new CancelRenewal();
@@ -275,8 +279,13 @@ final class ClusterScheduler implements AutoCloseable {
         return "cron:" + job.name() + "@" + nominal;
     }
 
-    static String runKey(Job job) {
-        return "cron:" + job.name() + ":running";
+    /**
+     * The claim a run holds. A job that doesn't overlap has one for all its runs, so a fire finds the last
+     * run in the way; one that does has one per fire, which no other fire shares, so only a second winner of
+     * the same fire is in the way. Either way it is what shows that the run is going, and where.
+     */
+    static String runKey(Job job, Instant nominal) {
+        return job.overlap() ? "cron:" + job.name() + ":running@" + nominal : "cron:" + job.name() + ":running";
     }
 
     @Override

@@ -70,6 +70,10 @@ public @interface HengeScheduled {
      * that finds the job still running is skipped, not queued, and logged with the node that is running it.
      * A node that stops being the one running it (it was cut off from the store for longer than the claim
      * lasts, and another node was given it) has its run interrupted when it notices.
+     *
+     * <p>With overlap on, each run still holds a claim of its own, named for the fire it belongs to: it shows
+     * where the run is going, it is renewed and cut off at {@link #maxRuntime()} like any other, and it
+     * refuses a second node that won the same fire.
      */
     boolean overlap() default false;
 }

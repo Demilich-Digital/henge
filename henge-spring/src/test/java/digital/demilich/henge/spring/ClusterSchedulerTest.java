@@ -280,7 +280,7 @@ class ClusterSchedulerTest {
 
         a.fire(job, NOON);
 
-        assertThat(store.read(ClusterScheduler.runKey(job)).members()).isEmpty();
+        assertThat(store.read(ClusterScheduler.runKey(job, NOON)).members()).isEmpty();
     }
 
     @Test
@@ -293,7 +293,7 @@ class ClusterSchedulerTest {
 
         a.fire(job, NOON);
 
-        assertThat(store.read(ClusterScheduler.runKey(job)).members()).isEmpty();
+        assertThat(store.read(ClusterScheduler.runKey(job, NOON)).members()).isEmpty();
     }
 
     @Test
@@ -317,6 +317,56 @@ class ClusterSchedulerTest {
         blocked.release.countDown();
         first.join(5000);
         second.join(5000);
+    }
+
+    @Test
+    void eachOverlappingRunIsVisibleUnderItsOwnClaimAndHandsItBack() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var blocked = new Blocked();
+        var overlapping = job("overlapping", "0 0 * * * *", blocked, Duration.ofHours(1), true);
+        var first = NOON.plusSeconds(3600);
+        var second = NOON.plusSeconds(7200);
+        var now = new java.util.concurrent.atomic.AtomicReference<>(first);
+        var a = node(store, "a", now::get, overlapping);
+
+        Thread one = inBackground(() -> a.fire(overlapping, first));
+        assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+        now.set(second);
+        Thread two = inBackground(() -> a.fire(overlapping, second));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (blocked.runs.get() < 2 && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        assertThat(store.read(ClusterScheduler.runKey(overlapping, first)).members()).hasSize(1);
+        assertThat(store.read(ClusterScheduler.runKey(overlapping, second)).members()).hasSize(1);
+        blocked.release.countDown();
+        one.join(5000);
+        two.join(5000);
+        assertThat(store.read(ClusterScheduler.runKey(overlapping, first)).members()).isEmpty();
+        assertThat(store.read(ClusterScheduler.runKey(overlapping, second)).members()).isEmpty();
+    }
+
+    @Test
+    void ofTwoNodesThatBothWonAnOverlappingFireOnlyOneRunsIt() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var blocked = new Blocked();
+        var overlapping = job("overlapping", "0 0 12 * * *", blocked, Duration.ofHours(1), true);
+        var otherRuns = new AtomicInteger();
+        var onB = job("overlapping", "0 0 12 * * *", otherRuns::incrementAndGet, Duration.ofHours(1), true);
+        var a = node(store, "a", () -> NOON, overlapping);
+        var b = node(store, "b", () -> NOON, onB);
+
+        Thread run = inBackground(() -> a.fire(overlapping, NOON));
+        assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+        // The fire's claim is lost (a failover), so b wins the same fire too.
+        var fireMembers = store.read(ClusterScheduler.fireKey(overlapping, NOON)).members();
+        store.remove(ClusterScheduler.fireKey(overlapping, NOON), fireMembers.keySet().iterator().next().localName());
+        b.fire(onB, NOON);
+
+        assertThat(otherRuns).hasValue(0);
+        blocked.release.countDown();
+        run.join(5000);
     }
 
     @Test
@@ -391,10 +441,10 @@ class ClusterSchedulerTest {
             Thread run = inBackground(() -> a.fire(job, NOON));
             assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
             // The claim lapses (a partition, a wipe) and another node is given the job.
-            var members = store.read(ClusterScheduler.runKey(job)).members();
+            var members = store.read(ClusterScheduler.runKey(job, NOON)).members();
             assertThat(members).hasSize(1);
-            store.remove(ClusterScheduler.runKey(job), members.keySet().iterator().next().localName());
-            assertThat(store.claim(ClusterScheduler.runKey(job), "bnode", 1, 1, Duration.ofMinutes(5))).isTrue();
+            store.remove(ClusterScheduler.runKey(job, NOON), members.keySet().iterator().next().localName());
+            assertThat(store.claim(ClusterScheduler.runKey(job, NOON), "bnode", 1, 1, Duration.ofMinutes(5))).isTrue();
 
             run.join(5000);
 
