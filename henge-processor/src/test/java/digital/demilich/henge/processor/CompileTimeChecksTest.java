@@ -590,4 +590,78 @@ class CompileTimeChecksTest {
     void processorSupportsWhateverSourceVersionTheCompilerIsRunning() {
         assertThat(new ServiceVersionProcessor().getSupportedSourceVersion()).isEqualTo(SourceVersion.latestSupported());
     }
+
+    // ---- channel methods ----
+
+    @Test
+    void channelMethodIsAccepted() {
+        var result = compile(src("chok", "Svc",
+                "@HengeService public interface Svc { ChannelHandler watch(String id, Channel toClient); }"));
+
+        assertThat(result.success()).isTrue();
+    }
+
+    @Test
+    void channelMethodsStillCheckTheirOtherParameters() {
+        var result = compile(src("chbad", "Svc",
+                "@HengeService public interface Svc { ChannelHandler watch(java.util.List<String> ids, Channel toClient); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("not a valid @HengeService boundary type")).isTrue();
+    }
+
+    @Test
+    void channelMethodWithoutAChannelParameterIsRejected() {
+        var result = compile(src("chnone", "Svc",
+                "@HengeService public interface Svc { ChannelHandler watch(String id); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("last parameter must be the Channel")).isTrue();
+    }
+
+    @Test
+    void channelParameterMustBeLast() {
+        var result = compile(src("chfirst", "Svc",
+                "@HengeService public interface Svc { ChannelHandler watch(Channel toClient, String id); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("only allowed as the last parameter")).isTrue();
+    }
+
+    @Test
+    void twoChannelParametersAreRejected() {
+        var result = compile(src("chtwo", "Svc",
+                "@HengeService public interface Svc { ChannelHandler watch(Channel a, Channel b); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("only allowed as the last parameter")).isTrue();
+    }
+
+    @Test
+    void channelOnAMethodThatDoesNotReturnAHandlerIsRejected() {
+        var result = compile(src("chplain", "Svc",
+                "@HengeService public interface Svc { String watch(String id, Channel toClient); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("only allowed as the last parameter of a method that returns ChannelHandler")).isTrue();
+    }
+
+    @Test
+    void channelHandlerAsAParameterIsRejected() {
+        var result = compile(src("chparam", "Svc",
+                "@HengeService public interface Svc { void listen(ChannelHandler handler); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("only allowed as a return type")).isTrue();
+    }
+
+    @Test
+    void channelMethodGetsASkeletonStub() {
+        var contracts = src("chskel", "Svc",
+                "@HengeService public interface Svc { ChannelHandler watch(String id, Channel toClient); @AddedIn(2) String name(); }");
+        var v1 = src("chskel", "V1", "@ServiceVersion(value = Svc.class, version = 1) public class V1 extends SvcSkeleton {"
+                + " public ChannelHandler watch(String id, Channel toClient) { return new ChannelHandler() { }; } }");
+
+        assertThat(compile(contracts, v1).success()).isTrue();
+    }
 }

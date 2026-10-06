@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.ChannelHandler;
 import digital.demilich.henge.core.ServiceMethod;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -43,6 +44,14 @@ public record HengeServiceDescriptor(
 
     private static boolean sameSignature(Method a, Method b) {
         return a.getName().equals(b.getName()) && Arrays.equals(a.getParameterTypes(), b.getParameterTypes());
+    }
+
+    /**
+     * Whether {@code method} opens a channel (it returns a {@link ChannelHandler}) rather than answering a
+     * call. Such a method is never callable through {@code /_henge}: there is no response to serialize.
+     */
+    static boolean isChannelMethod(Method method) {
+        return method.getReturnType() == ChannelHandler.class;
     }
 
     /** The dispatch-path name of {@code method}: {@code @ServiceMethod(name)} if set, else the Java name. */

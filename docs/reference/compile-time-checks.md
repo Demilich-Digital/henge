@@ -57,6 +57,17 @@ Over its own methods and those it inherits (exactly the methods the dispatcher e
   doesn't.
 - `@HengeService` on a non-private interface only, with a positive `defaultVersion`.
 
+## Channel methods
+
+A method that returns `ChannelHandler` opens a [channel](../design/channels.md) instead of answering a
+call, and the processor recognizes it by that return type:
+
+- It must have exactly one `Channel` parameter, and it must be the last.
+- Every other parameter is a boundary type as usual, and the `ChannelHandler` return type is not checked
+  as one.
+- `Channel` anywhere but as that last parameter, and `ChannelHandler` anywhere but as the return type, is
+  an error. Declare a channel as `ChannelHandler watch(String orderId, Channel toClient)`.
+
 ## Names
 
 A service's name, explicit or the interface's simple name in kebab case (`InventoryService` →

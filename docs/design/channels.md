@@ -5,7 +5,7 @@ thousands of them and a backend that holds almost none. The first use is **webso
 node runs the frontend, so a DNS dial of the cluster always reaches one, and the frontends are light. The
 services behind them are fewer and resource-bound, and must not carry a connection per end user.
 
-**Status.** Not built. This is the design to implement; the guide chapter comes with the code.
+**Status.** Phase 1 (the contract and the embedded path) is built; the trunk is not. This is the design to implement; the guide chapter comes with the code.
 [Decisions](#decisions) were made in discussion and are final unless something here proves unworkable;
 [open choices](#choices-left-to-the-implementer) come with a recommendation.
 

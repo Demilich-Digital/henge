@@ -14,6 +14,10 @@ dependencies {
     // application without it never loads any of them.
     compileOnly("io.micrometer:micrometer-core")
     testImplementation("io.micrometer:micrometer-core")
+    // Only for ClientChannels, the bridge from a client's websocket to a channel; an application that
+    // opens no channels never loads it.
+    compileOnly("org.springframework:spring-websocket")
+    testImplementation("org.springframework:spring-websocket")
 
     // The end-to-end test that selects Redis with henge.store.type, against a real one.
     testImplementation(project(":henge-redis"))

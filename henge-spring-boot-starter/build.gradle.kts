@@ -18,6 +18,8 @@ dependencies {
     testImplementation("io.zipkin.brave:brave")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-starter-security")
+    // A real websocket server, for the test that a client reaches a service's channel through ClientChannels.
+    testImplementation("org.springframework.boot:spring-boot-starter-websocket")
     testAnnotationProcessor(project(":henge-processor"))
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

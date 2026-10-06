@@ -1,5 +1,8 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.Channel;
+import digital.demilich.henge.core.ChannelHandler;
+import digital.demilich.henge.core.CloseStatus;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
@@ -8,9 +11,13 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 /**
  * One {@code service@version} as this process sees it, and what every injection point of it talks to
@@ -25,6 +32,8 @@ import java.util.function.Supplier;
  * <p>See "The service binding" in {@code docs/design/self-orchestration.md}.
  */
 final class ServiceBinding {
+
+    private static final Log log = LogFactory.getLog(ServiceBinding.class);
 
     /** Where a call ends up. */
     private interface Target {
@@ -43,6 +52,9 @@ final class ServiceBinding {
         private final Object implementation;
         private final AtomicInteger inFlight = new AtomicInteger();
         private volatile boolean closed;
+        // Open channels are not calls in flight (that would hold a drain open for as long as they live),
+        // so they are counted apart, and closed once the calls have drained.
+        private final Set<ChannelSession> channels = ConcurrentHashMap.newKeySet();
 
         Local(Object implementation) {
             this.implementation = implementation;
@@ -91,12 +103,45 @@ final class ServiceBinding {
             return true;
         }
 
+        /** Closes every open channel with {@code status}; each handler's {@code onClose} runs. */
+        void closeChannels(CloseStatus status) {
+            for (ChannelSession session : List.copyOf(channels)) {
+                try {
+                    session.close(status);
+                } catch (RuntimeException e) {
+                    log.warn("Closing a channel failed", e);
+                }
+            }
+        }
+
+        /** Runs a channel method: its last argument, the client's {@link Channel}, is replaced by a tracked one. */
+        private Object openChannel(Method method, Object[] args) throws Throwable {
+            Object[] callArgs = args.clone();
+            int last = callArgs.length - 1;
+            ChannelSession[] session = new ChannelSession[1];
+            session[0] = new ChannelSession((Channel) callArgs[last], () -> channels.remove(session[0]));
+            channels.add(session[0]);
+            callArgs[last] = session[0].toClient();
+            ChannelHandler handler;
+            try {
+                handler = (ChannelHandler) method.invoke(implementation, callArgs);
+            } catch (InvocationTargetException e) {
+                session[0].abandon();
+                channels.remove(session[0]);
+                throw e.getCause();
+            }
+            return session[0].attach(handler);
+        }
+
         @Override
         public Object invoke(ServiceInvocation invocation) throws Throwable {
             Method method = invocation.method();
             // The proxy's own Method object, which can belong to a non-public interface (legal, and
             // callable directly): without this it can't be invoked reflectively from here.
             method.trySetAccessible();
+            if (HengeServiceDescriptor.isChannelMethod(method)) {
+                return openChannel(method, invocation.args());
+            }
             try {
                 return method.invoke(implementation, invocation.args());
             } catch (InvocationTargetException e) {
@@ -133,6 +178,10 @@ final class ServiceBinding {
 
         @Override
         public Object invoke(ServiceInvocation invocation) {
+            if (HengeServiceDescriptor.isChannelMethod(invocation.method())) {
+                throw new UnsupportedOperationException("Henge service '" + serviceName + "#" + invocation.methodName()
+                        + "' opens a channel, which can't be reached over the network yet");
+            }
             try {
                 return transport.invoke(invocation);
             } catch (RuntimeException e) {
@@ -226,7 +275,20 @@ final class ServiceBinding {
         }
         // Switched before the wait, so a call that finds the implementation closed finds the new target.
         target = new Remote(serviceName, transport);
-        return local.close(timeout);
+        long deadline = System.nanoTime() + timeout.toNanos();
+        boolean drained = local.close(timeout);
+        closeChannels(local, Duration.ofNanos(Math.max(0, deadline - System.nanoTime())));
+        return drained;
+    }
+
+    /** Tells every open channel the service is restarting (they reconnect elsewhere), within {@code timeout}. */
+    private void closeChannels(Local local, Duration timeout) throws InterruptedException {
+        Thread closing = Thread.ofVirtual().start(() ->
+                local.closeChannels(new CloseStatus(CloseStatus.SERVICE_RESTART, "service " + serviceName + " is retiring")));
+        closing.join(timeout);
+        if (closing.isAlive()) {
+            log.warn("Channels of " + serviceName + "@" + serviceVersion + " were still closing after " + timeout);
+        }
     }
 
     /** A call from a caller in this process: through the interceptors, then to the target. */

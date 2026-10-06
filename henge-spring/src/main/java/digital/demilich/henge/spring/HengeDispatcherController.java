@@ -102,6 +102,10 @@ class HengeDispatcherController {
                     "Henge service '" + service + "' has no method '" + method + "'");
         }
         scope.resolved(service, version, method);
+        if (HengeServiceDescriptor.isChannelMethod(targetMethod)) {
+            throw new HengeDispatchException(HttpStatus.BAD_REQUEST,
+                    "Henge service '" + service + "#" + method + "' opens a channel and can't be called over a single request");
+        }
 
         // The binding of this exact version, not looked up by type: multiple versions of the same
         // interface may be embedded in this process simultaneously. It hands the call to the

@@ -114,6 +114,8 @@ public class ServiceVersionProcessor extends AbstractProcessor {
      * them; a consumer that already depends on Guava doesn't have to introduce a second immutable
      * collection type just to satisfy this rule.
      */
+    private static final String CHANNEL = "digital.demilich.henge.core.Channel";
+    private static final String CHANNEL_HANDLER = "digital.demilich.henge.core.ChannelHandler";
     private static final String IMMUTABLE_LIST = "digital.demilich.henge.core.ImmutableList";
     private static final String IMMUTABLE_SET = "digital.demilich.henge.core.ImmutableSet";
     private static final String IMMUTABLE_MAP = "digital.demilich.henge.core.ImmutableMap";
@@ -606,11 +608,45 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             if (hasTypeParameters(method)) {
                 continue; // already reported by validateMethodShapes; its type variables would only add noise
             }
-            checkBoundaryType(method.getReturnType(), method, "return type", new HashSet<>());
-            for (VariableElement param : method.getParameters()) {
+            boolean channelMethod = isType(method.getReturnType(), CHANNEL_HANDLER);
+            if (!channelMethod) {
+                checkBoundaryType(method.getReturnType(), method, "return type", new HashSet<>());
+            }
+            List<? extends VariableElement> params = method.getParameters();
+            for (int i = 0; i < params.size(); i++) {
+                VariableElement param = params.get(i);
+                if (isType(param.asType(), CHANNEL)) {
+                    if (!channelMethod || i != params.size() - 1) {
+                        reportChannelError(method, "parameter '" + param.getSimpleName() + "' is a Channel, which is only "
+                                + "allowed as the last parameter of a method that returns ChannelHandler");
+                    }
+                    continue;
+                }
+                if (isType(param.asType(), CHANNEL_HANDLER)) {
+                    reportChannelError(method, "parameter '" + param.getSimpleName() + "' is a ChannelHandler, which is only "
+                            + "allowed as a return type");
+                    continue;
+                }
                 checkBoundaryType(param.asType(), method, "parameter '" + param.getSimpleName() + "'", new HashSet<>());
             }
+            if (channelMethod && (params.isEmpty() || !isType(params.get(params.size() - 1).asType(), CHANNEL))) {
+                reportChannelError(method, "a method that returns ChannelHandler opens a channel, so its last parameter "
+                        + "must be the Channel to the client");
+            }
         }
+    }
+
+    private static boolean isType(TypeMirror type, String qualifiedName) {
+        return type.getKind() == TypeKind.DECLARED
+                && ((TypeElement) ((DeclaredType) type).asElement()).getQualifiedName().contentEquals(qualifiedName);
+    }
+
+    private void reportChannelError(ExecutableElement method, String problem) {
+        messager.printMessage(Diagnostic.Kind.ERROR,
+                "Method '" + method.getSimpleName() + "' on " + method.getEnclosingElement() + ": " + problem
+                        + ". Declare a channel as 'ChannelHandler name(<boundary types>, Channel toClient)' -- see "
+                        + "docs/reference/compile-time-checks.md.",
+                method);
     }
 
     private void checkBoundaryType(TypeMirror type, ExecutableElement method, String position, Set<String> visiting) {
