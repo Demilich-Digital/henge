@@ -3,6 +3,7 @@ package digital.demilich.henge.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import digital.demilich.henge.core.HengeAcknowledgeThisRunsOnEveryNode;
 import digital.demilich.henge.core.HengeScheduled;
 import java.util.HashMap;
 import java.util.Map;
@@ -13,6 +14,10 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.annotation.Schedules;
+import org.springframework.scheduling.annotation.SchedulingConfigurer;
+import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 
 class HengeScheduledJobsTest {
 
@@ -101,6 +106,97 @@ class HengeScheduledJobsTest {
         @Bean
         LongJob longJob() {
             return new LongJob();
+        }
+    }
+
+    static class Plain {
+        @Scheduled(fixedRate = 100000)
+        public void evict() {
+        }
+    }
+
+    @Configuration
+    static class PlainConfig {
+        @Bean
+        Plain plain() {
+            return new Plain();
+        }
+    }
+
+    static class PlainRepeated {
+        @Schedules({@Scheduled(fixedRate = 100000), @Scheduled(cron = "0 0 0 * * *")})
+        public void evict() {
+        }
+    }
+
+    @Configuration
+    static class PlainRepeatedConfig {
+        @Bean
+        PlainRepeated plainRepeated() {
+            return new PlainRepeated();
+        }
+    }
+
+    static class AcknowledgedOnMethod {
+        @Scheduled(fixedRate = 100000)
+        @HengeAcknowledgeThisRunsOnEveryNode
+        public void evict() {
+        }
+    }
+
+    @Configuration
+    static class AcknowledgedOnMethodConfig {
+        @Bean
+        AcknowledgedOnMethod acknowledged() {
+            return new AcknowledgedOnMethod();
+        }
+    }
+
+    @HengeAcknowledgeThisRunsOnEveryNode
+    static class AcknowledgedOnClass {
+        @Scheduled(fixedRate = 100000)
+        public void evict() {
+        }
+
+        @Scheduled(fixedDelay = 100000)
+        public void flush() {
+        }
+    }
+
+    @Configuration
+    static class AcknowledgedOnClassConfig {
+        @Bean
+        AcknowledgedOnClass acknowledged() {
+            return new AcknowledgedOnClass();
+        }
+    }
+
+    static class Configurer implements SchedulingConfigurer {
+        @Override
+        public void configureTasks(ScheduledTaskRegistrar registrar) {
+        }
+    }
+
+    @Configuration
+    static class ConfigurerConfig {
+        @Bean
+        Configurer configurer() {
+            return new Configurer();
+        }
+    }
+
+    @HengeAcknowledgeThisRunsOnEveryNode
+    static class AcknowledgedConfigurer implements SchedulingConfigurer {
+        @Override
+        public void configureTasks(ScheduledTaskRegistrar registrar) {
+        }
+    }
+
+    @Configuration
+    static class AcknowledgedConfigurerConfig {
+        @Bean
+        AcknowledgedConfigurer configurer() {
+            return new AcknowledgedConfigurer();
         }
     }
 
@@ -250,6 +346,64 @@ class HengeScheduledJobsTest {
             assertThat(records).anySatisfy(line -> assertThat(line).contains("stopped after PT1H"));
         } finally {
             logger.removeHandler(handler);
+        }
+    }
+
+    @Test
+    void aPlainScheduledMethodFailsStartupNamingItAndBothWaysOut() {
+        try (var ctx = context(Map.of(), PlainConfig.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("HengeScheduledJobsTest$Plain#evict")
+                    .hasStackTraceContaining("@HengeScheduled")
+                    .hasStackTraceContaining("@HengeAcknowledgeThisRunsOnEveryNode");
+        }
+    }
+
+    @Test
+    void severalScheduledAnnotationsOnOneMethodAreStillRefused() {
+        try (var ctx = context(Map.of(), PlainRepeatedConfig.class)) {
+            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("HengeScheduledJobsTest$PlainRepeated#evict");
+        }
+    }
+
+    @Test
+    void anAcknowledgedScheduledMethodStarts() {
+        try (var ctx = context(Map.of(), AcknowledgedOnMethodConfig.class)) {
+            ctx.refresh();
+            assertThat(ctx.getBean(AcknowledgedOnMethod.class)).isNotNull();
+        }
+    }
+
+    @Test
+    void anAcknowledgementOnTheClassCoversEveryScheduledMethodOnIt() {
+        try (var ctx = context(Map.of(), AcknowledgedOnClassConfig.class)) {
+            ctx.refresh();
+            assertThat(ctx.getBean(AcknowledgedOnClass.class)).isNotNull();
+        }
+    }
+
+    @Test
+    void aSchedulingConfigurerIsRefusedBecauseItsTasksShowNoAnnotation() {
+        try (var ctx = context(Map.of(), ConfigurerConfig.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("SchedulingConfigurer")
+                    .hasStackTraceContaining("HengeScheduledJobsTest$Configurer");
+        }
+    }
+
+    @Test
+    void anAcknowledgedSchedulingConfigurerStarts() {
+        try (var ctx = context(Map.of(), AcknowledgedConfigurerConfig.class)) {
+            ctx.refresh();
+            assertThat(ctx.getBean(AcknowledgedConfigurer.class)).isNotNull();
+        }
+    }
+
+    @Test
+    void aHengeScheduledJobNeedsNoAcknowledgement() {
+        try (var ctx = context(Map.of("test.cron", "0 0 0 1 1 *"), TickerConfig.class)) {
+            ctx.refresh();
+            assertThat(ctx.getBean(Ticker.class)).isNotNull();
         }
     }
 }

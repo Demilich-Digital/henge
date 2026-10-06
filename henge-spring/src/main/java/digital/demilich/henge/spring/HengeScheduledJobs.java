@@ -1,12 +1,15 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.HengeAcknowledgeThisRunsOnEveryNode;
 import digital.demilich.henge.core.HengeScheduled;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.time.InstantSource;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -28,12 +31,16 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.env.Environment;
 import org.springframework.format.annotation.DurationFormat;
 import org.springframework.format.datetime.standard.DurationFormatterUtils;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.annotation.Schedules;
+import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.util.ReflectionUtils;
 
 /**
  * Finds {@link HengeScheduled} methods on the application's singleton beans and hands them to a
- * {@link ClusterScheduler} once the context has refreshed. A method that can't be a job (it takes
+ * {@link ClusterScheduler} once the context has refreshed. It also refuses Spring's own {@code @Scheduled}
+ * unless the author has acknowledged that it runs on every node. A method that can't be a job (it takes
  * arguments, its cron expression doesn't parse, two jobs share a name, its bean isn't a singleton) fails
  * startup, naming it.
  *
@@ -70,11 +77,40 @@ class HengeScheduledJobs implements BeanPostProcessor, BeanFactoryAware, Environ
     @Override
     public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
         Class<?> targetClass = AopProxyUtils.ultimateTargetClass(bean);
+        refuseUnacknowledgedPlainScheduling(bean, beanName, targetClass);
         Map<Method, HengeScheduled> annotated = MethodIntrospector.selectMethods(targetClass,
                 (MethodIntrospector.MetadataLookup<HengeScheduled>) method ->
                         AnnotatedElementUtils.findMergedAnnotation(method, HengeScheduled.class));
         annotated.forEach((method, annotation) -> register(bean, beanName, targetClass, method, annotation));
         return bean;
+    }
+
+    /**
+     * Spring's own scheduling runs once per process, so in a cluster a job runs once per node, silently. It
+     * is refused unless the author has acknowledged that with {@link HengeAcknowledgeThisRunsOnEveryNode}, on
+     * the method or its class; a {@link SchedulingConfigurer}, which registers tasks in code where no
+     * annotation shows, needs it on the configurer. Spring's own classes are left alone: they schedule what
+     * they need, and the author can't annotate them.
+     */
+    private static void refuseUnacknowledgedPlainScheduling(Object bean, String beanName, Class<?> targetClass) {
+        if (targetClass.getName().startsWith("org.springframework.")
+                || AnnotatedElementUtils.hasAnnotation(targetClass, HengeAcknowledgeThisRunsOnEveryNode.class)) {
+            return;
+        }
+        List<String> offenders = new ArrayList<>();
+        MethodIntrospector.selectMethods(targetClass, (MethodIntrospector.MetadataLookup<Boolean>) method ->
+                !AnnotatedElementUtils.findMergedRepeatableAnnotations(method, Scheduled.class, Schedules.class).isEmpty()
+                        && !AnnotatedElementUtils.hasAnnotation(method, HengeAcknowledgeThisRunsOnEveryNode.class) ? Boolean.TRUE : null)
+                .keySet().forEach(method -> offenders.add("@Scheduled method " + targetClass.getName() + "#" + method.getName()));
+        if (bean instanceof SchedulingConfigurer) {
+            offenders.add("SchedulingConfigurer " + targetClass.getName());
+        }
+        if (!offenders.isEmpty()) {
+            throw new IllegalStateException(String.join(" and ", offenders) + " (bean '" + beanName + "') would run on every node "
+                    + "that hosts it, once each: Spring's scheduling is per process, so three replicas run it three times. "
+                    + "To run it once across the cluster, use @HengeScheduled(cron = \"...\") instead. If running on every "
+                    + "node is what you want, say so by adding @HengeAcknowledgeThisRunsOnEveryNode to it.");
+        }
     }
 
     private void register(Object bean, String beanName, Class<?> targetClass, Method method, HengeScheduled annotation) {
