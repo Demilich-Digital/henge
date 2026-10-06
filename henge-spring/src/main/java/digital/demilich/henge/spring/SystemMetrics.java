@@ -22,9 +22,33 @@ interface SystemMetrics {
         RENEWED, OVER_CAPACITY, ERROR
     }
 
+    /** What became of one fire of a scheduled job on this node. */
+    enum Fire {
+        /** This node won the fire and started a run. */
+        RAN,
+        /** Another node won the fire. */
+        TAKEN,
+        /** This node won the fire, but the last run of a job that doesn't overlap is still going, so it was skipped. */
+        STILL_RUNNING,
+        /** This node won the fire, but another node had won the same fire too and is running it (the store was failing over). */
+        DUPLICATE,
+        /** The fire was too late to run, and is never caught up. */
+        LATE,
+        /** The store couldn't be asked who runs the fire, so it was skipped. */
+        STORE_UNAVAILABLE
+    }
+
+    /** Why a run of a scheduled job was interrupted. */
+    enum Interruption {
+        /** It ran past its {@code maxRuntime}. */
+        MAX_RUNTIME,
+        /** The store refused its renewal: another node was given the job. */
+        CLAIM_LOST
+    }
+
     /**
      * {@code datastore}, timing each operation as made for {@code purpose} ({@code lease}, {@code advertisement},
-     * {@code routing}, {@code rate-limit}).
+     * {@code routing}, {@code rate-limit}, {@code scheduler}).
      */
     default SystemEphemeralDatastore measured(SystemEphemeralDatastore datastore, String purpose) {
         return datastore;
@@ -97,5 +121,17 @@ interface SystemMetrics {
     }
 
     default void trunkClosed(String side) {
+    }
+
+    /** A fire of the scheduled job {@code job} came due on this node, and this is what became of it. */
+    default void scheduledFire(String job, Fire outcome) {
+    }
+
+    /** A run of the scheduled job {@code job} on this node ended, by returning or by throwing. */
+    default void scheduledRun(String job, boolean succeeded) {
+    }
+
+    /** A run of the scheduled job {@code job} on this node was interrupted. */
+    default void scheduledInterrupted(String job, Interruption reason) {
     }
 }

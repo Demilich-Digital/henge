@@ -168,7 +168,9 @@ class HengeScheduledJobs implements BeanPostProcessor, BeanFactoryAware, Environ
         if (event.getApplicationContext() != applicationContext || scheduler != null || jobs.isEmpty()) {
             return;
         }
-        scheduler = new ClusterScheduler(applicationContext.getBean(SystemEphemeralDatastore.class), InstantSource.system());
+        SystemMetrics metrics = applicationContext.getBeanProvider(SystemMetrics.class).getIfAvailable(() -> SystemMetrics.NONE);
+        scheduler = new ClusterScheduler(metrics.measured(applicationContext.getBean(SystemEphemeralDatastore.class), "scheduler"),
+                InstantSource.system(), ClusterScheduler.DEFAULT_RUN_TTL, metrics);
         Duration defaultMaxRuntime = DurationFormatterUtils.detectAndParse(HengeScheduled.DEFAULT_MAX_RUNTIME, DurationFormat.Unit.MILLIS);
         jobs.values().forEach(job -> {
             scheduler.add(job);

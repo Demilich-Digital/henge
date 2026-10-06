@@ -36,6 +36,24 @@ class HengeScheduledJobsTest {
     }
 
     @Configuration
+    static class MeteredTickerConfig {
+        @Bean
+        io.micrometer.core.instrument.MeterRegistry meterRegistry() {
+            return new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        }
+
+        @Bean
+        MicrometerSystemMetrics systemMetrics(io.micrometer.core.instrument.MeterRegistry registry) {
+            return new MicrometerSystemMetrics(registry);
+        }
+
+        @Bean
+        Ticker ticker() {
+            return new Ticker();
+        }
+    }
+
+    @Configuration
     static class TickerConfig {
         @Bean
         Ticker ticker() {
@@ -404,6 +422,26 @@ class HengeScheduledJobsTest {
         try (var ctx = context(Map.of("test.cron", "0 0 0 1 1 *"), TickerConfig.class)) {
             ctx.refresh();
             assertThat(ctx.getBean(Ticker.class)).isNotNull();
+        }
+    }
+
+    @Test
+    void aJobsFiresAndRunsAreMeteredWhenThereIsAMeterRegistry() throws Exception {
+        try (var ctx = context(Map.of(), MeteredTickerConfig.class)) {
+            ctx.refresh();
+            var meters = ctx.getBean(io.micrometer.core.instrument.MeterRegistry.class);
+            var job = "digital.demilich.henge.spring.HengeScheduledJobsTest$Ticker#tick";
+            long deadline = System.nanoTime() + 8_000_000_000L;
+            while ((meters.find("henge.scheduled.runs").tags("job", job, "outcome", "succeeded").counter() == null
+                    || meters.get("henge.scheduled.runs").tags("job", job, "outcome", "succeeded").counter().count() < 1)
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(50);
+            }
+
+            assertThat(meters.get("henge.scheduled.fires").tags("job", job, "outcome", "ran").counter().count()).isGreaterThanOrEqualTo(1);
+            assertThat(meters.get("henge.scheduled.runs").tags("job", job, "outcome", "succeeded").counter().count()).isGreaterThanOrEqualTo(1);
+            // The claims it makes are timed like every other use of the store.
+            assertThat(meters.find(MeteredDatastore.NAME).tag("purpose", "scheduler").timers()).isNotEmpty();
         }
     }
 }

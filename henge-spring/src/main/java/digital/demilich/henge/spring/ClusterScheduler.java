@@ -74,6 +74,7 @@ final class ClusterScheduler implements AutoCloseable {
     private final SystemEphemeralDatastore datastore;
     private final InstantSource clock;
     private final Duration runTtl;
+    private final SystemMetrics metrics;
     private final List<Job> jobs = new ArrayList<>();
     /** Wakes jobs when a fire is due; does nothing slow, so that a slow store can't make a fire late. */
     private ScheduledExecutorService timer;
@@ -86,9 +87,15 @@ final class ClusterScheduler implements AutoCloseable {
     }
 
     ClusterScheduler(SystemEphemeralDatastore datastore, InstantSource clock, Duration runTtl) {
+        this(datastore, clock, runTtl, SystemMetrics.NONE);
+    }
+
+    /** @param datastore as the caller wants it measured: see {@link SystemMetrics#measured} */
+    ClusterScheduler(SystemEphemeralDatastore datastore, InstantSource clock, Duration runTtl, SystemMetrics metrics) {
         this.datastore = datastore;
         this.clock = clock;
         this.runTtl = runTtl;
+        this.metrics = metrics;
         this.watchdog = Executors.newSingleThreadScheduledExecutor(runnable -> daemon(runnable, "henge-scheduled-watchdog"));
     }
 
@@ -148,6 +155,7 @@ final class ClusterScheduler implements AutoCloseable {
         if (lateness.compareTo(MAX_LATENESS) > 0) {
             log.warn("Henge scheduled job '" + job.name() + "' skipped its fire at " + nominal + ", " + lateness.toSeconds()
                     + "s late; a missed fire is never caught up");
+            metrics.scheduledFire(job.name(), SystemMetrics.Fire.LATE);
             return;
         }
         boolean won;
@@ -156,10 +164,12 @@ final class ClusterScheduler implements AutoCloseable {
         } catch (RuntimeException e) {
             GuardedDatastore.logFailure(log, "Henge scheduled job '" + job.name() + "' skipped its fire at " + nominal
                     + ": the ephemeral store couldn't be asked who runs it", e);
+            metrics.scheduledFire(job.name(), SystemMetrics.Fire.STORE_UNAVAILABLE);
             return;
         }
         if (!won) {
             log.debug("Henge scheduled job '" + job.name() + "' at " + nominal + " is run by another node");
+            metrics.scheduledFire(job.name(), SystemMetrics.Fire.TAKEN);
             return;
         }
         // A name of its own for each run, so that a second run on this node isn't mistaken for a renewal of the first.
@@ -179,8 +189,11 @@ final class ClusterScheduler implements AutoCloseable {
         } catch (RuntimeException e) {
             GuardedDatastore.logFailure(log, "Henge scheduled job '" + job.name() + "' skipped its fire at " + nominal
                     + ": the ephemeral store couldn't be asked whether the last run is over", e);
+            metrics.scheduledFire(job.name(), SystemMetrics.Fire.STORE_UNAVAILABLE);
             return false;
         }
+        metrics.scheduledFire(job.name(), granted ? SystemMetrics.Fire.RAN
+                : job.overlap() ? SystemMetrics.Fire.DUPLICATE : SystemMetrics.Fire.STILL_RUNNING);
         if (!granted && job.overlap()) {
             // Nothing else is running under this key but this fire's own run: two nodes won the fire.
             log.warn("Henge scheduled job '" + job.name() + "' skipped its fire at " + nominal + ": another node is already "
@@ -237,11 +250,14 @@ final class ClusterScheduler implements AutoCloseable {
                     + job.maxRuntime() + "; interrupting it. The next fire may start while it is still running if it "
                     + "ignores that.");
             run.stopRenewing();
+            metrics.scheduledInterrupted(job.name(), SystemMetrics.Interruption.MAX_RUNTIME);
             run.interrupt();
         }, job.maxRuntime().toNanos(), TimeUnit.NANOSECONDS));
         try {
             job.body().run();
+            metrics.scheduledRun(job.name(), true);
         } catch (Throwable t) {
+            metrics.scheduledRun(job.name(), false);
             log.error("Henge scheduled job '" + job.name() + "' failed (fire at " + nominal + ")", t);
         } finally {
             run.finish();
@@ -258,6 +274,7 @@ final class ClusterScheduler implements AutoCloseable {
         try {
             if (!datastore.claim(key, runName, 1, 1, runTtl)) {
                 log.warn("Henge scheduled job '" + job.name() + "' lost its run claim to another node; interrupting this run");
+                metrics.scheduledInterrupted(job.name(), SystemMetrics.Interruption.CLAIM_LOST);
                 run.interrupt();
                 throw new CancelRenewal();
             }

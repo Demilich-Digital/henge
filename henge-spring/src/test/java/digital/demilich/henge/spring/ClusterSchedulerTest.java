@@ -523,6 +523,162 @@ class ClusterSchedulerTest {
         }
     }
 
+    /** What a scheduler reports, in order. */
+    private static final class Recorded implements SystemMetrics {
+        final List<String> events = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void scheduledFire(String job, Fire outcome) {
+            events.add("fire " + job + " " + outcome);
+        }
+
+        @Override
+        public void scheduledRun(String job, boolean succeeded) {
+            events.add("run " + job + " " + (succeeded ? "succeeded" : "failed"));
+        }
+
+        @Override
+        public void scheduledInterrupted(String job, Interruption reason) {
+            events.add("interrupted " + job + " " + reason);
+        }
+    }
+
+    private static ClusterScheduler reporting(SystemEphemeralDatastore shared, String id, InstantSource clock, Duration runTtl,
+            Recorded metrics, ClusterScheduler.Job job) {
+        var scheduler = new ClusterScheduler(new NodeView(shared, id), clock, runTtl, metrics);
+        scheduler.add(job);
+        return scheduler;
+    }
+
+    @Test
+    void aFireThatRunsIsCountedAsRanAndItsRunAsSucceededOrFailed() {
+        var store = new InProcessEphemeralDatastore();
+        var metrics = new Recorded();
+        var ok = job("ok", "0 0 12 * * *", () -> {
+        });
+        var broken = job("broken", "0 0 12 * * *", () -> {
+            throw new IllegalStateException("boom");
+        });
+
+        reporting(store, "a", () -> NOON, ClusterScheduler.DEFAULT_RUN_TTL, metrics, ok).fire(ok, NOON);
+        reporting(store, "a", () -> NOON, ClusterScheduler.DEFAULT_RUN_TTL, metrics, broken).fire(broken, NOON);
+
+        assertThat(metrics.events).containsExactly(
+                "fire ok RAN", "run ok succeeded", "fire broken RAN", "run broken failed");
+    }
+
+    @Test
+    void aFireAnotherNodeWonIsCountedAsTaken() {
+        var store = new InProcessEphemeralDatastore();
+        var metrics = new Recorded();
+        var job = job("shared", "0 0 12 * * *", () -> {
+        });
+
+        reporting(store, "a", () -> NOON, ClusterScheduler.DEFAULT_RUN_TTL, new Recorded(), job).fire(job, NOON);
+        reporting(store, "b", () -> NOON, ClusterScheduler.DEFAULT_RUN_TTL, metrics, job).fire(job, NOON);
+
+        assertThat(metrics.events).containsExactly("fire shared TAKEN");
+    }
+
+    @Test
+    void aFireThatIsTooLateIsCountedAsLate() {
+        var metrics = new Recorded();
+        var job = job("late", "0 0 12 * * *", () -> {
+        });
+
+        reporting(new InProcessEphemeralDatastore(), "a", () -> NOON.plus(ClusterScheduler.MAX_LATENESS).plusSeconds(1),
+                ClusterScheduler.DEFAULT_RUN_TTL, metrics, job).fire(job, NOON);
+
+        assertThat(metrics.events).containsExactly("fire late LATE");
+    }
+
+    @Test
+    void aFireTheStoreCouldntBeAskedAboutIsCountedAsStoreUnavailable() {
+        var metrics = new Recorded();
+        var away = new AtomicBoolean(true);
+        var job = job("blind", "0 0 12 * * *", () -> {
+        });
+        var scheduler = new ClusterScheduler(new FlakyView(new InProcessEphemeralDatastore(), "a", away), () -> NOON,
+                ClusterScheduler.DEFAULT_RUN_TTL, metrics);
+
+        scheduler.fire(job, NOON);
+
+        assertThat(metrics.events).containsExactly("fire blind STORE_UNAVAILABLE");
+    }
+
+    @Test
+    void aFireThatFindsTheLastRunGoingIsCountedAsStillRunningAndAWonTwiceFireAsDuplicate() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var blocked = new Blocked();
+        var long1 = job("long", "0 0 * * * *", blocked);
+        var first = NOON.plusSeconds(3600);
+        var a = node(store, "a", () -> first, long1);
+        Thread run = inBackground(() -> a.fire(long1, first));
+        assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+
+        var next = NOON.plusSeconds(7200);
+        var metrics = new Recorded();
+        reporting(store, "b", () -> next, ClusterScheduler.DEFAULT_RUN_TTL, metrics, long1).fire(long1, next);
+
+        assertThat(metrics.events).containsExactly("fire long STILL_RUNNING");
+        blocked.release.countDown();
+        run.join(5000);
+
+        // The same instant won by two nodes, for a job that overlaps: the second is a duplicate.
+        var overlapBlocked = new Blocked();
+        var overlapping = job("overlapping", "0 0 12 * * *", overlapBlocked, Duration.ofHours(1), true);
+        var overlapStore = new InProcessEphemeralDatastore();
+        var c = node(overlapStore, "c", () -> NOON, overlapping);
+        Thread runC = inBackground(() -> c.fire(overlapping, NOON));
+        assertThat(overlapBlocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+        var fireMembers = overlapStore.read(ClusterScheduler.fireKey(overlapping, NOON)).members();
+        overlapStore.remove(ClusterScheduler.fireKey(overlapping, NOON), fireMembers.keySet().iterator().next().localName());
+        var duplicates = new Recorded();
+        reporting(overlapStore, "d", () -> NOON, ClusterScheduler.DEFAULT_RUN_TTL, duplicates, overlapping).fire(overlapping, NOON);
+
+        assertThat(duplicates.events).containsExactly("fire overlapping DUPLICATE");
+        overlapBlocked.release.countDown();
+        runC.join(5000);
+    }
+
+    @Test
+    void aRunCutOffAtItsMaxRuntimeIsCountedAsInterrupted() throws Exception {
+        var metrics = new Recorded();
+        var blocked = new Blocked();
+        var hung = job("hung", "0 0 12 * * *", blocked, Duration.ofMillis(200), false);
+        var a = reporting(new InProcessEphemeralDatastore(), "a", () -> NOON, Duration.ofMillis(300), metrics, hung);
+        try {
+            Thread run = inBackground(() -> a.fire(hung, NOON));
+            assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+            run.join(5000);
+
+            assertThat(metrics.events).containsSubsequence("fire hung RAN", "interrupted hung MAX_RUNTIME", "run hung succeeded");
+        } finally {
+            a.close();
+        }
+    }
+
+    @Test
+    void aRunThatLostItsClaimIsCountedAsInterrupted() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var metrics = new Recorded();
+        var blocked = new Blocked();
+        var job = job("usurped", "0 0 12 * * *", blocked);
+        var a = reporting(store, "a", () -> NOON, Duration.ofMillis(300), metrics, job);
+        try {
+            Thread run = inBackground(() -> a.fire(job, NOON));
+            assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+            var members = store.read(ClusterScheduler.runKey(job, NOON)).members();
+            store.remove(ClusterScheduler.runKey(job, NOON), members.keySet().iterator().next().localName());
+            assertThat(store.claim(ClusterScheduler.runKey(job, NOON), "bnode", 1, 1, Duration.ofMinutes(5))).isTrue();
+            run.join(5000);
+
+            assertThat(metrics.events).contains("interrupted usurped CLAIM_LOST");
+        } finally {
+            a.close();
+        }
+    }
+
     @Test
     void liveNodesOnARealTimerRunEachFireOnce() throws Exception {
         var store = new InProcessEphemeralDatastore();

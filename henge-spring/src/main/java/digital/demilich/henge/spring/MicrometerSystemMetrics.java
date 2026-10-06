@@ -25,6 +25,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <tr><td>{@code henge.channels.open}</td><td>gauge: {@code service}, {@code version}, {@code side} ({@code frontend} or {@code backend})</td></tr>
  *   <tr><td>{@code henge.channels.closed}</td><td>counter: {@code service}, {@code version}, {@code side}, {@code status} (the websocket close code)</td></tr>
  *   <tr><td>{@code henge.trunks.open}</td><td>gauge: {@code side}; one trunk per frontend-backend pair, so not tagged by backend, which is unbounded</td></tr>
+ *   <tr><td>{@code henge.scheduled.fires}</td><td>counter of fires that came due on this node: {@code job}, {@code outcome} ({@code ran}, {@code taken}, {@code still-running}, {@code duplicate}, {@code late} or {@code store-unavailable})</td></tr>
+ *   <tr><td>{@code henge.scheduled.runs}</td><td>counter of runs that ended: {@code job}, {@code outcome} ({@code succeeded} or {@code failed})</td></tr>
+ *   <tr><td>{@code henge.scheduled.interruptions}</td><td>counter: {@code job}, {@code reason} ({@code max-runtime} or {@code claim-lost})</td></tr>
  *   <tr><td>{@value MeteredDatastore#NAME}</td><td>timer: {@code purpose}, {@code operation}, {@code outcome}</td></tr>
  * </table>
  *
@@ -116,6 +119,23 @@ public class MicrometerSystemMetrics implements SystemMetrics {
     @Override
     public void rateLimitDegraded(String limit) {
         registry.counter("henge.rate-limit.degraded", "limit", limit).increment();
+    }
+
+    @Override
+    public void scheduledFire(String job, Fire outcome) {
+        registry.counter("henge.scheduled.fires", "job", job, "outcome", outcome.name().toLowerCase(Locale.ROOT).replace('_', '-'))
+                .increment();
+    }
+
+    @Override
+    public void scheduledRun(String job, boolean succeeded) {
+        registry.counter("henge.scheduled.runs", "job", job, "outcome", succeeded ? "succeeded" : "failed").increment();
+    }
+
+    @Override
+    public void scheduledInterrupted(String job, Interruption reason) {
+        registry.counter("henge.scheduled.interruptions", "job", job, "reason", reason.name().toLowerCase(Locale.ROOT).replace('_', '-'))
+                .increment();
     }
 
     @Override

@@ -300,4 +300,24 @@ class MicrometerSystemMetricsTest {
         assertThat(meters.get("henge.trunks.open").gauges()).allSatisfy(gauge ->
                 assertThat(gauge.getId().getTags()).extracting(io.micrometer.core.instrument.Tag::getKey).containsExactly("side"));
     }
+
+    @Test
+    void scheduledJobsAreCountedByFireRunAndInterruption() {
+        metrics.scheduledFire("nightly", SystemMetrics.Fire.RAN);
+        metrics.scheduledFire("nightly", SystemMetrics.Fire.RAN);
+        metrics.scheduledFire("nightly", SystemMetrics.Fire.STILL_RUNNING);
+        metrics.scheduledFire("nightly", SystemMetrics.Fire.STORE_UNAVAILABLE);
+        metrics.scheduledRun("nightly", true);
+        metrics.scheduledRun("nightly", false);
+        metrics.scheduledInterrupted("nightly", SystemMetrics.Interruption.MAX_RUNTIME);
+        metrics.scheduledInterrupted("nightly", SystemMetrics.Interruption.CLAIM_LOST);
+
+        assertThat(meters.get("henge.scheduled.fires").tags("job", "nightly", "outcome", "ran").counter().count()).isEqualTo(2);
+        assertThat(meters.get("henge.scheduled.fires").tags("job", "nightly", "outcome", "still-running").counter().count()).isEqualTo(1);
+        assertThat(meters.get("henge.scheduled.fires").tags("job", "nightly", "outcome", "store-unavailable").counter().count()).isEqualTo(1);
+        assertThat(meters.get("henge.scheduled.runs").tags("job", "nightly", "outcome", "succeeded").counter().count()).isEqualTo(1);
+        assertThat(meters.get("henge.scheduled.runs").tags("job", "nightly", "outcome", "failed").counter().count()).isEqualTo(1);
+        assertThat(meters.get("henge.scheduled.interruptions").tags("job", "nightly", "reason", "max-runtime").counter().count()).isEqualTo(1);
+        assertThat(meters.get("henge.scheduled.interruptions").tags("job", "nightly", "reason", "claim-lost").counter().count()).isEqualTo(1);
+    }
 }

@@ -1,9 +1,9 @@
 # Design: scheduled jobs
 
-**Status.** Steps 1 to 4 of the [build order](#build-order) are built: `@HengeScheduled` with the fire claim,
-the run claim with its heartbeat, `overlap`, `maxRuntime` and the batching reminder, the startup check that
-refuses plain `@Scheduled` without `@HengeAcknowledgeThisRunsOnEveryNode`, and the same check at compile time.
-Not built: metrics, and the guide chapter.
+**Status.** Steps 1 to 4, and the metrics of step 5, are built: `@HengeScheduled` with the fire claim, the run claim with its
+heartbeat, `overlap`, `maxRuntime` and the batching reminder, the startup and compile-time checks that refuse
+plain `@Scheduled` without `@HengeAcknowledgeThisRunsOnEveryNode`, and the meters. Not built: the guide
+chapter, the reference entries and the gotchas entry.
 
 A scheduled job in Spring runs once per process. Deploy three replicas and `@Scheduled(cron = "...")`
 runs three times, silently, and only in production: with one process it looks correct. It is the same
@@ -111,8 +111,18 @@ local job is an in-process flag and needs no store.
 
 ## Metrics
 
-Per job: fired, skipped as already taken, skipped as still running, skipped as store unreachable,
-interrupted at `maxRuntime`, lost its renewal.
+Per job (the tag is `job`, bounded by the code), through `SystemMetrics` like the rest:
+
+- `henge.scheduled.fires`, by `outcome`: `ran` (this node won the fire and started a run), `taken` (another
+  node won it), `still-running` (won, but the last run of a job that doesn't overlap is going), `duplicate`
+  (won, but another node won the same fire and is running it: the store was failing over), `late` (too late
+  to run, never caught up) and `store-unavailable` (the store couldn't be asked).
+- `henge.scheduled.runs`, by `outcome`: `succeeded` or `failed`, a run that returned or threw.
+- `henge.scheduled.interruptions`, by `reason`: `max-runtime` or `claim-lost`.
+
+Its claims are also timed with the rest of the store's operations, as `henge.store.operations` with
+`purpose=scheduler`. The fires a cluster is owed are not counted anywhere: nothing records that one was due
+while no node was up, which is the no-catch-up rule seen from the other side.
 
 ## Build order
 
@@ -120,4 +130,4 @@ interrupted at `maxRuntime`, lost its renewal.
 2. The run claim, its heartbeat, `maxRuntime`, and the startup reminder. *(built)*
 3. The startup check for `@Scheduled`, and the acknowledgement annotation. *(built)*
 4. The processor check. *(built)*
-5. Metrics, a guide chapter, and a gotchas entry ("cron jobs that run N times").
+5. Metrics *(built)*, a guide chapter, and a gotchas entry ("cron jobs that run N times").
