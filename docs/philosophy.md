@@ -67,6 +67,25 @@ lets the store be fast and cheap to run: Redis today, a DHT built for private cl
 else that honors [the contract](ephemeral-store.md). What needs a hard guarantee (a lock, exactly-once, a
 transaction) is out of its scope on purpose, and belongs in a system built on consensus.
 
+## A critical store that can be away
+
+A system that coordinates through one shared store has made that store a single point of failure, and
+the usual answer is to harden the store, or to stop when it is gone. Henge does neither, because of what
+the store holds. Nothing in it is the truth; it is what the processes last told each other, and they will
+tell each other again. So when it is away, a process has two honest options: act on what it last heard,
+which was true a moment ago and is rarely wrong now, or take the conservative side of the question where
+it never heard. A caller keeps the hosts it last read. A lease is held, not torn down. A rate limit
+falls back to its own share of the limit, so the cluster still adds up to it. What can't be answered is
+said plainly, as a `503`, and a process started without the store waits, alive and not ready, instead of
+crashing into a restart that wouldn't help.
+
+That is the same design as everything above, seen from the other side. State that expires, converges and
+can be lost at any time can also be unreachable at any time, and a restart of Redis is the case it was
+built for: an outage, then a wipe, then every process putting back what it knows within a heartbeat. The
+cost is that a long outage degrades the cluster rather than stopping it, quietly, and the first to
+notice should be your monitoring. That is a better failure than most critical stores allow. The details
+are in [the guide](guide/05-the-ephemeral-store.md#fault-tolerance-when-the-store-is-away).
+
 ## Toward a system that manages itself
 
 Henge's long-term goal is a cluster that manages its own topology: processes that watch demand and
