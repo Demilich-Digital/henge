@@ -90,6 +90,20 @@ class HengeScheduledJobsTest {
         }
     }
 
+    static class LongJob {
+        @HengeScheduled(cron = "0 0 0 1 1 *", maxRuntime = "${test.max-runtime}")
+        public void batch() {
+        }
+    }
+
+    @Configuration
+    static class LongJobConfig {
+        @Bean
+        LongJob longJob() {
+            return new LongJob();
+        }
+    }
+
     private static AnnotationConfigApplicationContext context(Map<String, Object> properties, Class<?>... configs) {
         var ctx = new AnnotationConfigApplicationContext();
         ctx.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", new HashMap<>(properties)));
@@ -163,6 +177,79 @@ class HengeScheduledJobsTest {
         // The names have to differ between the two, so here they collide on purpose and the message says why.
         try (var ctx = context(Map.of("job.name", "same"), NamedConfig.class)) {
             assertThatThrownBy(ctx::refresh).rootCause().hasMessageContaining("'same'");
+        }
+    }
+
+    @Test
+    void aMaxRuntimeThatIsntADurationFailsStartupNamingTheMethod() {
+        try (var ctx = context(Map.of("test.max-runtime", "a while"), LongJobConfig.class)) {
+            assertThatThrownBy(ctx::refresh)
+                    .hasStackTraceContaining("HengeScheduledJobsTest$LongJob#batch")
+                    .hasStackTraceContaining("maxRuntime=a while");
+        }
+    }
+
+    @Test
+    void aMaxRuntimeOfZeroFailsStartup() {
+        try (var ctx = context(Map.of("test.max-runtime", "0"), LongJobConfig.class)) {
+            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("must be positive");
+        }
+    }
+
+    @Test
+    void aMaxRuntimeLongerThanTheDefaultIsAllowedButRemindsAboutBatching() {
+        // Captures what the processor logs: the reminder is the whole point of making the author write the number.
+        var records = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var logger = java.util.logging.Logger.getLogger(HengeScheduledJobs.class.getName());
+        var handler = new java.util.logging.Handler() {
+            @Override
+            public void publish(java.util.logging.LogRecord record) {
+                records.add(record.getLevel() + " " + record.getMessage());
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        logger.addHandler(handler);
+        try (var ctx = context(Map.of("test.max-runtime", "6h"), LongJobConfig.class)) {
+            ctx.refresh();
+            assertThat(records).anySatisfy(line -> assertThat(line)
+                    .startsWith("WARNING").contains("batches").contains("lost with it").contains("PT6H"));
+        } finally {
+            logger.removeHandler(handler);
+        }
+    }
+
+    @Test
+    void theDefaultMaxRuntimeDoesNotWarn() {
+        var records = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var logger = java.util.logging.Logger.getLogger(HengeScheduledJobs.class.getName());
+        var handler = new java.util.logging.Handler() {
+            @Override
+            public void publish(java.util.logging.LogRecord record) {
+                records.add(record.getLevel() + " " + record.getMessage());
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        logger.addHandler(handler);
+        try (var ctx = context(Map.of("test.max-runtime", "1h"), LongJobConfig.class)) {
+            ctx.refresh();
+            assertThat(records).noneMatch(line -> line.startsWith("WARNING"));
+            assertThat(records).anySatisfy(line -> assertThat(line).contains("stopped after PT1H"));
+        } finally {
+            logger.removeHandler(handler);
         }
     }
 }

@@ -15,6 +15,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -53,7 +55,36 @@ class ClusterSchedulerTest {
     }
 
     private static ClusterScheduler.Job job(String name, String cron, Runnable body) {
-        return new ClusterScheduler.Job(name, CronExpression.parse(cron), ZoneOffset.UTC, body);
+        return job(name, cron, body, Duration.ofHours(1), false);
+    }
+
+    private static ClusterScheduler.Job job(String name, String cron, Runnable body, Duration maxRuntime, boolean overlap) {
+        return new ClusterScheduler.Job(name, CronExpression.parse(cron), ZoneOffset.UTC, body, maxRuntime, overlap);
+    }
+
+    /** A body that holds the run open until released, and says whether it was interrupted. */
+    private static final class Blocked implements Runnable {
+        final CountDownLatch started = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicBoolean interrupted = new AtomicBoolean();
+        final AtomicInteger runs = new AtomicInteger();
+
+        @Override
+        public void run() {
+            runs.incrementAndGet();
+            started.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                interrupted.set(true);
+            }
+        }
+    }
+
+    private static Thread inBackground(Runnable fire) {
+        Thread thread = new Thread(fire);
+        thread.start();
+        return thread;
     }
 
     private static ClusterScheduler node(SystemEphemeralDatastore shared, String id, InstantSource clock, ClusterScheduler.Job job) {
@@ -205,6 +236,241 @@ class ClusterSchedulerTest {
 
         // The fire was taken and failed; another node doesn't take it again.
         assertThat(runs).hasValue(1);
+    }
+
+    @Test
+    void aFireThatFindsTheLastRunStillGoingIsSkippedOnEveryNodeNotQueued() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var blocked = new Blocked();
+        var long1 = job("long", "0 0 * * * *", blocked);
+        var a = node(store, "a", () -> NOON.plusSeconds(3600), long1);
+        var otherRuns = new AtomicInteger();
+        var longOnB = job("long", "0 0 * * * *", otherRuns::incrementAndGet);
+        var b = node(store, "b", () -> NOON.plusSeconds(3600), longOnB);
+
+        Thread first = inBackground(() -> a.fire(long1, NOON.plusSeconds(3600)));
+        assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+        // The next hour's fire arrives while the first run is going, on the same node and on another.
+        var next = NOON.plusSeconds(7200);
+        var aLater = new ClusterScheduler(new NodeView(store, "a"), () -> next);
+        aLater.add(long1);
+        aLater.fire(long1, next);
+        var bLater = new ClusterScheduler(new NodeView(store, "b"), () -> next);
+        bLater.add(longOnB);
+        bLater.fire(longOnB, next);
+
+        assertThat(blocked.runs).hasValue(1);
+        assertThat(otherRuns).hasValue(0);
+        blocked.release.countDown();
+        first.join(5000);
+        // Once it has ended the job is free again, and a later fire runs.
+        var after = NOON.plusSeconds(10800);
+        var bAfter = new ClusterScheduler(new NodeView(store, "b"), () -> after);
+        bAfter.add(longOnB);
+        bAfter.fire(longOnB, after);
+        assertThat(otherRuns).hasValue(1);
+    }
+
+    @Test
+    void aFinishedRunHandsBackItsClaim() {
+        var store = new InProcessEphemeralDatastore();
+        var job = job("short", "0 0 12 * * *", () -> {
+        });
+        var a = node(store, "a", () -> NOON, job);
+
+        a.fire(job, NOON);
+
+        assertThat(store.read(ClusterScheduler.runKey(job)).members()).isEmpty();
+    }
+
+    @Test
+    void aFailedRunHandsBackItsClaimToo() {
+        var store = new InProcessEphemeralDatastore();
+        var job = job("failing", "0 0 12 * * *", () -> {
+            throw new IllegalStateException("boom");
+        });
+        var a = node(store, "a", () -> NOON, job);
+
+        a.fire(job, NOON);
+
+        assertThat(store.read(ClusterScheduler.runKey(job)).members()).isEmpty();
+    }
+
+    @Test
+    void aJobThatAllowsOverlapStartsWhileTheLastRunIsStillGoing() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var blocked = new Blocked();
+        var overlapping = job("overlapping", "0 0 * * * *", blocked, Duration.ofHours(1), true);
+        var now = new java.util.concurrent.atomic.AtomicReference<>(NOON.plusSeconds(3600));
+        var a = node(store, "a", now::get, overlapping);
+
+        Thread first = inBackground(() -> a.fire(overlapping, NOON.plusSeconds(3600)));
+        assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+        now.set(NOON.plusSeconds(7200));
+        Thread second = inBackground(() -> a.fire(overlapping, NOON.plusSeconds(7200)));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (blocked.runs.get() < 2 && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        assertThat(blocked.runs).hasValue(2);
+        blocked.release.countDown();
+        first.join(5000);
+        second.join(5000);
+    }
+
+    @Test
+    void aRunPastItsMaxRuntimeIsInterruptedAndStopsHoldingTheJob() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var blocked = new Blocked();
+        var hung = job("hung", "0 0 12 * * *", blocked, Duration.ofMillis(200), false);
+        var a = new ClusterScheduler(new NodeView(store, "a"), () -> NOON, Duration.ofMillis(300));
+        a.add(hung);
+        try {
+            Thread run = inBackground(() -> a.fire(hung, NOON));
+            assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+            run.join(5000);
+
+            assertThat(blocked.interrupted).isTrue();
+            assertThat(run.isAlive()).isFalse();
+        } finally {
+            a.close();
+        }
+    }
+
+    @Test
+    void aRunThatIgnoresItsInterruptStopsRenewingSoTheNextFireCanStart() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var stuck = new CountDownLatch(1);
+        var releaseStuck = new CountDownLatch(1);
+        Runnable ignoresInterrupts = () -> {
+            stuck.countDown();
+            while (true) {
+                try {
+                    releaseStuck.await();
+                    return;
+                } catch (InterruptedException ignored) {
+                    // Carries on, as a hung call would.
+                }
+            }
+        };
+        var hung = job("stubborn", "0 0 * * * *", ignoresInterrupts, Duration.ofMillis(100), false);
+        var a = new ClusterScheduler(new NodeView(store, "a"), () -> NOON.plusSeconds(3600), Duration.ofMillis(300));
+        a.add(hung);
+        var nextRuns = new AtomicInteger();
+        var onB = job("stubborn", "0 0 * * * *", nextRuns::incrementAndGet);
+        var next = NOON.plusSeconds(7200);
+        var b = new ClusterScheduler(new NodeView(store, "b"), () -> next);
+        b.add(onB);
+        try {
+            inBackground(() -> a.fire(hung, NOON.plusSeconds(3600)));
+            assertThat(stuck.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // Its claim, no longer renewed, lapses within its TTL; until then the job counts as running.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (nextRuns.get() == 0 && System.nanoTime() < deadline) {
+                b.fire(onB, next);
+                Thread.sleep(50);
+            }
+            assertThat(nextRuns).hasValue(1);
+        } finally {
+            releaseStuck.countDown();
+            a.close();
+            b.close();
+        }
+    }
+
+    @Test
+    void aRunThatLosesItsClaimToAnotherNodeIsInterrupted() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var blocked = new Blocked();
+        var job = job("usurped", "0 0 12 * * *", blocked);
+        var a = new ClusterScheduler(new NodeView(store, "a"), () -> NOON, Duration.ofMillis(300));
+        a.add(job);
+        try {
+            Thread run = inBackground(() -> a.fire(job, NOON));
+            assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+            // The claim lapses (a partition, a wipe) and another node is given the job.
+            var members = store.read(ClusterScheduler.runKey(job)).members();
+            assertThat(members).hasSize(1);
+            store.remove(ClusterScheduler.runKey(job), members.keySet().iterator().next().localName());
+            assertThat(store.claim(ClusterScheduler.runKey(job), "bnode", 1, 1, Duration.ofMinutes(5))).isTrue();
+
+            run.join(5000);
+
+            assertThat(blocked.interrupted).isTrue();
+        } finally {
+            a.close();
+        }
+    }
+
+    @Test
+    void aRunIsLeftGoingWhenTheStoreIsAwayAtItsRenewal() throws Exception {
+        var store = new InProcessEphemeralDatastore();
+        var away = new AtomicBoolean();
+        var blocked = new Blocked();
+        var job = job("steady", "0 0 12 * * *", blocked);
+        var flaky = new FlakyView(store, "a", away);
+        var a = new ClusterScheduler(flaky, () -> NOON, Duration.ofMillis(300));
+        a.add(job);
+        try {
+            Thread run = inBackground(() -> a.fire(job, NOON));
+            assertThat(blocked.started.await(5, TimeUnit.SECONDS)).isTrue();
+            away.set(true);
+            Thread.sleep(700);
+
+            // Nothing else can have been given the job without the store, so it keeps going.
+            assertThat(blocked.interrupted).isFalse();
+            assertThat(run.isAlive()).isTrue();
+            blocked.release.countDown();
+            run.join(5000);
+        } finally {
+            a.close();
+        }
+    }
+
+    /** A node's view of the store that fails every claim while {@code away} is set. */
+    private static final class FlakyView implements SystemEphemeralDatastore {
+        private final NodeView view;
+        private final AtomicBoolean away;
+
+        FlakyView(SystemEphemeralDatastore shared, String id, AtomicBoolean away) {
+            this.view = new NodeView(shared, id);
+            this.away = away;
+        }
+
+        @Override
+        public String nodeId() {
+            return view.nodeId();
+        }
+
+        @Override
+        public void put(String key, String localName, byte[] value, Duration ttl) {
+            view.put(key, localName, value, ttl);
+        }
+
+        @Override
+        public void remove(String key, String localName) {
+            view.remove(key, localName);
+        }
+
+        @Override
+        public Snapshot read(String key) {
+            return view.read(key);
+        }
+
+        @Override
+        public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
+            if (away.get()) {
+                throw new StoreUnavailableException("away", null);
+            }
+            return view.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+            return view.tryAcquire(key, amount, limit);
+        }
     }
 
     @Test

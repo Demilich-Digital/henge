@@ -1,9 +1,9 @@
 # Design: scheduled jobs
 
-**Status.** Step 1 of the [build order](#build-order) is built: `@HengeScheduled` with the fire claim, cron
-only. Not built: the run claim and `maxRuntime` (so a run that outlasts its interval can overlap the next
-fire), the startup and compile-time checks for plain `@Scheduled`, `@HengeAcknowledgeThisRunsOnEveryNode`,
-metrics, and the guide chapter.
+**Status.** Steps 1 and 2 of the [build order](#build-order) are built: `@HengeScheduled` with the fire claim,
+the run claim with its heartbeat, `overlap`, `maxRuntime` and the batching reminder. Not built: the startup
+and compile-time checks for plain `@Scheduled`, `@HengeAcknowledgeThisRunsOnEveryNode`, metrics, and the guide
+chapter.
 
 A scheduled job in Spring runs once per process. Deploy three replicas and `@Scheduled(cron = "...")`
 runs three times, silently, and only in production: with one process it looks correct. It is the same
@@ -57,8 +57,8 @@ overlaps the next fire, since the fires use different keys. It is on by default,
 turns it off.
 
 Order: the node that wins the fire then tries the run claim. If that is refused, **the fire is
-skipped**, everywhere, and logged ("skipped: still running on node X since T", from a `read` of the
-running key). It is skipped, not deferred. Deferring is a queue, with backlog, catch-up and ordering,
+skipped**, everywhere, and logged ("skipped: the last run is still going on node X", from a `read` of the
+running key; a claim's value is only its amount, so there is no start time to report). It is skipped, not deferred. Deferring is a queue, with backlog, catch-up and ordering,
 which is exactly what this design declines to build.
 
 ## What it promises, and what it doesn't
@@ -87,9 +87,13 @@ store here, on purpose. What it can do is stop pretending, and say so where peop
   mid-run loses the run, which starts again from nothing at the next fire. **Splitting the work into
   batches, recording progress in your own database, and making each batch safe to repeat is your job,
   not Henge's.** A job over the default logs this once at startup, with its name and the value it set.
-- **A lost renewal** (a long pause, a partition, the store away past the TTL) is noticed by the next
-  heartbeat and the job is interrupted. As with leases, the claim may already be gone and another node
-  may have started the job, so the same bounded overlap applies.
+- **A lost renewal.** A renewal the store *refuses* means the claim lapsed and another node was given the
+  job (a long pause, a partition, a wipe): the run is interrupted. As with leases it is noticed late, so
+  the same bounded overlap applies. A renewal that can't be *made* because the store is away is retried and
+  the run goes on: nothing else can have been given the job without the store either, and the first
+  renewal to get through takes the claim back if nobody else has.
+- **A run on this node has its own claim name**, so a second run starting on the same node while the first
+  is going is refused like one on another node, instead of being taken for a renewal of the first.
 
 ## The local acknowledgement
 
@@ -105,8 +109,8 @@ interrupted at `maxRuntime`, lost its renewal.
 
 ## Build order
 
-1. `@HengeScheduled` with the fire claim, cron only, on the in-process store.
-2. The run claim, its heartbeat, `maxRuntime`, and the startup reminder.
+1. `@HengeScheduled` with the fire claim, cron only, on the in-process store. *(built)*
+2. The run claim, its heartbeat, `maxRuntime`, and the startup reminder. *(built)*
 3. The startup check for `@Scheduled`, and the acknowledgement annotation.
 4. The processor check.
 5. Metrics, a guide chapter, and a gotchas entry ("cron jobs that run N times").

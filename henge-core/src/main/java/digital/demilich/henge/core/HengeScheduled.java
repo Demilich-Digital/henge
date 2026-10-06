@@ -46,4 +46,30 @@ public @interface HengeScheduled {
      * job's identity across a rename.
      */
     String name() default "";
+
+    /** What {@link #maxRuntime()} is when it isn't set. */
+    String DEFAULT_MAX_RUNTIME = "1h";
+
+    /**
+     * The longest one run may take: milliseconds, a unit suffix ({@code 90m}, {@code 2h}) or ISO-8601
+     * ({@code PT2H}); one hour if empty. Past it the run is interrupted and stops being counted as running,
+     * so the next fire may start, even if the method ignored the interrupt and is still going. It is what
+     * keeps a hung run, whose thread would otherwise report itself alive forever, from blocking every future
+     * run. Placeholders are resolved.
+     *
+     * <p><b>A run lives on one node, and is lost with it.</b> If that node dies, the run is not resumed
+     * anywhere: the next fire starts again from nothing, which for a job that takes hours or days is the next
+     * day. Henge has no durable store to resume from, on purpose. A long job has to be written as batches,
+     * recording its own progress in a database of yours and safe to repeat, so that any run, on any node,
+     * picks up where the last one stopped.
+     */
+    String maxRuntime() default "";
+
+    /**
+     * Whether a fire may start while the previous run is still going, on any node. False by default: a fire
+     * that finds the job still running is skipped, not queued, and logged with the node that is running it.
+     * A node that stops being the one running it (it was cut off from the store for longer than the claim
+     * lasts, and another node was given it) has its run interrupted when it notices.
+     */
+    boolean overlap() default false;
 }
