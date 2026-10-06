@@ -23,6 +23,12 @@ public class FeedServiceImpl implements FeedService {
         }
         LAST_CHANNEL.set(toClient);
         toClient.sendText("watching " + topic);
+        if (topic.equals("flood")) {
+            // More than any queue holds, faster than a connection sends it.
+            for (int i = 0; i < 20_000; i++) {
+                toClient.sendText("frame " + i);
+            }
+        }
         return new ChannelHandler() {
             @Override
             public void onText(String text) {

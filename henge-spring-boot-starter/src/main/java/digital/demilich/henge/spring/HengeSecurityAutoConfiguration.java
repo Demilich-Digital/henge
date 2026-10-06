@@ -37,7 +37,8 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
  * <p>Without this, Spring Security's default chain demands a user session and a CSRF token on every
  * POST, so every remote dispatch fails with 401 before it reaches {@link HengeDispatcherController}.
  * With Spring Security present this adds a dedicated {@link SecurityFilterChain} matching only
- * {@code POST {henge.server.path-prefix}/**}, ordered ahead of the application's own chains. With
+ * {@code POST {henge.server.path-prefix}/**} (and the {@code GET} that opens the channels trunk,
+ * {@code {prefix}/_trunk}), ordered ahead of the application's own chains. With
  * {@code henge.topology.enabled} it also covers {@code GET {prefix}/topology} and
  * {@code GET {prefix}/topology/ui}: the JSON is held to the same secret as dispatch, the page
  * (which holds no data, and asks for the secret itself) is always open:
@@ -98,7 +99,9 @@ public class HengeSecurityAutoConfiguration {
         }
 
         String prefix = hengeProperties.getServerPathPrefix();
-        RequestMatcher dispatch = paths.matcher(HttpMethod.POST, prefix + "/**");
+        // The trunk frontends open channels over is a websocket, so its handshake is a GET.
+        RequestMatcher dispatch = new OrRequestMatcher(paths.matcher(HttpMethod.POST, prefix + "/**"),
+                paths.matcher(HttpMethod.GET, prefix + "/_trunk"));
         RequestMatcher topologyPage = paths.matcher(HttpMethod.GET, prefix + "/topology/ui");
         RequestMatcher covered = hengeProperties.isTopologyEnabled()
                 ? new OrRequestMatcher(dispatch, paths.matcher(HttpMethod.GET, prefix + "/topology"), topologyPage)

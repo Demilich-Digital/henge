@@ -153,44 +153,23 @@ class HengeDispatcherController {
         Object[] args = new Object[method.getParameterCount()];
         try (JsonParser parser = objectMapper.createParser(requestBody)) {
             JsonToken first = parser.nextToken();
-            int provided = 0;
             if (first == JsonToken.START_ARRAY) {
-                for (JsonToken token = parser.nextToken(); token != JsonToken.END_ARRAY; token = parser.nextToken()) {
-                    if (provided < args.length) {
-                        args[provided] = readArgument(parser, method, provided);
-                    } else {
-                        parser.skipChildren();
-                    }
-                    provided++;
-                }
+                args = ServiceArguments.readArray(objectMapper, method, args.length, parser);
             } else if (first != null && first != JsonToken.VALUE_NULL) {
                 parser.skipChildren(); // reads through it, so a malformed body is still reported as invalid JSON
                 requireEndOfInput(parser);
                 throw new HengeDispatchException(HttpStatus.BAD_REQUEST,
                         "Request body must be a JSON array of arguments for " + method.getName());
+            } else if (args.length != 0) {
+                throw new HengeDispatchException(HttpStatus.BAD_REQUEST,
+                        "Expected " + args.length + " argument(s) for " + method.getName() + " but received 0");
             }
             requireEndOfInput(parser);
-            if (provided != args.length) {
-                throw new HengeDispatchException(HttpStatus.BAD_REQUEST,
-                        "Expected " + args.length + " argument(s) for " + method.getName() + " but received " + provided);
-            }
             return args;
         } catch (StreamReadException e) {
             throw new HengeDispatchException(HttpStatus.BAD_REQUEST, "Request body is not valid JSON");
         } catch (IOException e) {
             throw new HengeDispatchException(HttpStatus.BAD_REQUEST, "Failed to read request body");
-        }
-    }
-
-    private Object readArgument(JsonParser parser, Method method, int index) throws StreamReadException {
-        try {
-            return objectMapper.readValue(parser, objectMapper.getTypeFactory().constructType(method.getGenericParameterTypes()[index]));
-        } catch (StreamReadException e) {
-            throw e; // malformed JSON, not a binding problem
-        } catch (IOException | RuntimeException e) {
-            // Not just Jackson's own binding errors: a custom deserializer can throw anything, e.g.
-            // ImmutableList rejecting a null element.
-            throw new HengeDispatchException(HttpStatus.BAD_REQUEST, "Failed to bind argument " + index + " of " + method.getName());
         }
     }
 

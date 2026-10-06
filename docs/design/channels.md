@@ -5,7 +5,7 @@ thousands of them and a backend that holds almost none. The first use is **webso
 node runs the frontend, so a DNS dial of the cluster always reaches one, and the frontends are light. The
 services behind them are fewer and resource-bound, and must not carry a connection per end user.
 
-**Status.** Phase 1 (the contract and the embedded path) is built; the trunk is not. This is the design to implement; the guide chapter comes with the code.
+**Status.** Phases 1 (the contract and the embedded path) and 2 (the trunk) are built; failure handling and the example are not. This is the design to implement; the guide chapter comes with the code.
 [Decisions](#decisions) were made in discussion and are final unless something here proves unworkable;
 [open choices](#choices-left-to-the-implementer) come with a recommendation.
 
@@ -37,6 +37,7 @@ there are.
 | Backend dies or retires | **Close the channel with a status; the client reconnects** | Transparent re-attach: needs session state handed to the application. A much bigger scope. |
 | Frame payload | **Opaque text/binary.** Henge never parses a frame | Typed messages: the frontend would parse every frame and Henge would dictate the client's protocol. Can be layered on later. |
 | Placement in the store | **Not in v1.** Nothing consumes it | A per-node or per-channel key: code kept for a hypothetical consumer (push by channel id). Add it with its first consumer, as a per-node batch key, never per channel. |
+| TLS | **None in Henge.** Terminated at the edge (a reverse proxy or `tailscale serve`); the trunk is plain `ws://`, and a backend URL that is `https://` maps to `wss://` with the JVM's default trust | A truststore and TLS tests in Henge: the network inside is trusted (see the security decision), and the edge already does it. |
 | Backpressure | **Bounded queues; a full queue closes that channel**, status `1013` | Blocking the sender: one slow channel stalls the trunk. Dropping silently: the application can't tell. |
 
 The trunk is the source of truth for where a channel lives. That is what makes the rest of the design

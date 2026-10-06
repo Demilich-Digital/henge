@@ -115,7 +115,7 @@ final class ServiceBinding {
         }
 
         /** Runs a channel method: its last argument, the client's {@link Channel}, is replaced by a tracked one. */
-        private Object openChannel(Method method, Object[] args) throws Throwable {
+        ChannelHandler openChannel(Method method, Object[] args) throws Throwable {
             Object[] callArgs = args.clone();
             int last = callArgs.length - 1;
             ChannelSession[] session = new ChannelSession[1];
@@ -171,6 +171,11 @@ final class ServiceBinding {
 
     private record Remote(String serviceName, ServiceTransport transport) implements Target {
 
+        /** What opens a channel method: the transport, if it can. */
+        private ChannelOpener channelOpener() {
+            return transport instanceof ChannelOpener opener ? opener : null;
+        }
+
         @Override
         public HengeMode mode() {
             return HengeMode.INTERNAL_REST;
@@ -179,8 +184,13 @@ final class ServiceBinding {
         @Override
         public Object invoke(ServiceInvocation invocation) {
             if (HengeServiceDescriptor.isChannelMethod(invocation.method())) {
-                throw new UnsupportedOperationException("Henge service '" + serviceName + "#" + invocation.methodName()
-                        + "' opens a channel, which can't be reached over the network yet");
+                ChannelOpener opener = channelOpener();
+                if (opener == null) {
+                    throw new UnsupportedOperationException("Henge service '" + serviceName + "#" + invocation.methodName()
+                            + "' opens a channel, and the transport can't open one");
+                }
+                Object[] args = invocation.args();
+                return opener.open(invocation, (Channel) args[args.length - 1]);
             }
             try {
                 return transport.invoke(invocation);
@@ -307,6 +317,23 @@ final class ServiceBinding {
         }
         try {
             return method.invoke(local.implementation(), args);
+        } finally {
+            local.exit();
+        }
+    }
+
+    /**
+     * A channel opened by a client of this process's trunk: the implementation's channel method, given
+     * {@code toClient} as the final argument of {@code args}. The same tracked open as one made by a
+     * caller here, so retiring the service closes it too.
+     */
+    ChannelHandler openLocalChannel(Method method, Object[] args) throws Throwable {
+        if (!(target instanceof Local local) || !local.enter()) {
+            throw new IllegalStateException("Henge service '" + serviceName + "' version " + serviceVersion
+                    + " is not hosted by this process");
+        }
+        try {
+            return local.openChannel(method, args);
         } finally {
             local.exit();
         }

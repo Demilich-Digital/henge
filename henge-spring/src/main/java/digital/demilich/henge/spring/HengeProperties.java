@@ -121,6 +121,36 @@ public class HengeProperties {
         return timeout("henge.transport.read-timeout", Duration.ofSeconds(10), "no timeout");
     }
 
+    /** What bounds a channel and its trunk: see {@link #getChannelSettings}. */
+    record ChannelSettings(int queueSize, int maxFrameBytes, Duration pingInterval, Duration idleTimeout) {
+    }
+
+    /**
+     * {@code henge.channels.*}: {@code queue-size} (default 256: the frames a channel may have queued in
+     * each direction before it is closed {@code 1013}), {@code max-frame-bytes} (default 65536: the
+     * largest text or binary frame; a larger one closes the channel {@code 1009}),
+     * {@code trunk.ping-interval} (default 15s: two missed pongs drop a trunk) and
+     * {@code trunk.idle-timeout} (default 60s: how long a trunk with no channels is kept). See
+     * {@code docs/design/channels.md}.
+     */
+    ChannelSettings getChannelSettings() {
+        Integer queueSize = positiveInt(environment, "henge.channels.queue-size");
+        Integer maxFrameBytes = positiveInt(environment, "henge.channels.max-frame-bytes");
+        return new ChannelSettings(
+                queueSize == null ? 256 : queueSize,
+                maxFrameBytes == null ? 65536 : maxFrameBytes,
+                positiveTimeout("henge.channels.trunk.ping-interval", Duration.ofSeconds(15)),
+                positiveTimeout("henge.channels.trunk.idle-timeout", Duration.ofSeconds(60)));
+    }
+
+    private Duration positiveTimeout(String key, Duration defaultValue) {
+        Duration value = timeout(key, defaultValue, "nothing");
+        if (value.isZero()) {
+            throw new IllegalStateException(key + "=" + environment.getProperty(key) + " must be positive");
+        }
+        return value;
+    }
+
     /**
      * {@code henge.transport.retry.*}: {@code max-attempts} (default 3, the first call included; 1
      * turns retries off), {@code backoff} (default 50ms, a duration as for the timeouts; 0 retries at

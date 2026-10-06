@@ -29,6 +29,10 @@
       "description": "The topology endpoint and page this process can serve."
     },
     {
+      "name": "henge.channels",
+      "description": "Channels: long-lived connections to a client, multiplexed over one trunk per backend node."
+    },
+    {
       "name": "henge.transport",
       "description": "The internal-rest client and its shared secret."
     }
@@ -130,6 +134,30 @@
       "type": "java.time.Duration",
       "defaultValue": "10s",
       "description": "Read timeout of internal-rest calls. A bare number is milliseconds; 0 means no timeout."
+    },
+    {
+      "name": "henge.channels.queue-size",
+      "type": "java.lang.Integer",
+      "defaultValue": 256,
+      "description": "Frames a channel may have queued, in each direction, before the channel is closed with 1013."
+    },
+    {
+      "name": "henge.channels.max-frame-bytes",
+      "type": "java.lang.Integer",
+      "defaultValue": 65536,
+      "description": "The largest text or binary frame a channel carries. A larger one closes the channel with 1009."
+    },
+    {
+      "name": "henge.channels.trunk.ping-interval",
+      "type": "java.time.Duration",
+      "defaultValue": "15s",
+      "description": "How often a trunk to a backend is pinged; two missed pongs drop it and close its channels."
+    },
+    {
+      "name": "henge.channels.trunk.idle-timeout",
+      "type": "java.time.Duration",
+      "defaultValue": "60s",
+      "description": "How long a trunk with no channels is kept before it is closed."
     }
   ]
 }

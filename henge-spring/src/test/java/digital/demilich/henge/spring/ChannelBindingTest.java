@@ -146,10 +146,13 @@ class ChannelBindingTest {
     }
 
     @Test
-    void aChannelOpenedAfterRetirementIsRefusedRatherThanSentOverTheNetwork() throws Exception {
+    void aChannelOpenedAfterRetirementIsLookedForElsewhereLikeACall() throws Exception {
         context.getBean(HengeServiceRegistry.class).retire("feed-service", 1, Duration.ZERO, Duration.ofSeconds(5));
 
-        assertThatThrownBy(() -> feed.watch("a", new RecordingChannel())).isInstanceOf(UnsupportedOperationException.class);
+        // The service is reached remotely now, and nobody else here advertises it.
+        assertThatThrownBy(() -> feed.watch("a", new RecordingChannel()))
+                .isInstanceOf(digital.demilich.henge.core.RemoteServiceException.class)
+                .hasMessageContaining("no process advertises it");
     }
 
     @Test

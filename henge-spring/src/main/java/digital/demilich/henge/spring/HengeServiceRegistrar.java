@@ -80,6 +80,7 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
     private static final String ADVERTISER_BEAN_NAME = "hengeServiceAdvertiser";
     private static final String TOPOLOGY_CATALOG_BEAN_NAME = "hengeTopologyCatalog";
     static final String LEASE_KEEPER_BEAN_NAME = "hengeLeaseKeeper";
+    static final String TRUNK_BEAN_NAME = "hengeTrunkConfiguration";
     private static final String IMPORTED_BY_ATTRIBUTE = HengeServiceRegistrar.class.getName() + ".importedBy";
 
     private Environment environment;
@@ -300,6 +301,14 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
                 .getBeanDefinition();
         registryDefinition.setAttribute(IMPORTED_BY_ATTRIBUTE, importingClassMetadata.getClassName());
         registry.registerBeanDefinition(REGISTRY_BEAN_NAME, registryDefinition);
+
+        // The trunk frontends open channels over, for a node that can host a channel method.
+        boolean hostsChannels = embedded.stream()
+                .anyMatch(descriptor -> descriptor.methods().values().stream().anyMatch(HengeServiceDescriptor::isChannelMethod));
+        if (hostsChannels && ClassUtils.isPresent("org.springframework.web.socket.config.annotation.WebSocketConfigurer",
+                getClass().getClassLoader())) {
+            registry.registerBeanDefinition(TRUNK_BEAN_NAME, new RootBeanDefinition(HengeTrunkConfiguration.class));
+        }
     }
 
     /**

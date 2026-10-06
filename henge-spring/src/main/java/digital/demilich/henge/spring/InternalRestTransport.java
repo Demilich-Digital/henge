@@ -2,6 +2,8 @@ package digital.demilich.henge.spring;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import digital.demilich.henge.core.Channel;
+import digital.demilich.henge.core.ChannelHandler;
 import digital.demilich.henge.core.RemoteServiceException;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
@@ -31,7 +33,7 @@ import org.springframework.web.client.RestClientResponseException;
  * {@code POST {baseUrl}{pathPrefix}/{service}/{version}/{method}} with a JSON array of
  * arguments, matching {@link HengeDispatcherController} on the receiving end.
  */
-class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
+class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoCloseable, BeanClassLoaderAware {
 
     private static final Log log = LogFactory.getLog(InternalRestTransport.class);
 
@@ -52,6 +54,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
     private final AdvertisedEndpoints advertisedEndpoints;
     private final SystemMetrics metrics;
     private final RetryPolicy retryPolicy;
+    private final TrunkPool trunks;
 
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, HengeProperties properties) {
         this(restClient, objectMapper, properties, null);
@@ -74,6 +77,14 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         this.retryPolicy = properties.getRetryPolicy(); // validated at startup, not on the first failure
         requireKnownPlaceholders(properties.getRemoteUrlTemplate());
         properties.getServerPathPrefix(); // validated at startup, not on the first call
+        this.trunks = new TrunkPool(properties.getChannelSettings(), properties.getConnectTimeout(),
+                properties.getTransportSecret(), properties.getServerPathPrefix());
+    }
+
+    /** Closes the trunks, and so the channels on them. */
+    @Override
+    public void close() {
+        trunks.close();
     }
 
     /**
@@ -127,7 +138,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
 
     @Override
     public Object invoke(ServiceInvocation invocation) {
-        Endpoint endpoint = resolveEndpoint(invocation);
+        Endpoint endpoint = resolveEndpoint(invocation.serviceName(), invocation.serviceVersion());
         byte[] body = writeArguments(invocation);
 
         byte[] responseBody;
@@ -148,7 +159,7 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
                 log.debug("Retrying " + invocation.serviceName() + "#" + invocation.methodName() + " after attempt " + attempt
                         + " (" + notDelivered.kind + " at " + endpoint.baseUrl() + ")");
                 pause(retryPolicy.backoff(), notDelivered.failure);
-                endpoint = resolveEndpoint(invocation);
+                endpoint = resolveEndpoint(invocation.serviceName(), invocation.serviceVersion());
             }
         }
 
@@ -163,6 +174,35 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
         } catch (Exception e) {
             throw new RemoteServiceException("Failed to deserialize response from Henge service '"
                     + invocation.serviceName() + "#" + invocation.methodName() + "'", e);
+        }
+    }
+
+    /**
+     * Opens a channel on the trunk to a backend that hosts the service, found the way a call's is: its
+     * configured url, else the template, else the advertisements. A backend that can't be reached is
+     * marked failed, as for a call, and one more is tried if the service was found among the
+     * advertisements. The caller gets the handler at once: a backend that then refuses the channel says
+     * so by closing it, which reaches {@code toClient}.
+     */
+    @Override
+    public ChannelHandler open(ServiceInvocation invocation, Channel toClient) {
+        String service = invocation.serviceName();
+        int version = invocation.serviceVersion();
+        byte[] payload = TrunkOpen.write(objectMapper, service, version, invocation.methodName(), invocation.method(), invocation.args());
+        Endpoint endpoint = resolveEndpoint(service, version);
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return trunks.open(endpoint.baseUrl(), payload, toClient);
+            } catch (TrunkPool.TrunkUnavailable e) {
+                if (endpoint.advertised()) {
+                    advertisedEndpoints.failed(service, version, endpoint.baseUrl());
+                    metrics.endpointFailed(service, version);
+                }
+                if (attempt >= 2 || !endpoint.advertised()) {
+                    throw e;
+                }
+                endpoint = resolveEndpoint(service, version);
+            }
         }
     }
 
@@ -198,21 +238,21 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
     }
 
     /** An explicit url, else the template, else a process that advertises the service. */
-    private Endpoint resolveEndpoint(ServiceInvocation invocation) {
+    private Endpoint resolveEndpoint(String serviceName, int serviceVersion) {
         boolean advertised = false;
-        String url = properties.service(invocation.serviceName()).resolveUrl(invocation.serviceVersion());
+        String url = properties.service(serviceName).resolveUrl(serviceVersion);
         if (url == null || url.isBlank()) {
-            url = resolveFromTemplate(invocation.serviceName(), invocation.serviceVersion());
+            url = resolveFromTemplate(serviceName, serviceVersion);
         }
         if ((url == null || url.isBlank()) && advertisedEndpoints != null) {
-            url = advertisedEndpoints.next(invocation.serviceName(), invocation.serviceVersion());
+            url = advertisedEndpoints.next(serviceName, serviceVersion);
             advertised = url != null;
         }
         if (url == null || url.isBlank()) {
-            throw new RemoteServiceException("No url configured for Henge service '" + invocation.serviceName()
-                    + "' version '" + invocation.serviceVersion() + "', and no process advertises it (set henge.services."
-                    + invocation.serviceName() + ".url, henge.services." + invocation.serviceName() + ".versions."
-                    + invocation.serviceVersion() + ".url for a per-version override, henge.remote-url-template for a "
+            throw new RemoteServiceException("No url configured for Henge service '" + serviceName
+                    + "' version '" + serviceVersion + "', and no process advertises it (set henge.services."
+                    + serviceName + ".url, henge.services." + serviceName + ".versions."
+                    + serviceVersion + ".url for a per-version override, henge.remote-url-template for a "
                     + "shared convention, or run a process that hosts it with henge.advertise.url set)");
         }
         // "http://audit:8080/" is a natural way to write a base URL; without this it would produce
@@ -306,15 +346,9 @@ class InternalRestTransport implements ServiceTransport, BeanClassLoaderAware {
      * never touch them.
      */
     private byte[] writeArguments(ServiceInvocation invocation) {
-        Type[] parameterTypes = invocation.method().getGenericParameterTypes();
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (JsonGenerator generator = objectMapper.createGenerator(out)) {
-            generator.writeStartArray();
-            for (int i = 0; i < parameterTypes.length; i++) {
-                objectMapper.writerFor(objectMapper.getTypeFactory().constructType(parameterTypes[i]))
-                        .writeValue(generator, invocation.args()[i]);
-            }
-            generator.writeEndArray();
+            ServiceArguments.write(objectMapper, invocation.method(), invocation.args(), invocation.args().length, generator);
         } catch (IOException e) {
             throw new RemoteServiceException("Failed to serialize arguments for Henge service '"
                     + invocation.serviceName() + "#" + invocation.methodName() + "'", e);
