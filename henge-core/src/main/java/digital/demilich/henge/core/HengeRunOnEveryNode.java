@@ -15,7 +15,8 @@ import java.lang.annotation.Target;
  * <p>By default a process hosts every service, and {@code henge.serve} narrows that, so a service that has to
  * be everywhere is one deployment setting away from not being. Henge refuses to start a process that would
  * reach it remotely: one whose {@code henge.serve} leaves it out, one configured {@code internal-rest}, and
- * one whose implementation waits on a {@link RequiresLease}, which a full lease would refuse. Add the service
+ * one whose implementation waits on a {@link RequiresLease}, which a full lease would refuse. Such a service takes no leases: what needs one belongs in another
+ * service, which it calls. Add the service
  * to {@code henge.serve} (or drop the annotation) to resolve it.
  *
  * <p>It is a statement about placement and nothing more: it doesn't make the service stateless, or its

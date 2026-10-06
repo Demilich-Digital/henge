@@ -346,8 +346,9 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
         }
         if (implClass != null && declaresLeases(implClass)) {
             throw new IllegalStateException(what + "its implementation " + implClass.getSimpleName()
-                    + " needs a @RequiresLease, and a process refused the lease would reach it remotely. Remove the "
-                    + "lease from it, or remove @HengeRunOnEveryNode.");
+                    + " needs a @RequiresLease, and a process refused the lease would reach it remotely. A service on "
+                    + "every node takes no leases: move what needs the lease into another @HengeService, which Henge "
+                    + "can place on the nodes that are granted it, and call that from here.");
         }
     }
 

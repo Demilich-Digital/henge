@@ -62,7 +62,7 @@ public interface GatewayService { ... }
 
 Henge then **refuses to start** a process that wouldn't host every version of it: one whose `henge.serve`
 leaves it out, one that configures it `internal-rest`, or one whose implementation needs a `@RequiresLease`,
-since a refused lease means it is reached remotely. List it in `henge.serve` (`henge.serve=gateway-service,
+since a refused lease means it is reached remotely. A service on every node takes no leases: put what needs one in another service, which is placed on the nodes that are granted it, and call that. List it in `henge.serve` (`henge.serve=gateway-service,
 inventory-service`), or drop the annotation if it needn't be everywhere. The annotation is about placement
 only: it doesn't make the service stateless, or its instances aware of each other.
 
