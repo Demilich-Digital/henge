@@ -48,6 +48,24 @@ Route public traffic to the processes that can serve it, or give every process e
 `henge.serve` takes `name` or `name@version`, comma-separated or as a YAML list, so a process can host
 version 2 of a service and not version 1. A name that matches no service fails startup.
 
+## A service that must be everywhere
+
+Some services only make sense on every process: a frontend that holds clients' connections, a local load
+balancer. By default a process hosts everything and `henge.serve` narrows that, so such a service is one
+deployment flag from being reached over the network, which defeats it. Say so on the interface:
+
+```java
+@RunOnEveryNode
+@HengeService
+public interface GatewayService { ... }
+```
+
+Henge then **refuses to start** a process that wouldn't host every version of it: one whose `henge.serve`
+leaves it out, one that configures it `internal-rest`, or one whose implementation needs a `@RequiresLease`,
+since a refused lease means it is reached remotely. List it in `henge.serve` (`henge.serve=gateway-service,
+inventory-service`), or drop the annotation if it needn't be everywhere. The annotation is about placement
+only: it doesn't make the service stateless, or its instances aware of each other.
+
 ## A split needs a store
 
 A process that reaches any service over the network is one of several, and **refuses to start unless a store

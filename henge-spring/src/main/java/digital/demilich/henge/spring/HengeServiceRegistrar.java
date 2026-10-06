@@ -8,6 +8,7 @@ import digital.demilich.henge.core.RateLimited;
 import digital.demilich.henge.core.RateLimiter;
 import digital.demilich.henge.core.RequiresLease;
 import digital.demilich.henge.core.ResourceProvider;
+import digital.demilich.henge.core.RunOnEveryNode;
 import digital.demilich.henge.core.ServiceNames;
 import digital.demilich.henge.core.ServiceVersion;
 import java.lang.reflect.Constructor;
@@ -175,6 +176,9 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
                 }
 
                 Class<?> implClass = implsByVersion.get(version);
+                if (serviceInterface.isAnnotationPresent(RunOnEveryNode.class)) {
+                    refuseRemoteRunOnEveryNode(serviceInterface, qualifiedName, mode, implClass, serveSpec);
+                }
                 // Derived from the resolved service name (not the interface's raw simple name) so
                 // that two interfaces with the same simple name in different packages -- already
                 // rejected above unless disambiguated via @HengeService(name = ...) -- get
@@ -327,6 +331,23 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
         if (hostsChannels && ClassUtils.isPresent("org.springframework.web.socket.config.annotation.WebSocketConfigurer",
                 getClass().getClassLoader())) {
             registry.registerBeanDefinition(TRUNK_BEAN_NAME, new RootBeanDefinition(HengeTrunkConfiguration.class));
+        }
+    }
+
+    /** A {@link RunOnEveryNode} service reached over the network, or hosted only if a lease is granted, isn't on every node. */
+    private static void refuseRemoteRunOnEveryNode(Class<?> serviceInterface, String qualifiedName, HengeMode mode,
+            Class<?> implClass, ServeSpec serveSpec) {
+        String what = serviceInterface.getSimpleName() + " is @RunOnEveryNode, so every process must host "
+                + qualifiedName + ", but ";
+        if (mode != HengeMode.EMBEDDED) {
+            throw new IllegalStateException(what + "this process would reach it over the network: henge.serve is set "
+                    + "and doesn't list it, or henge.services configures it internal-rest. List it in henge.serve and "
+                    + "drop the internal-rest mode, or remove @RunOnEveryNode if it needn't be everywhere.");
+        }
+        if (implClass != null && declaresLeases(implClass)) {
+            throw new IllegalStateException(what + "its implementation " + implClass.getSimpleName()
+                    + " needs a @RequiresLease, and a process refused the lease would reach it remotely. Remove the "
+                    + "lease from it, or remove @RunOnEveryNode.");
         }
     }
 
