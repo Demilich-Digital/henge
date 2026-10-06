@@ -1,9 +1,9 @@
 package digital.demilich.henge.spring.everynodefixture.plain;
 
 import digital.demilich.henge.core.HengeService;
-import digital.demilich.henge.core.RunOnEveryNode;
+import digital.demilich.henge.core.HengeRunOnEveryNode;
 
-@RunOnEveryNode
+@HengeRunOnEveryNode
 @HengeService
 public interface GatewayService {
 

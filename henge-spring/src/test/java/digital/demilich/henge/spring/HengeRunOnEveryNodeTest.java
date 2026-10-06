@@ -10,7 +10,7 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.MapPropertySource;
 
-class RunOnEveryNodeTest {
+class HengeRunOnEveryNodeTest {
 
     @Configuration
     @EnableHengeServices(basePackages = {"digital.demilich.henge.spring.everynodefixture.plain",
@@ -50,7 +50,7 @@ class RunOnEveryNodeTest {
     void aServeThatLeavesItOutFailsStartup() {
         try (var ctx = context(Both.class, Map.of("henge.serve", "audit-service"))) {
             assertThatThrownBy(ctx::refresh)
-                    .hasStackTraceContaining("GatewayService is @RunOnEveryNode")
+                    .hasStackTraceContaining("GatewayService is @HengeRunOnEveryNode")
                     .hasStackTraceContaining("gateway-service@1")
                     .hasStackTraceContaining("henge.serve");
         }
@@ -60,7 +60,7 @@ class RunOnEveryNodeTest {
     void anExplicitInternalRestModeFailsStartup() {
         try (var ctx = context(Both.class, Map.of("henge.services.gateway-service.mode", "internal-rest",
                 "henge.services.gateway-service.url", "http://elsewhere"))) {
-            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("GatewayService is @RunOnEveryNode");
+            assertThatThrownBy(ctx::refresh).hasStackTraceContaining("GatewayService is @HengeRunOnEveryNode");
         }
     }
 
@@ -69,7 +69,7 @@ class RunOnEveryNodeTest {
         try (var ctx = context(Leased.class, Map.of("henge.leases.gateway-db.capacity", 4,
                 "henge.leases.gateway-db.amount", 2))) {
             assertThatThrownBy(ctx::refresh)
-                    .hasStackTraceContaining("PooledGatewayService is @RunOnEveryNode")
+                    .hasStackTraceContaining("PooledGatewayService is @HengeRunOnEveryNode")
                     .hasStackTraceContaining("@RequiresLease");
         }
     }

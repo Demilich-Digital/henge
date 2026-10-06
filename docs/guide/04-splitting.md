@@ -55,7 +55,7 @@ balancer. By default a process hosts everything and `henge.serve` narrows that, 
 deployment flag from being reached over the network, which defeats it. Say so on the interface:
 
 ```java
-@RunOnEveryNode
+@HengeRunOnEveryNode
 @HengeService
 public interface GatewayService { ... }
 ```
