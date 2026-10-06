@@ -29,7 +29,7 @@ import org.springframework.core.env.Environment;
  *       where a call would go ({@link Route}).</li>
  *   <li>The dependency graph of this process: which beans (services or the application's own) inject
  *       which service version, read from the bean factory, so it is what was actually wired.</li>
- *   <li>The datastore as it is now, read fresh rather than from the routing cache: who advertises each
+ *   <li>The datastore as it is now, read fresh rather than from the routing table: who advertises each
  *       service version, and who holds each lease.</li>
  * </ul>
  *

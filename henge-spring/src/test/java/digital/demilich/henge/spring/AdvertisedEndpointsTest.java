@@ -208,7 +208,7 @@ class AdvertisedEndpointsTest {
         advertise(other, "http://b:8080");
         advance(Duration.ofSeconds(9));
         for (int i = 0; i < 4; i++) {
-            assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080"); // the cache, still fresh
+            assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080"); // the routing table, still fresh
         }
 
         advance(Duration.ofSeconds(2));
@@ -249,7 +249,7 @@ class AdvertisedEndpointsTest {
     }
 
     @Test
-    void aWithdrawnNodeDisappearsOnceTheCacheIsStale() {
+    void aWithdrawnNodeDisappearsOnceTheRoutingTableIsStale() {
         advertise(inner, "http://a:8080");
         assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");
 
@@ -287,7 +287,7 @@ class AdvertisedEndpointsTest {
     }
 
     @Test
-    void aDatastoreThatCantBeReadKeepsServingWhatWasCachedAndRetriesNextCall() {
+    void aDatastoreThatCantBeReadKeepsServingTheLastRoutesReadAndRetriesNextCall() {
         advertise(inner, "http://a:8080");
         assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");
 
@@ -305,7 +305,7 @@ class AdvertisedEndpointsTest {
     }
 
     @Test
-    void aDatastoreThatCantBeReadAndHasNothingCachedFailsTheCall() {
+    void aDatastoreThatCantBeReadAndHasNoRoutesFailsTheCall() {
         failing = true;
 
         assertThatThrownBy(() -> endpoints.next("echo-service", 1)).hasMessage("datastore is down");

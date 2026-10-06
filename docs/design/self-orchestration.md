@@ -153,9 +153,9 @@ self-organization.
 - A node advertises once fully started (lease decisions made, web server up), as the last lifecycle
   component to start, and withdraws first on a graceful stop, before the server stops answering. It
   renews every 10 seconds, a third of the 30-second TTL.
-- Callers **cache** the member set per service version and refresh it at most every 10 seconds, so
+- Callers keep a **routing table**: the member set per service version, refreshed at most every 10 seconds, so
   reads are periodic, never per call. Load on a key is (hosts × heartbeat rate) + (callers × refresh
-  rate). Calls rotate over the cached set.
+  rate). Calls rotate over the routing table's entry.
 - **Last known good on wipe**: if a read comes back empty *and the epoch changed*, the caller keeps its
   previous set for one more interval. An empty read with an unchanged epoch is believed.
 - **Failover**: a call that provably never ran (no connection, or a `404`) is retried on the next
@@ -171,9 +171,9 @@ flows to the others. Purely local, no coordination. Rules that keep it from back
   or time spent queued. A node waiting on a saturated dependency is overloaded with idle CPU, and
   withdrawing doesn't help there, so the signal should distinguish "I'm the bottleneck" from "my
   dependency is" (see [Risks](#risks), metastable feedback).
-- **Withdrawal is slow; rejection is fast.** Callers' cached sets lag by one refresh interval, so while
+- **Withdrawal is slow; rejection is fast.** Callers' routing tables lag by one refresh interval, so while
   withdrawn the dispatcher answers `503` with `Retry-After`, and a caller receiving that drops the
-  endpoint from its local cache immediately.
+  endpoint from its routing table immediately.
 - **Never withdraw as one of the last hosts.** If every host is overloaded and all withdraw, the service
   has zero hosts and an overload becomes an outage. A node withdraws only if the current advertisement
   set leaves enough others (the same "only leave if others have headroom" gate as eviction); otherwise it

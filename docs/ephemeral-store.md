@@ -5,6 +5,12 @@ Henge cluster can reach, and that Henge uses for everything the cluster knows ab
 its contract: what Henge needs from a store, and so what kinds of system can be one. To turn one on, see
 [chapter 5 of the guide](guide/05-the-ephemeral-store.md).
 
+It is **not a cache**: Henge is not a system with a store bolted on to make it faster. The store is on the
+critical path, and a process that can't reach it can't find its peers or claim a lease. What it holds is
+cheap to lose because every process rebuilds it on a heartbeat, which is a different thing from being
+optional. A process's in-memory copy of what it last read (its *routing table*) is the only cache-like
+part, and it is deliberately kept serving through an outage.
+
 ## The model: convergent distributed state
 
 Every key has many writers, one per process that hosts a service, holds a lease, or calls a rate limit.

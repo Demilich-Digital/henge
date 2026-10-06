@@ -18,7 +18,11 @@ make it safe to depend on:
 - **It converges.** Every process writes its own entries and never overwrites another's, so copies that
   diverge merge back into one answer without anyone coordinating. Nothing needs consensus.
 
-It is **not** a place for your application's data. Orders, stock and customers go in a database. The
+It is **not a cache**, and not optional: processes find each other and claim leases through it, so
+it is on the critical path. It is cheap to lose and quick to rebuild, which is a different thing from
+being something Henge can run without.
+
+It is also **not** a place for your application's data. Orders, stock and customers go in a database. The
 store holds only state that is cheap to lose and quick to rebuild, which is what lets it be fast, and lets
 you run it without the care a database needs. The contract, and what kinds of system can implement it, is
 in [The ephemeral store](../ephemeral-store.md).
