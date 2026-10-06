@@ -32,6 +32,7 @@ public class MicrometerSystemMetrics implements SystemMetrics {
     private final MeterRegistry registry;
     private final Map<String, AtomicInteger> held = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> advertisers = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> subscribers = new ConcurrentHashMap<>();
 
     public MicrometerSystemMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -96,5 +97,19 @@ public class MicrometerSystemMetrics implements SystemMetrics {
     @Override
     public void rateLimitAcquired(String limit, boolean granted) {
         registry.counter("henge.rate-limit.acquisitions", "limit", limit, "outcome", granted ? "granted" : "refused").increment();
+    }
+
+    @Override
+    public void rateLimitSubscribers(String limit, int nodes) {
+        subscribers.computeIfAbsent(limit, name -> {
+            AtomicInteger seen = new AtomicInteger();
+            Gauge.builder("henge.rate-limit.subscribers", seen, AtomicInteger::get).tag("limit", limit).register(registry);
+            return seen;
+        }).set(nodes);
+    }
+
+    @Override
+    public void rateLimitDegraded(String limit) {
+        registry.counter("henge.rate-limit.degraded", "limit", limit).increment();
     }
 }

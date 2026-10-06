@@ -62,6 +62,8 @@ henge.call → http.client.requests (one per attempt) → the host's request →
 | `henge.transport.giveups` | counter | `service`, `version`, `reason` | Such a call, abandoned: the attempts ran out, or retries are off. |
 | `henge.transport.endpoint.failures` | counter | `service`, `version` | An advertised host failed a call, so it isn't offered again for a while. |
 | `henge.rate-limit.acquisitions` | counter | `limit`, `outcome` (`granted`, `refused`) | A rate limit's answers, for its whole bucket and its subjects' together; the subject is never a tag. |
+| `henge.rate-limit.subscribers` | gauge | `limit` | How many nodes draw on a rate limit, as of this node's last heartbeat: what this node's share is a fraction of while the store is away. |
+| `henge.rate-limit.degraded` | counter | `limit` | Answers decided from this node's own share of the limit, because the store couldn't be reached. |
 | `henge.store.operations` | timer | `purpose` (`lease`, `advertisement`, `routing`, `rate-limit`), `operation` (`put`, `remove`, `read`, `claim`, `tryAcquire`), `outcome` (`success`, `error`) | The store under all of the above: its latency and its errors, by who asked. A refused `claim` or `tryAcquire` is a `success`. |
 
 A call that is retried is one `henge.call` observation and as many `henge.transport.retries` as it

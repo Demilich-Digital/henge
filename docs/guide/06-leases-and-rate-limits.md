@@ -109,6 +109,20 @@ A refusal throws nothing. If it should reach a remote caller as an exception, th
 `@ErrorStatus` (`429` reads naturally); it won't be retried. Every process that configures a limit draws
 on the same bucket, so every process must configure it the same way.
 
+### When the store is away
+
+A rate limit that can't reach the store degrades instead of failing. Every process that builds a limiter
+registers itself under the limiter's key and counts the others on each heartbeat, so it always knows
+about how many nodes, *N*, share the limit. Without the store it draws on a bucket of its own in
+memory, sized to *1/N* of the limit: the sustained rate spread over *N* times the period, and a burst
+of *1/N*, never less than one. The nodes' shares add up to the limit, so the cluster as a whole still
+holds to it, only coarser. When the store answers again the limiter is back on the shared bucket at
+once. `henge.rate-limit.degraded` counts the answers given this way.
+
+A process that has never reached the store doesn't start, so *N* is always known. Shares are soft, like
+everything here: a node that joins during the outage can't count itself, and a limit of fewer permits
+than nodes can't be divided below one permit each, so either can let a little too much through.
+
 ## The cluster, deciding
 
 Two identical processes, each configured to host everything, sharing Redis, with room in the database

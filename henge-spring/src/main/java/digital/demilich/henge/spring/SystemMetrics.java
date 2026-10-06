@@ -71,4 +71,12 @@ interface SystemMetrics {
     /** The rate limiter {@code limit} granted or refused permits, for its whole bucket or a subject's. */
     default void rateLimitAcquired(String limit, boolean granted) {
     }
+
+    /** {@code nodes} nodes draw on rate limiter {@code limit}, as of this node's last heartbeat: what a node's share is a fraction of while the datastore is away. */
+    default void rateLimitSubscribers(String limit, int nodes) {
+    }
+
+    /** A call to rate limiter {@code limit} was decided from this node's own share, because the datastore couldn't be reached. */
+    default void rateLimitDegraded(String limit) {
+    }
 }

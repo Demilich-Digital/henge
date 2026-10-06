@@ -15,7 +15,8 @@ import java.util.Objects;
  */
 public record RateLimit(int capacity, int permits, Duration period) {
 
-    private static final Duration LONGEST_PERIOD = Duration.ofHours(1);
+    /** The longest a period may be; also what a cluster's share of one is capped at. */
+    public static final Duration LONGEST_PERIOD = Duration.ofHours(1);
 
     public RateLimit {
         Objects.requireNonNull(period, "period");

@@ -258,8 +258,14 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
             registry.registerBeanDefinition(HengeLeaseKeeper.providerBeanName(lease), provider);
         }
 
+        if (!rateLimits.isEmpty()) {
+            // The datastore (constructor argument 0) is autowired; only the TTL is given.
+            BeanDefinition subscriptions = BeanDefinitionBuilder.genericBeanDefinition(RateLimitSubscriptions.class).getBeanDefinition();
+            subscriptions.getConstructorArgumentValues().addIndexedArgumentValue(1, RateLimitSubscriptions.DEFAULT_TTL);
+            registry.registerBeanDefinition("hengeRateLimitSubscriptions", subscriptions);
+        }
         rateLimits.forEach((name, limit) -> {
-            // The datastore and the metrics (arguments 2 and 3) are autowired; the qualifier is what
+            // The datastore, the subscriptions and the metrics (arguments 2 to 4) are autowired; the qualifier is what
             // @RateLimited(name) at an injection point matches.
             RootBeanDefinition limiter = new RootBeanDefinition(RateLimiters.class);
             limiter.setFactoryMethodName("create");
