@@ -41,6 +41,19 @@ whoever advertises it on the store → else the call fails, saying so.
 | `henge.server.path-prefix` | `/_henge` | Path prefix of the dispatch endpoint, on both the serving and the calling side. Must start with `/` and not end with one. |
 | `henge.topology.enabled` | `false` | Serve the topology as JSON at `<path-prefix>/topology` and as a page at `<path-prefix>/topology/ui`. Needs `henge.server.enabled` in Boot. |
 
+## Channels
+
+How [channels](../guide/08-channels.md) are bounded. The trunk they travel over is served at
+`<henge.server.path-prefix>/_trunk`, with `henge.transport.secret` and `henge.transport.connect-timeout`
+as for calls.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `henge.channels.queue-size` | `256` | Frames a channel may have queued in each direction before it is closed `1013`. A positive integer. |
+| `henge.channels.max-frame-bytes` | `65536` | The largest text or binary frame, and open. A larger frame closes the channel `1009`. A positive integer. |
+| `henge.channels.trunk.ping-interval` | `15s` | How often a trunk is pinged; two missed pongs drop it, closing its channels `1011`. Same duration format as the timeouts; positive. |
+| `henge.channels.trunk.idle-timeout` | `60s` | How long a trunk with no channels is kept. Same format; positive. |
+
 ## The ephemeral store
 
 | Property | Default | Meaning |

@@ -64,6 +64,9 @@ henge.call → http.client.requests (one per attempt) → the host's request →
 | `henge.rate-limit.acquisitions` | counter | `limit`, `outcome` (`granted`, `refused`) | A rate limit's answers, for its whole bucket and its subjects' together; the subject is never a tag. |
 | `henge.rate-limit.subscribers` | gauge | `limit` | How many nodes draw on a rate limit, as of this node's last heartbeat: what this node's share is a fraction of while the store is away. |
 | `henge.rate-limit.degraded` | counter | `limit` | Answers decided from this node's own share of the limit, because the store couldn't be reached. |
+| `henge.channels.open` | gauge | `service`, `version`, `side` (`frontend`, `backend`) | Channels open on this process: the frontend counts the clients it holds a channel for, the backend those it hosts. Only channels carried over a trunk: one in a monolith has no trunk to count. |
+| `henge.channels.closed` | counter | `service`, `version`, `side`, `status` | Channels that closed, by the WebSocket close code: `1000` normal, `1011` lost, `1012` retired, `1013` overloaded, `4404` refused. |
+| `henge.trunks.open` | gauge | `side` | Trunks on this process: connections to backends (`frontend`), or from frontends (`backend`). Not tagged by backend, which would be unbounded. |
 | `henge.store.operations` | timer | `purpose` (`lease`, `advertisement`, `routing`, `rate-limit`), `operation` (`put`, `remove`, `read`, `claim`, `tryAcquire`), `outcome` (`success`, `error`) | The store under all of the above: its latency and its errors, by who asked. A refused `claim` or `tryAcquire` is a `success`. |
 
 A call that is retried is one `henge.call` observation and as many `henge.transport.retries` as it

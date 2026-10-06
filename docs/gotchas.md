@@ -38,6 +38,17 @@ With replicas coming and going, knowing who is where becomes a problem of its ow
 | **An address book that rots.** Configured addresses outlive the processes they name. | Processes advertise themselves in the ephemeral store, and advertisements expire unless renewed. [Advertisements](guide/05-the-ephemeral-store.md#advertisements) |
 | **Calls to the dead.** A process that crashed keeps receiving calls until someone notices. | A call that couldn't connect fails over to the next advertised host; a crashed process drops out within its time to live. [Failover](guide/05-the-ephemeral-store.md#failover) |
 
+## Holding connections open
+
+Long-lived connections turn the load around: the thing holding the connection is no longer the thing
+doing the work.
+
+| Trap | What Henge does |
+|---|---|
+| **A connection per user at the service.** A websocket from each browser straight to the service makes the resource-bound tier carry the most connections. | A frontend holds the clients and opens one trunk per backend node; the service sees one connection per frontend. [Channels](guide/08-channels.md) |
+| **A deploy that strands connections.** Rolling a backend cuts every connection it holds, with no word to the client. | A retiring service closes its channels with `1012`, and a lost trunk closes them with `1011`, so a client knows to reconnect. Nothing is silently re-opened. [When a channel ends](guide/08-channels.md#when-a-channel-ends) |
+| **One slow client stalls the rest.** A queue shared by every channel on a connection makes the slowest one everyone's pace. | Every channel has its own bounded queues, and one that overflows is closed `1013` alone. |
+
 ## Sharing what doesn't scale
 
 Some resources don't grow with the cluster, and every limit enforced per process is wrong by a factor of

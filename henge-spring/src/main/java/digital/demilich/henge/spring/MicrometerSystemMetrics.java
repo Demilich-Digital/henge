@@ -22,6 +22,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <tr><td>{@code henge.transport.giveups}</td><td>counter: {@code service}, {@code version}, {@code reason}</td></tr>
  *   <tr><td>{@code henge.transport.endpoint.failures}</td><td>counter: {@code service}, {@code version}</td></tr>
  *   <tr><td>{@code henge.rate-limit.acquisitions}</td><td>counter: {@code limit}, {@code outcome} ({@code granted} or {@code refused})</td></tr>
+ *   <tr><td>{@code henge.channels.open}</td><td>gauge: {@code service}, {@code version}, {@code side} ({@code frontend} or {@code backend})</td></tr>
+ *   <tr><td>{@code henge.channels.closed}</td><td>counter: {@code service}, {@code version}, {@code side}, {@code status} (the websocket close code)</td></tr>
+ *   <tr><td>{@code henge.trunks.open}</td><td>gauge: {@code side}; one trunk per frontend-backend pair, so not tagged by backend, which is unbounded</td></tr>
  *   <tr><td>{@value MeteredDatastore#NAME}</td><td>timer: {@code purpose}, {@code operation}, {@code outcome}</td></tr>
  * </table>
  *
@@ -33,6 +36,8 @@ public class MicrometerSystemMetrics implements SystemMetrics {
     private final Map<String, AtomicInteger> held = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> advertisers = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> subscribers = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> channels = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> trunks = new ConcurrentHashMap<>();
 
     public MicrometerSystemMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -111,5 +116,44 @@ public class MicrometerSystemMetrics implements SystemMetrics {
     @Override
     public void rateLimitDegraded(String limit) {
         registry.counter("henge.rate-limit.degraded", "limit", limit).increment();
+    }
+
+    @Override
+    public void channelOpened(String service, int version, String side) {
+        channelsOpen(service, version, side).incrementAndGet();
+    }
+
+    @Override
+    public void channelClosed(String service, int version, String side, int status) {
+        channelsOpen(service, version, side).decrementAndGet();
+        registry.counter("henge.channels.closed", "service", service, "version", String.valueOf(version), "side", side,
+                "status", String.valueOf(status)).increment();
+    }
+
+    private AtomicInteger channelsOpen(String service, int version, String side) {
+        return channels.computeIfAbsent(service + "@" + version + "/" + side, name -> {
+            AtomicInteger open = new AtomicInteger();
+            Gauge.builder("henge.channels.open", open, AtomicInteger::get)
+                    .tag("service", service).tag("version", String.valueOf(version)).tag("side", side).register(registry);
+            return open;
+        });
+    }
+
+    @Override
+    public void trunkOpened(String side) {
+        trunksOpen(side).incrementAndGet();
+    }
+
+    @Override
+    public void trunkClosed(String side) {
+        trunksOpen(side).decrementAndGet();
+    }
+
+    private AtomicInteger trunksOpen(String side) {
+        return trunks.computeIfAbsent(side, name -> {
+            AtomicInteger open = new AtomicInteger();
+            Gauge.builder("henge.trunks.open", open, AtomicInteger::get).tag("side", name).register(registry);
+            return open;
+        });
     }
 }

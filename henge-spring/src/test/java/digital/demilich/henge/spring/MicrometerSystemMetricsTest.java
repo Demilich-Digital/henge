@@ -269,4 +269,35 @@ class MicrometerSystemMetricsTest {
         assertThat(count("henge.transport.endpoint.failures", "service", "echo-service", "version", "1")).isEqualTo(3);
         assertThat(count("henge.transport.giveups", "service", "echo-service", "version", "1", "reason", "connect")).isEqualTo(1);
     }
+
+    @Test
+    void channelsAreCountedOpenUntilTheyCloseAndClosedByStatus() {
+        metrics.channelOpened("feed-service", 1, "backend");
+        metrics.channelOpened("feed-service", 1, "backend");
+        metrics.channelOpened("feed-service", 1, "frontend");
+
+        assertThat(meters.get("henge.channels.open").tag("side", "backend").gauge().value()).isEqualTo(2);
+        assertThat(meters.get("henge.channels.open").tag("side", "frontend").gauge().value()).isEqualTo(1);
+
+        metrics.channelClosed("feed-service", 1, "backend", 1012);
+        metrics.channelClosed("feed-service", 1, "backend", 1000);
+
+        assertThat(meters.get("henge.channels.open").tag("side", "backend").gauge().value()).isZero();
+        assertThat(meters.get("henge.channels.closed").tag("status", "1012").tag("service", "feed-service")
+                .tag("version", "1").tag("side", "backend").counter().count()).isEqualTo(1);
+        assertThat(meters.get("henge.channels.closed").tag("status", "1000").counter().count()).isEqualTo(1);
+    }
+
+    @Test
+    void trunksAreCountedPerSideAndNotPerBackend() {
+        metrics.trunkOpened("frontend");
+        metrics.trunkOpened("frontend");
+        metrics.trunkOpened("backend");
+        metrics.trunkClosed("frontend");
+
+        assertThat(meters.get("henge.trunks.open").tag("side", "frontend").gauge().value()).isEqualTo(1);
+        assertThat(meters.get("henge.trunks.open").tag("side", "backend").gauge().value()).isEqualTo(1);
+        assertThat(meters.get("henge.trunks.open").gauges()).allSatisfy(gauge ->
+                assertThat(gauge.getId().getTags()).extracting(io.micrometer.core.instrument.Tag::getKey).containsExactly("side"));
+    }
 }

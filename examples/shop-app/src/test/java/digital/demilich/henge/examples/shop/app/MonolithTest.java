@@ -2,6 +2,7 @@ package digital.demilich.henge.examples.shop.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import digital.demilich.henge.examples.shop.app.ShopTestSupport.Feed;
 import digital.demilich.henge.examples.shop.app.ShopTestSupport.Response;
 import digital.demilich.henge.examples.shop.app.ShopTestSupport.Shop;
 import org.junit.jupiter.api.AfterAll;
@@ -71,5 +72,23 @@ class MonolithTest {
 
         // Four orders placed; the fourth notification was refused, and the order went through anyway.
         assertThat(shop.get("/api/customers/cy/notifications").body()).hasSize(3);
+    }
+
+    @Test
+    void aCustomerWatchingAnOrderIsToldItsStatusAndThenWhenItChanges() throws Exception {
+        String id = shop.placeOrder("dee", "rope", 1).body().get("id").asText();
+
+        Feed feed = shop.watch(id);
+
+        assertThat(feed.next()).isEqualTo("PLACED");
+        shop.post("/api/orders/" + id + "/cancel", null);
+        assertThat(feed.next()).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void watchingAnOrderThatDoesNotExistIsRefusedAsNotFound() throws Exception {
+        Feed feed = shop.watch("00000000-0000-0000-0000-000000000000");
+
+        assertThat(feed.closedWith()).isEqualTo(4404);
     }
 }

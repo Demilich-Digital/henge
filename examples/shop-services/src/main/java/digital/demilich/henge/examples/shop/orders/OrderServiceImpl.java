@@ -1,5 +1,8 @@
 package digital.demilich.henge.examples.shop.orders;
 
+import digital.demilich.henge.core.Channel;
+import digital.demilich.henge.core.ChannelHandler;
+import digital.demilich.henge.core.CloseStatus;
 import digital.demilich.henge.core.ImmutableList;
 import digital.demilich.henge.core.ServiceVersion;
 import digital.demilich.henge.examples.shop.inventory.InventoryService;
@@ -7,6 +10,7 @@ import digital.demilich.henge.examples.shop.inventory.LineItem;
 import digital.demilich.henge.examples.shop.notifications.NotificationService;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -24,6 +28,8 @@ public class OrderServiceImpl implements OrderService {
     private final InventoryService inventory;
     private final NotificationService notifications;
     private final Map<UUID, Order> orders = new ConcurrentHashMap<>();
+    /** Who is watching each order: the same kind of state as the orders, held here for the same reason. */
+    private final Map<UUID, Set<Channel>> watchers = new ConcurrentHashMap<>();
 
     public OrderServiceImpl(InventoryService inventory, NotificationService notifications) {
         this.inventory = inventory;
@@ -63,6 +69,22 @@ public class OrderServiceImpl implements OrderService {
         Order cancelled = order.withStatus(OrderStatus.CANCELLED);
         orders.put(orderId, cancelled);
         notifications.notify(order.customer(), "Order " + orderId + " cancelled");
+        watchers.getOrDefault(orderId, Set.of()).forEach(watcher -> watcher.sendText(cancelled.status().name()));
         return cancelled;
+    }
+
+    @Override
+    public ChannelHandler watch(UUID orderId, Channel toClient) {
+        get(orderId); // refuses the channel for an order that isn't there
+        Set<Channel> forOrder = watchers.computeIfAbsent(orderId, id -> ConcurrentHashMap.newKeySet());
+        forOrder.add(toClient);
+        // Added before the status is read, so a cancellation in between is sent twice rather than missed.
+        toClient.sendText(orders.get(orderId).status().name());
+        return new ChannelHandler() {
+            @Override
+            public void onClose(CloseStatus status) {
+                forOrder.remove(toClient);
+            }
+        };
     }
 }

@@ -28,11 +28,13 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 class TrunkServer extends BinaryWebSocketHandler {
 
     private static final Log log = LogFactory.getLog(TrunkServer.class);
+    private static final String SIDE = "backend";
     private static final String CONNECTION = TrunkServer.class.getName() + ".connection";
 
     private final HengeServiceRegistry registry;
     private final ObjectMapper objectMapper;
     private final HengeProperties.ChannelSettings settings;
+    private final SystemMetrics metrics;
     private final AtomicInteger trunks = new AtomicInteger();
 
     /** How many frontends are connected: one trunk each. */
@@ -40,8 +42,10 @@ class TrunkServer extends BinaryWebSocketHandler {
         return trunks.get();
     }
 
-    TrunkServer(HengeServiceRegistry registry, ObjectMapper objectMapper, HengeProperties.ChannelSettings settings) {
+    TrunkServer(HengeServiceRegistry registry, ObjectMapper objectMapper, HengeProperties.ChannelSettings settings,
+            SystemMetrics metrics) {
         this.registry = registry;
+        this.metrics = metrics;
         this.objectMapper = objectMapper;
         this.settings = settings;
     }
@@ -51,6 +55,7 @@ class TrunkServer extends BinaryWebSocketHandler {
         session.setBinaryMessageSizeLimit(settings.maxFrameBytes() + TrunkFrame.HEADER_BYTES);
         session.getAttributes().put(CONNECTION, new Connection(session));
         trunks.incrementAndGet();
+        metrics.trunkOpened(SIDE);
     }
 
     @Override
@@ -76,6 +81,7 @@ class TrunkServer extends BinaryWebSocketHandler {
         Connection connection = (Connection) session.getAttributes().get(CONNECTION);
         if (connection != null) {
             trunks.decrementAndGet();
+            metrics.trunkClosed(SIDE);
             connection.lost();
         }
     }
@@ -132,6 +138,7 @@ class TrunkServer extends BinaryWebSocketHandler {
         private void open(BackendChannel channel, byte[] payload) {
             try {
                 TrunkOpen.Request request = TrunkOpen.read(objectMapper, payload, this::resolve);
+                channel.reportOpened(request.service(), request.version());
                 HengeServiceDescriptor descriptor = registry.find(request.service(), request.version()).orElseThrow();
                 Object[] args = request.args();
                 args[args.length - 1] = channel;
@@ -174,6 +181,8 @@ class TrunkServer extends BinaryWebSocketHandler {
         private final AtomicBoolean closed = new AtomicBoolean();
         private volatile ChannelHandler handler;
         private volatile CloseStatus closedWith;
+        private volatile String service;
+        private volatile int version;
 
         BackendChannel(Connection connection, long number) {
             this.connection = connection;
@@ -247,11 +256,21 @@ class TrunkServer extends BinaryWebSocketHandler {
             }
         }
 
+        /** The open names its service: from here the channel is counted, and counted closed when it ends. */
+        void reportOpened(String openedService, int openedVersion) {
+            service = openedService;
+            version = openedVersion;
+            metrics.channelOpened(openedService, openedVersion, SIDE);
+        }
+
         private boolean end(CloseStatus status) {
             if (!closed.compareAndSet(false, true)) {
                 return false;
             }
             closedWith = status;
+            if (service != null) {
+                metrics.channelClosed(service, version, SIDE, status.code());
+            }
             connection.channels.remove(number);
             return true;
         }

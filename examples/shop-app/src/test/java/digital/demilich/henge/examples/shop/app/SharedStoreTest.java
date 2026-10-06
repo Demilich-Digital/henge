@@ -2,6 +2,7 @@ package digital.demilich.henge.examples.shop.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import digital.demilich.henge.examples.shop.app.ShopTestSupport.Feed;
 import digital.demilich.henge.examples.shop.app.ShopTestSupport.Shop;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -73,5 +74,16 @@ class SharedStoreTest {
         int sent = first.get("/api/customers/bob/notifications").body().size()
                 + second.get("/api/customers/bob/notifications").body().size();
         assertThat(sent).isEqualTo(3);
+    }
+
+    @Test
+    void aFeedNeedsNothingFromTheStoreOnceItIsOpen() throws Exception {
+        String id = second.placeOrder("cat", "rope", 1).body().get("id").asText();
+        Feed feed = second.watch(id);
+        assertThat(feed.next()).isEqualTo("PLACED");
+
+        second.post("/api/orders/" + id + "/cancel", null);
+
+        assertThat(feed.next()).isEqualTo("CANCELLED");
     }
 }

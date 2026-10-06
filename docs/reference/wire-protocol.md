@@ -85,3 +85,38 @@ Nothing that may have started is retried: a read timeout, a reset, a `5xx`, any 
 attempts run out, a failed connection or a plain `404` is a `RemoteServiceException` (`... gave up after 3
 attempts`), and an `@ErrorStatus(404)` exception is thrown as it came, so a caller still catches its own
 type.
+
+## Channels: the trunk
+
+A [channel](../guide/08-channels.md) doesn't travel as a call. Between a frontend and a backend node there is
+one WebSocket, the **trunk**, carrying every channel between them:
+
+```
+GET {path-prefix}/_trunk            (an upgrade to a WebSocket)
+Henge-Internal-Secret: <secret>     (only when henge.transport.secret is set)
+```
+
+`403` without the secret, `503` while the node isn't ready, before the upgrade. `https://` backends are
+dialed as `wss://`. The trunk carries **binary** messages only, each one frame:
+
+```
+[ type : 1 byte ] [ channel : 8 bytes, big-endian ] [ payload : the rest ]
+```
+
+| Type | Direction | Payload |
+|---|---|---|
+| `1` `OPEN` | frontend to backend | UTF-8 JSON `{"service": ..., "version": ..., "method": ..., "args": [...]}`. The channel number is the frontend's, unique within the trunk. |
+| `2` `TEXT` | both | UTF-8 text. |
+| `3` `BINARY` | both | The bytes. |
+| `4` `CLOSE` | both | Two bytes of status code, then the UTF-8 reason (at most 123 bytes). Closing is idempotent. |
+
+`args` is written and read as the body of a call is: positional, typed by the method's declared parameters
+except the final `Channel`, by the transport's own `ObjectMapper`. An `OPEN` that can't be served is answered
+with a `CLOSE`: `4404` for a service, version or method this node doesn't host, `4400` for arguments that
+can't be read or a method that isn't a channel method, and otherwise the status the open's exception maps to
+(see [When a channel ends](../guide/08-channels.md#when-a-channel-ends)). A frame for a channel that is
+closed is ignored.
+
+The frontend pings the trunk (`henge.channels.trunk.ping-interval`), and a trunk that stops answering, or is
+closed, ends every channel on it with `1011`. A trunk with no channels is closed after
+`henge.channels.trunk.idle-timeout`.

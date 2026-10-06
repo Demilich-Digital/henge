@@ -79,4 +79,23 @@ interface SystemMetrics {
     /** A call to rate limiter {@code limit} was decided from this node's own share, because the datastore couldn't be reached. */
     default void rateLimitDegraded(String limit) {
     }
+
+    /**
+     * A channel to {@code service@version} exists on this node: {@code side} is {@code frontend} (it holds the
+     * client's end, and the connection to the backend) or {@code backend} (it hosts the service). Each is matched
+     * by one {@link #channelClosed}.
+     */
+    default void channelOpened(String service, int version, String side) {
+    }
+
+    /** The channel reported by {@link #channelOpened} closed with the websocket close code {@code status}. */
+    default void channelClosed(String service, int version, String side, int status) {
+    }
+
+    /** This node's trunk count, on {@code side}, went up: a frontend connected to a backend, or one connected to this node. */
+    default void trunkOpened(String side) {
+    }
+
+    default void trunkClosed(String side) {
+    }
 }

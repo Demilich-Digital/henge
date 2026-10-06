@@ -7,6 +7,7 @@ import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.spring.fixture.feed.FeedTestApp;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -72,6 +73,11 @@ final class ChannelTestSupport {
 
     /** As {@link #start(String...)}, with {@code store} as the application's own datastore. */
     static ConfigurableApplicationContext start(SystemEphemeralDatastore store, String... properties) {
+        return start(store, null, properties);
+    }
+
+    /** As {@link #start(SystemEphemeralDatastore, String...)}, with {@code meters} as the application's own registry. */
+    static ConfigurableApplicationContext start(SystemEphemeralDatastore store, MeterRegistry meters, String... properties) {
         List<String> all = new ArrayList<>(List.of("server.port=0", "spring.main.banner-mode=off",
                 "spring.autoconfigure.exclude="
                         + "org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration,"
@@ -83,6 +89,9 @@ final class ChannelTestSupport {
                 .properties(all.toArray(String[]::new));
         if (store != null) {
             builder.initializers(context -> context.getBeanFactory().registerSingleton("sharedStore", store));
+        }
+        if (meters != null) {
+            builder.initializers(context -> context.getBeanFactory().registerSingleton("meters", meters));
         }
         return builder.run();
     }

@@ -1,6 +1,7 @@
 package digital.demilich.henge.spring;
 
 import java.util.Map;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Condition;
 import org.springframework.context.annotation.ConditionContext;
@@ -33,10 +34,11 @@ class HengeTrunkConfiguration implements WebSocketConfigurer {
     private final HengeProperties properties;
     private final TrunkServer trunkServer;
 
-    HengeTrunkConfiguration(HengeServiceRegistry registry, Environment environment) {
+    HengeTrunkConfiguration(HengeServiceRegistry registry, Environment environment, ObjectProvider<SystemMetrics> metrics) {
         this.registry = registry;
         this.properties = new HengeProperties(environment);
-        this.trunkServer = new TrunkServer(registry, HengeTransportSupport.objectMapper(), properties.getChannelSettings());
+        this.trunkServer = new TrunkServer(registry, HengeTransportSupport.objectMapper(), properties.getChannelSettings(),
+                metrics.getIfAvailable(() -> SystemMetrics.NONE));
     }
 
     /** The trunk's handler, as a bean so the number of trunks it holds can be read. */

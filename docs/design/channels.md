@@ -5,7 +5,7 @@ thousands of them and a backend that holds almost none. The first use is **webso
 node runs the frontend, so a DNS dial of the cluster always reaches one, and the frontends are light. The
 services behind them are fewer and resource-bound, and must not carry a connection per end user.
 
-**Status.** Phases 1 (the contract and the embedded path), 2 (the trunk) and 3 (failure and lifecycle) are built; the example and the guide chapter are not. This is the design to implement; the guide chapter comes with the code.
+**Status.** Built, in four phases: the contract and the embedded path, the trunk, failure and lifecycle, and the example, docs and metrics. The user-facing description is [the guide chapter](../guide/08-channels.md); this document is the design and its reasons. This is the design to implement; the guide chapter comes with the code.
 [Decisions](#decisions) were made in discussion and are final unless something here proves unworkable;
 [open choices](#choices-left-to-the-implementer) come with a recommendation.
 

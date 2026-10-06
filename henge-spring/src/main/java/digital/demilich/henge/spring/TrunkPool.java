@@ -41,11 +41,13 @@ import org.apache.commons.logging.LogFactory;
 final class TrunkPool implements AutoCloseable {
 
     private static final Log log = LogFactory.getLog(TrunkPool.class);
+    private static final String SIDE = "frontend";
 
     private final HengeProperties.ChannelSettings settings;
     private final Duration connectTimeout;
     private final String secret;
     private final String trunkPath;
+    private final SystemMetrics metrics;
     private final HttpClient httpClient;
     private final Map<String, CompletableFuture<Trunk>> trunks = new ConcurrentHashMap<>();
     private ScheduledExecutorService scheduler;
@@ -55,8 +57,10 @@ final class TrunkPool implements AutoCloseable {
      * @param secret sent with the handshake; null or blank for none
      * @param serverPathPrefix {@code henge.server.path-prefix}, which the trunk is served under
      */
-    TrunkPool(HengeProperties.ChannelSettings settings, Duration connectTimeout, String secret, String serverPathPrefix) {
+    TrunkPool(HengeProperties.ChannelSettings settings, Duration connectTimeout, String secret, String serverPathPrefix,
+            SystemMetrics metrics) {
         this.settings = settings;
+        this.metrics = metrics;
         this.connectTimeout = connectTimeout;
         this.secret = secret == null || secret.isBlank() ? null : secret;
         this.trunkPath = serverPathPrefix + TrunkFrame.PATH;
@@ -89,15 +93,23 @@ final class TrunkPool implements AutoCloseable {
      * @throws TrunkUnavailable if there is no trunk to open it on
      */
     ChannelHandler open(String baseUrl, String service, int version, byte[] openPayload, Channel toClient, Retry retry) {
-        FrontendChannel channel = new FrontendChannel(ServiceAdvertisement.key(service, version), openPayload, toClient, retry);
+        FrontendChannel channel = new FrontendChannel(service, version, openPayload, toClient, retry);
+        metrics.channelOpened(service, version, SIDE);
         for (int attempt = 1; ; attempt++) {
-            Trunk trunk = trunk(baseUrl);
+            Trunk trunk;
+            try {
+                trunk = trunk(baseUrl);
+            } catch (TrunkUnavailable e) {
+                metrics.channelClosed(service, version, SIDE, CloseStatus.SERVER_ERROR);
+                throw e;
+            }
             try {
                 trunk.attach(channel);
                 return channel;
             } catch (TrunkUnavailable e) {
                 // Lost between being found and being used: connect afresh, once.
                 if (attempt >= 2) {
+                    metrics.channelClosed(service, version, SIDE, CloseStatus.SERVER_ERROR);
                     throw e;
                 }
             }
@@ -245,6 +257,7 @@ final class TrunkPool implements AutoCloseable {
             this.socket = webSocket;
             this.lastPong = System.nanoTime();
             this.writer = new TrunkWriter(this::send, () -> lost(new CloseStatus(CloseStatus.SERVER_ERROR, "backend lost")));
+            metrics.trunkOpened(SIDE);
             scheduler();
         }
 
@@ -310,6 +323,7 @@ final class TrunkPool implements AutoCloseable {
                 stopped = true;
                 dead = true;
             }
+            metrics.trunkClosed(SIDE);
             trunks.values().removeIf(future -> future.getNow(null) == this);
             if (writer != null) {
                 writer.stop();
@@ -386,6 +400,8 @@ final class TrunkPool implements AutoCloseable {
 
         private static final int NOT_HOSTED = 4404;
 
+        private final String service;
+        private final int version;
         private final String serviceKey;
         private final byte[] openPayload;
         private final Channel toClient;
@@ -400,8 +416,10 @@ final class TrunkPool implements AutoCloseable {
         private boolean retryable;
         private final List<TrunkFrame> sentSinceOpen = new ArrayList<>();
 
-        FrontendChannel(String serviceKey, byte[] openPayload, Channel toClient, Retry retry) {
-            this.serviceKey = serviceKey;
+        FrontendChannel(String service, int version, byte[] openPayload, Channel toClient, Retry retry) {
+            this.service = service;
+            this.version = version;
+            this.serviceKey = ServiceAdvertisement.key(service, version);
             this.openPayload = openPayload;
             this.toClient = toClient;
             this.retry = retry;
@@ -465,7 +483,7 @@ final class TrunkPool implements AutoCloseable {
         /** The caller closed it: the backend is told. */
         @Override
         public void onClose(CloseStatus status) {
-            if (end()) {
+            if (end(status)) {
                 synchronized (this) {
                     lane.offerControl(TrunkFrame.close(number, status));
                 }
@@ -474,7 +492,7 @@ final class TrunkPool implements AutoCloseable {
 
         /** This end gave up on the channel: the backend and the client are both told. */
         private void fail(CloseStatus status) {
-            if (end()) {
+            if (end(status)) {
                 synchronized (this) {
                     lane.offerControl(TrunkFrame.close(number, status));
                 }
@@ -510,7 +528,7 @@ final class TrunkPool implements AutoCloseable {
                 Thread.ofVirtual().start(() -> openElsewhere(failedBaseUrl, status));
                 return;
             }
-            if (!end()) {
+            if (!end(status)) {
                 return;
             }
             Runnable notify = () -> toClient.close(status);
@@ -547,15 +565,16 @@ final class TrunkPool implements AutoCloseable {
         }
 
         private void refuse(CloseStatus refusal) {
-            if (end()) {
+            if (end(refusal)) {
                 toClient.close(refusal);
             }
         }
 
-        private boolean end() {
+        private boolean end(CloseStatus status) {
             if (!closed.compareAndSet(false, true)) {
                 return false;
             }
+            metrics.channelClosed(service, version, SIDE, status.code());
             Trunk current;
             long currentNumber;
             synchronized (this) {

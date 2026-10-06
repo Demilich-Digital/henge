@@ -33,7 +33,16 @@ scope excluded on purpose, the second is work deferred.
   REST-specific too.
 - **mTLS between processes.** The optional shared secret is the only built-in protection; the network is
   the boundary.
-- **Asynchronous and streaming methods.** Calls are synchronous.
+- **Asynchronous methods.** Calls are synchronous. (A connection that stays open is a [channel](guide/08-channels.md), which is built.)
+- **Re-attaching a channel to another backend.** A channel closes when its backend goes, with a status, and
+  the client reconnects. Resuming one needs the service's session state handed over, a much bigger scope.
+- **Sending to a channel by id from another node.** Needs the store to know where a channel lives, which
+  nothing consumes yet; it would be added with its first consumer.
+- **Trace propagation across a trunk.**
+- **A backend noticing a vanished frontend.** A frontend pings its trunks; a backend doesn't ping back, so
+  a trunk whose frontend disappeared without closing the connection is noticed when TCP gives it up.
+- **Per-channel flow-control credits on a trunk.** An overflowing channel is closed instead.
+- **Typed channel messages.** Frames are opaque text and binary.
 
 ## Roadmap
 

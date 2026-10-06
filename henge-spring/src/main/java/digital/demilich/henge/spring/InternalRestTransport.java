@@ -79,7 +79,7 @@ class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoClos
         requireKnownPlaceholders(properties.getRemoteUrlTemplate());
         properties.getServerPathPrefix(); // validated at startup, not on the first call
         this.trunks = new TrunkPool(properties.getChannelSettings(), properties.getConnectTimeout(),
-                properties.getTransportSecret(), properties.getServerPathPrefix());
+                properties.getTransportSecret(), properties.getServerPathPrefix(), metrics);
     }
 
     /** Closes the trunks, and so the channels on them. */

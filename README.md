@@ -71,6 +71,7 @@ The code calling inventory is the same in both runs, and doesn't know which one 
   5. [The ephemeral store](docs/guide/05-the-ephemeral-store.md)
   6. [Leases and rate limits](docs/guide/06-leases-and-rate-limits.md)
   7. [Operating](docs/guide/07-operating.md)
+  8. [Channels](docs/guide/08-channels.md)
 - **[Gotchas](docs/gotchas.md)**: every trap on the way from one process to many, and how each is caught
 - **Reference**: [configuration](docs/reference/configuration.md),
   [compile-time checks](docs/reference/compile-time-checks.md),

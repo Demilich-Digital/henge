@@ -29,7 +29,7 @@ API, put that behind your ingress as usual, and don't route `/_henge/**` through
 
 Add Spring Security and `/_henge` keeps working, with nothing to configure. Spring Security's defaults
 would demand a session and a CSRF token on every `POST`, so the Boot starter adds a dedicated filter
-chain for exactly `POST /_henge/**`, ordered ahead of yours and alongside it, never instead of it.
+chain for exactly `POST /_henge/**` (and the `GET` that opens the [channels](08-channels.md) trunk, `/_henge/_trunk`), ordered ahead of yours and alongside it, never instead of it.
 Nothing else you serve is affected.
 
 - With a secret, a valid `Henge-Internal-Secret` header becomes an authenticated principal,
@@ -139,6 +139,7 @@ the others.
 
 ## Where next
 
+- [Channels](08-channels.md): long-lived connections to clients
 - [Philosophy](../philosophy.md): why Henge is built this way, and where it's going
 - [Gotchas](../gotchas.md): every trap on the way from one process to many, and how each is handled
 - [Configuration](../reference/configuration.md), [Wire protocol](../reference/wire-protocol.md),
