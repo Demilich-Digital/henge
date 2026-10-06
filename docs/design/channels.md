@@ -155,7 +155,9 @@ method's generic parameter types, streamed through a `JsonParser` (never a `Json
 `BigDecimal`'s precision), with `HengeTransportSupport.objectMapper()`. That logic is private to
 `HengeDispatcherController.readArguments` today and needs lifting into something both share.
 
-WebSocket pings keep the trunk alive and detect a dead one. The channel id the application sees
+WebSocket pings, sent by both ends, keep the trunk alive and detect a dead one: a trunk silent for two ping
+intervals is dropped, and the backend needs this as much as the frontend, since a frontend that vanishes
+without closing leaves channels, and whatever a service holds for them, until TCP gives up. The channel id the application sees
 (`Channel.id()`) is the trunk session id plus the number, so it is unique on the backend.
 
 ### Backend: serving a trunk

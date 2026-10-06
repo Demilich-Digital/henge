@@ -123,7 +123,11 @@ what the service had remembered about it is gone.
 
 - **A backend retires or is rolled.** Its channels close `1012` as it drains, one node at a time, and the
   clients reconnect to the new ones. Open channels don't hold up the drain.
-- **A backend dies.** Its trunk drops, and every channel on it closes `1011`.
+- **A backend dies.** Its trunk drops, and every channel on it closes `1011`. A backend that stops
+  answering is noticed by the frontend's pings, within two ping intervals.
+- **A frontend dies.** If it closes its connection, the backend sees it at once. If it vanishes without (its
+  host lost, a network cut), the backend's own pings notice within two ping intervals, and each channel's
+  handler gets `onClose` with `1001`, so a service doesn't keep a watcher for a client that isn't there.
 - **A backend that doesn't host the service** answers an open with `404`, which says nothing happened, so
   the frontend opens the channel once more on another advertised backend, resending what the client had
   sent meanwhile.
@@ -157,8 +161,7 @@ trunk is not affected: its client sends no `Origin`.
 - **Frame size**: `henge.channels.max-frame-bytes` also bounds the open, so arguments of an open that are
   larger than a frame are refused. Pass identifiers, not documents.
 - **Not built yet**: re-attaching a channel to another backend, sending to a channel by id from another
-  node, trace propagation across the trunk, and a backend noticing a frontend that vanished without closing
-  the connection. See [scope](../scope.md).
+  node, and trace propagation across the trunk. See [scope](../scope.md).
 
 ## What you have
 

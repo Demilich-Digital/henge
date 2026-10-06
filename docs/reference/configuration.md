@@ -51,7 +51,7 @@ as for calls.
 |---|---|---|
 | `henge.channels.queue-size` | `256` | Frames a channel may have queued in each direction before it is closed `1013`. A positive integer. |
 | `henge.channels.max-frame-bytes` | `65536` | The largest text or binary frame, and open. A larger frame closes the channel `1009`. A positive integer. |
-| `henge.channels.trunk.ping-interval` | `15s` | How often a trunk is pinged; two missed pongs drop it, closing its channels `1011`. Same duration format as the timeouts; positive. |
+| `henge.channels.trunk.ping-interval` | `15s` | How often a trunk is pinged, by each end; two intervals of silence from the other end drop it, closing its channels (`1011` at the frontend, `1001` at the backend). Same duration format as the timeouts; positive. |
 | `henge.channels.trunk.idle-timeout` | `60s` | How long a trunk with no channels is kept. Same format; positive. |
 
 ## The ephemeral store

@@ -117,6 +117,7 @@ can't be read or a method that isn't a channel method, and otherwise the status 
 (see [When a channel ends](../guide/08-channels.md#when-a-channel-ends)). A frame for a channel that is
 closed is ignored.
 
-The frontend pings the trunk (`henge.channels.trunk.ping-interval`), and a trunk that stops answering, or is
-closed, ends every channel on it with `1011`. A trunk with no channels is closed after
+Both ends ping the trunk (`henge.channels.trunk.ping-interval`), and any frame counts as an answer. A trunk
+that stays silent for two intervals, or is closed, ends every channel on it: with `1011` at the frontend, and
+`1001` for each handler at the backend. A trunk with no channels is closed after
 `henge.channels.trunk.idle-timeout`.

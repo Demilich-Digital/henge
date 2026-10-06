@@ -39,8 +39,6 @@ scope excluded on purpose, the second is work deferred.
 - **Sending to a channel by id from another node.** Needs the store to know where a channel lives, which
   nothing consumes yet; it would be added with its first consumer.
 - **Trace propagation across a trunk.**
-- **A backend noticing a vanished frontend.** A frontend pings its trunks; a backend doesn't ping back, so
-  a trunk whose frontend disappeared without closing the connection is noticed when TCP gives it up.
 - **Per-channel flow-control credits on a trunk.** An overflowing channel is closed instead.
 - **Typed channel messages.** Frames are opaque text and binary.
 

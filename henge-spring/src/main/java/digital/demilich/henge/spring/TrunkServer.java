@@ -8,6 +8,10 @@ import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -15,6 +19,8 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.socket.BinaryMessage;
+import org.springframework.web.socket.PingMessage;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 
@@ -24,8 +30,12 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
  * opens the channel through the service's binding and keeps the handler it returns; after that it only
  * moves frames. Each channel's inbound frames wait in its own {@link Mailbox}, so a slow handler stalls
  * only its own channel; its outbound ones in its own lane of the trunk's one {@link TrunkWriter}.
+ *
+ * <p>A frontend that vanishes without closing the connection (its host lost, a network cut) would leave its
+ * channels open until TCP gave up, so every trunk is pinged, and one that has sent nothing, not even a pong,
+ * for two ping intervals is dropped and its channels closed.
  */
-class TrunkServer extends BinaryWebSocketHandler {
+class TrunkServer extends BinaryWebSocketHandler implements AutoCloseable {
 
     private static final Log log = LogFactory.getLog(TrunkServer.class);
     private static final String SIDE = "backend";
@@ -36,6 +46,8 @@ class TrunkServer extends BinaryWebSocketHandler {
     private final HengeProperties.ChannelSettings settings;
     private final SystemMetrics metrics;
     private final AtomicInteger trunks = new AtomicInteger();
+    private final Set<Connection> connections = ConcurrentHashMap.newKeySet();
+    private ScheduledExecutorService keeper;
 
     /** How many frontends are connected: one trunk each. */
     int trunks() {
@@ -53,9 +65,50 @@ class TrunkServer extends BinaryWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         session.setBinaryMessageSizeLimit(settings.maxFrameBytes() + TrunkFrame.HEADER_BYTES);
-        session.getAttributes().put(CONNECTION, new Connection(session));
+        Connection connection = new Connection(session);
+        session.getAttributes().put(CONNECTION, connection);
+        connections.add(connection);
         trunks.incrementAndGet();
         metrics.trunkOpened(SIDE);
+        keeper();
+    }
+
+    /** Pings the trunks and drops the silent ones; started with the first trunk. */
+    private synchronized void keeper() {
+        if (keeper == null) {
+            keeper = Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread thread = new Thread(task, "henge-trunk-server-keeper");
+                thread.setDaemon(true);
+                return thread;
+            });
+            long period = settings.pingInterval().toMillis();
+            keeper.scheduleWithFixedDelay(this::keep, period, period, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void keep() {
+        for (Connection connection : connections) {
+            try {
+                connection.keep();
+            } catch (RuntimeException e) {
+                log.warn("Keeping a trunk failed", e);
+            }
+        }
+    }
+
+    @Override
+    public synchronized void close() {
+        if (keeper != null) {
+            keeper.shutdownNow();
+        }
+    }
+
+    @Override
+    protected void handlePongMessage(WebSocketSession session, PongMessage message) {
+        Connection connection = (Connection) session.getAttributes().get(CONNECTION);
+        if (connection != null) {
+            connection.heard();
+        }
     }
 
     @Override
@@ -80,8 +133,6 @@ class TrunkServer extends BinaryWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status) {
         Connection connection = (Connection) session.getAttributes().get(CONNECTION);
         if (connection != null) {
-            trunks.decrementAndGet();
-            metrics.trunkClosed(SIDE);
             connection.lost();
         }
     }
@@ -92,13 +143,34 @@ class TrunkServer extends BinaryWebSocketHandler {
         private final WebSocketSession session;
         private final TrunkWriter writer;
         private final Map<Long, BackendChannel> channels = new ConcurrentHashMap<>();
+        private final AtomicBoolean ended = new AtomicBoolean();
+        private volatile long lastHeard = System.nanoTime();
 
         Connection(WebSocketSession session) {
             this.session = session;
-            this.writer = new TrunkWriter(frame -> session.sendMessage(new BinaryMessage(frame)), this::sendFailed);
+            this.writer = new TrunkWriter(frame -> session.sendMessage(
+                    frame == TrunkWriter.PING ? new PingMessage() : new BinaryMessage(frame)), this::sendFailed);
+        }
+
+        /** The frontend is there: it sent a frame, or answered a ping. */
+        void heard() {
+            lastHeard = System.nanoTime();
+        }
+
+        /** Every {@code ping-interval}: ping the frontend, or drop it if it has been silent for two. */
+        void keep() {
+            if (System.nanoTime() - lastHeard > 2 * settings.pingInterval().toNanos()) {
+                log.debug("A trunk's frontend stopped answering pings; dropping it");
+                lost();
+                // Not on the keeper's thread: closing waits on a connection that may be dead.
+                Thread.ofVirtual().start(this::sendFailed);
+                return;
+            }
+            writer.ping();
         }
 
         void receive(TrunkFrame frame) {
+            heard();
             if (frame.type() == TrunkFrame.OPEN) {
                 BackendChannel channel = new BackendChannel(this, frame.channel());
                 if (channels.putIfAbsent(frame.channel(), channel) != null) {
@@ -121,6 +193,12 @@ class TrunkServer extends BinaryWebSocketHandler {
 
         /** The frontend went away: every channel on it closes. */
         void lost() {
+            if (!ended.compareAndSet(false, true)) {
+                return;
+            }
+            connections.remove(this);
+            trunks.decrementAndGet();
+            metrics.trunkClosed(SIDE);
             writer.stop();
             for (BackendChannel channel : channels.values()) {
                 channel.closedByClient(new CloseStatus(1001, "frontend gone"));
