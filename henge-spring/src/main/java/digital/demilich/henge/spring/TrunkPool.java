@@ -11,7 +11,10 @@ import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
@@ -72,16 +75,26 @@ final class TrunkPool implements AutoCloseable {
         }
     }
 
+    /** Where to open a channel again when the backend it was first opened on says it doesn't host the service. */
+    @FunctionalInterface
+    interface Retry {
+
+        /** The base URL of another backend to try instead of {@code failedBaseUrl}, or null if there is none. */
+        String another(String failedBaseUrl);
+    }
+
     /**
      * Opens a channel on the trunk to {@code baseUrl}, opening the trunk first if there isn't one.
      *
      * @throws TrunkUnavailable if there is no trunk to open it on
      */
-    ChannelHandler open(String baseUrl, byte[] openPayload, Channel toClient) {
+    ChannelHandler open(String baseUrl, String service, int version, byte[] openPayload, Channel toClient, Retry retry) {
+        FrontendChannel channel = new FrontendChannel(ServiceAdvertisement.key(service, version), openPayload, toClient, retry);
         for (int attempt = 1; ; attempt++) {
             Trunk trunk = trunk(baseUrl);
             try {
-                return trunk.open(openPayload, toClient);
+                trunk.attach(channel);
+                return channel;
             } catch (TrunkUnavailable e) {
                 // Lost between being found and being used: connect afresh, once.
                 if (attempt >= 2) {
@@ -188,6 +201,21 @@ final class TrunkPool implements AutoCloseable {
         }
     }
 
+    /**
+     * The base URL of a connected trunk that has opened channels on {@code service@version}, or null: a
+     * backend known to host it without asking the datastore, for when it can't be asked.
+     */
+    String liveTrunkServing(String service, int version) {
+        String key = ServiceAdvertisement.key(service, version);
+        for (CompletableFuture<Trunk> future : trunks.values()) {
+            Trunk trunk = future.getNow(null);
+            if (trunk != null && trunk.served.contains(key) && !trunk.isDead()) {
+                return trunk.baseUrl;
+            }
+        }
+        return null;
+    }
+
     /** Number of trunks that are connected; for tests and the gauge of open trunks. */
     int trunkCount() {
         return (int) trunks.values().stream().filter(f -> f.getNow(null) != null).count();
@@ -198,6 +226,8 @@ final class TrunkPool implements AutoCloseable {
 
         private final String baseUrl;
         private final Map<Long, FrontendChannel> channels = new ConcurrentHashMap<>();
+        /** The service versions channels have been opened on here, as the advertisements key them. */
+        private final Set<String> served = ConcurrentHashMap.newKeySet();
         private final AtomicLong nextChannel = new AtomicLong(1);
         private final ByteArrayOutputStream partial = new ByteArrayOutputStream();
         private WebSocket socket;
@@ -228,21 +258,26 @@ final class TrunkPool implements AutoCloseable {
             }
         }
 
-        ChannelHandler open(byte[] openPayload, Channel toClient) {
-            FrontendChannel channel;
+        /** Gives {@code channel} a number on this trunk, and opens it on the backend. */
+        void attach(FrontendChannel channel) {
+            long number;
             synchronized (this) {
                 if (dead) {
                     throw new TrunkUnavailable("The trunk to " + baseUrl + " has closed", null);
                 }
-                channel = new FrontendChannel(this, nextChannel.getAndIncrement(), toClient);
-                channels.put(channel.number, channel);
+                number = nextChannel.getAndIncrement();
+                channels.put(number, channel);
+                served.add(channel.serviceKey);
             }
-            channel.lane.offerControl(new TrunkFrame(TrunkFrame.OPEN, channel.number, openPayload));
-            return channel;
+            channel.attached(this, number, writer.lane(settings.queueSize()));
         }
 
-        void channelEnded(FrontendChannel channel) {
-            channels.remove(channel.number);
+        synchronized boolean isDead() {
+            return dead;
+        }
+
+        void channelEnded(long number) {
+            channels.remove(number);
             if (channels.isEmpty()) {
                 idleSince = System.nanoTime();
             }
@@ -283,7 +318,7 @@ final class TrunkPool implements AutoCloseable {
                 socket.abort();
             }
             for (FrontendChannel channel : channels.values()) {
-                channel.closedByBackend(status);
+                channel.closedByBackend(status, this);
             }
         }
 
@@ -315,7 +350,7 @@ final class TrunkPool implements AutoCloseable {
             switch (frame.type()) {
                 case TrunkFrame.TEXT -> channel.deliver(() -> channel.toClient.sendText(frame.text()));
                 case TrunkFrame.BINARY -> channel.deliver(() -> channel.toClient.sendBinary(frame.payload()));
-                case TrunkFrame.CLOSE -> channel.closedByBackend(frame.closeStatus());
+                case TrunkFrame.CLOSE -> channel.closedByBackend(frame.closeStatus(), this);
                 default -> { }
             }
         }
@@ -340,21 +375,48 @@ final class TrunkPool implements AutoCloseable {
         }
     }
 
-    /** What a caller holds for an open channel: its handler, whose frames go to the backend on the trunk. */
+    /**
+     * What a caller holds for an open channel: its handler, whose frames go to the backend on the trunk.
+     *
+     * <p>Until the backend has sent anything, the open may still be refused as {@code 404}, which says the
+     * service did nothing and may be opened elsewhere ({@link Retry}). So until then what the caller sends is
+     * also kept (up to a queue's worth), to be sent again on the other trunk.
+     */
     private final class FrontendChannel implements ChannelHandler {
 
-        private final Trunk trunk;
-        private final long number;
+        private static final int NOT_HOSTED = 4404;
+
+        private final String serviceKey;
+        private final byte[] openPayload;
         private final Channel toClient;
-        private final TrunkWriter.Lane lane;
+        private final Retry retry;
         private final Mailbox inbound = new Mailbox(settings.queueSize());
         private final AtomicBoolean closed = new AtomicBoolean();
 
-        FrontendChannel(Trunk trunk, long number, Channel toClient) {
-            this.trunk = trunk;
-            this.number = number;
+        private Trunk trunk;
+        private long number;
+        private TrunkWriter.Lane lane;
+        /** Whether a refusal could still be retried: no reply yet, nothing retried yet, and nothing lost. */
+        private boolean retryable;
+        private final List<TrunkFrame> sentSinceOpen = new ArrayList<>();
+
+        FrontendChannel(String serviceKey, byte[] openPayload, Channel toClient, Retry retry) {
+            this.serviceKey = serviceKey;
+            this.openPayload = openPayload;
             this.toClient = toClient;
-            this.lane = trunk.writer.lane(settings.queueSize());
+            this.retry = retry;
+            this.retryable = retry != null;
+        }
+
+        /** The channel has a number on {@code trunk}: it is opened there, and what was sent meanwhile sent again. */
+        synchronized void attached(Trunk onTrunk, long onNumber, TrunkWriter.Lane onLane) {
+            trunk = onTrunk;
+            number = onNumber;
+            lane = onLane;
+            lane.offerControl(new TrunkFrame(TrunkFrame.OPEN, number, openPayload));
+            for (TrunkFrame sent : sentSinceOpen) {
+                lane.offer(new TrunkFrame(sent.type(), number, sent.payload()));
+            }
         }
 
         @Override
@@ -362,7 +424,7 @@ final class TrunkPool implements AutoCloseable {
             if (text.length() * 3 > settings.maxFrameBytes() && text.getBytes(StandardCharsets.UTF_8).length > settings.maxFrameBytes()) {
                 tooBig();
             } else {
-                send(TrunkFrame.text(number, text));
+                send(TrunkFrame.TEXT, text.getBytes(StandardCharsets.UTF_8));
             }
         }
 
@@ -371,7 +433,7 @@ final class TrunkPool implements AutoCloseable {
             if (data.length > settings.maxFrameBytes()) {
                 tooBig();
             } else {
-                send(TrunkFrame.binary(number, data));
+                send(TrunkFrame.BINARY, data);
             }
         }
 
@@ -379,11 +441,23 @@ final class TrunkPool implements AutoCloseable {
             fail(new CloseStatus(CloseStatus.TOO_BIG, "frame larger than " + settings.maxFrameBytes() + " bytes"));
         }
 
-        private void send(TrunkFrame frame) {
-            if (closed.get()) {
-                return;
+        private void send(byte type, byte[] payload) {
+            boolean accepted;
+            synchronized (this) {
+                if (closed.get()) {
+                    return;
+                }
+                accepted = lane.offer(new TrunkFrame(type, number, payload));
+                if (retryable) {
+                    if (sentSinceOpen.size() < settings.queueSize()) {
+                        sentSinceOpen.add(new TrunkFrame(type, 0, payload));
+                    } else {
+                        retryable = false; // more than can be kept: a refusal is now final
+                        sentSinceOpen.clear();
+                    }
+                }
             }
-            if (!lane.offer(frame)) {
+            if (!accepted) {
                 fail(new CloseStatus(CloseStatus.TRY_AGAIN_LATER, "too many frames queued for the backend"));
             }
         }
@@ -392,27 +466,50 @@ final class TrunkPool implements AutoCloseable {
         @Override
         public void onClose(CloseStatus status) {
             if (end()) {
-                lane.offerControl(TrunkFrame.close(number, status));
+                synchronized (this) {
+                    lane.offerControl(TrunkFrame.close(number, status));
+                }
             }
         }
 
         /** This end gave up on the channel: the backend and the client are both told. */
         private void fail(CloseStatus status) {
             if (end()) {
-                lane.offerControl(TrunkFrame.close(number, status));
+                synchronized (this) {
+                    lane.offerControl(TrunkFrame.close(number, status));
+                }
                 toClient.close(status);
             }
         }
 
         /** Queues what the backend sent for the client, in order; a full queue closes the channel. */
         void deliver(Runnable task) {
+            synchronized (this) {
+                retryable = false;
+                sentSinceOpen.clear();
+            }
             if (!closed.get() && !inbound.offer(task)) {
                 fail(new CloseStatus(CloseStatus.TRY_AGAIN_LATER, "too many frames queued for the client"));
             }
         }
 
-        /** The backend closed it, or the trunk was lost: the client is told, after the frames queued before. */
-        void closedByBackend(CloseStatus status) {
+        /**
+         * The backend closed it, or the trunk {@code from} was lost: the client is told, after the frames
+         * queued before. A first answer of {@code 404} opens it again on another backend instead.
+         */
+        void closedByBackend(CloseStatus status, Trunk from) {
+            String failedBaseUrl;
+            synchronized (this) {
+                if (from != trunk) {
+                    return; // a trunk this channel has left
+                }
+                failedBaseUrl = status.code() == NOT_HOSTED && retryable ? from.baseUrl : null;
+                retryable = false;
+            }
+            if (failedBaseUrl != null) {
+                Thread.ofVirtual().start(() -> openElsewhere(failedBaseUrl, status));
+                return;
+            }
             if (!end()) {
                 return;
             }
@@ -422,11 +519,50 @@ final class TrunkPool implements AutoCloseable {
             }
         }
 
+        /** The one attempt on another backend; the client gets {@code refusal} if there is none or it fails too. */
+        private void openElsewhere(String failedBaseUrl, CloseStatus refusal) {
+            Trunk previous;
+            synchronized (this) {
+                previous = trunk;
+            }
+            try {
+                String next = retry.another(failedBaseUrl);
+                if (next == null) {
+                    refuse(refusal);
+                    return;
+                }
+                Trunk onNext = trunk(next);
+                previous.channelEnded(number);
+                onNext.attach(this);
+                if (closed.get()) { // the client left while it was being opened
+                    synchronized (this) {
+                        lane.offerControl(TrunkFrame.close(number, CloseStatus.NORMAL));
+                    }
+                    onNext.channelEnded(number);
+                }
+            } catch (RuntimeException e) {
+                log.debug("Opening a channel on another backend failed", e);
+                refuse(refusal);
+            }
+        }
+
+        private void refuse(CloseStatus refusal) {
+            if (end()) {
+                toClient.close(refusal);
+            }
+        }
+
         private boolean end() {
             if (!closed.compareAndSet(false, true)) {
                 return false;
             }
-            trunk.channelEnded(this);
+            Trunk current;
+            long currentNumber;
+            synchronized (this) {
+                current = trunk;
+                currentNumber = number;
+            }
+            current.channelEnded(currentNumber);
             return true;
         }
     }

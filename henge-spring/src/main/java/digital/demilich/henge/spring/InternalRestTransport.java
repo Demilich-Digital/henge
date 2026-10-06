@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import digital.demilich.henge.core.Channel;
 import digital.demilich.henge.core.ChannelHandler;
 import digital.demilich.henge.core.RemoteServiceException;
+import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.ServiceInvocation;
 import digital.demilich.henge.core.ServiceTransport;
 import java.io.ByteArrayOutputStream;
@@ -189,10 +190,10 @@ class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoClos
         String service = invocation.serviceName();
         int version = invocation.serviceVersion();
         byte[] payload = TrunkOpen.write(objectMapper, service, version, invocation.methodName(), invocation.method(), invocation.args());
-        Endpoint endpoint = resolveEndpoint(service, version);
+        Endpoint endpoint = openingEndpoint(service, version);
         for (int attempt = 1; ; attempt++) {
             try {
-                return trunks.open(endpoint.baseUrl(), payload, toClient);
+                return trunks.open(endpoint.baseUrl(), service, version, payload, toClient, retryElsewhere(service, version, endpoint));
             } catch (TrunkPool.TrunkUnavailable e) {
                 if (endpoint.advertised()) {
                     advertisedEndpoints.failed(service, version, endpoint.baseUrl());
@@ -204,6 +205,45 @@ class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoClos
                 endpoint = resolveEndpoint(service, version);
             }
         }
+    }
+
+    /**
+     * Where to open a channel: found as for a call, except that when the datastore can't be reached to say,
+     * a backend this process already has a trunk to, and has opened this service on, is used. Whatever is
+     * open never needed the datastore, and an open can do without it as long as a backend is known; with
+     * none it fails as the datastore being unavailable.
+     */
+    private Endpoint openingEndpoint(String service, int version) {
+        try {
+            return resolveEndpoint(service, version);
+        } catch (StoreUnavailableException e) {
+            String live = trunks.liveTrunkServing(service, version);
+            if (live == null) {
+                throw e;
+            }
+            return new Endpoint(live, false);
+        }
+    }
+
+    /**
+     * What to do when the backend a channel was opened on says it doesn't host the service (a {@code 404}:
+     * nothing happened): mark it failed and use another advertised one. Only a backend that was found among
+     * the advertisements has another to try.
+     */
+    private TrunkPool.Retry retryElsewhere(String service, int version, Endpoint endpoint) {
+        if (!endpoint.advertised()) {
+            return null;
+        }
+        return failedBaseUrl -> {
+            advertisedEndpoints.failed(service, version, failedBaseUrl);
+            metrics.endpointFailed(service, version);
+            try {
+                String next = resolveEndpoint(service, version).baseUrl();
+                return next.equals(failedBaseUrl) ? null : next;
+            } catch (RuntimeException e) {
+                return null;
+            }
+        };
     }
 
     private boolean retries(Undelivered kind) {

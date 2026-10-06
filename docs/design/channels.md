@@ -5,7 +5,7 @@ thousands of them and a backend that holds almost none. The first use is **webso
 node runs the frontend, so a DNS dial of the cluster always reaches one, and the frontends are light. The
 services behind them are fewer and resource-bound, and must not carry a connection per end user.
 
-**Status.** Phases 1 (the contract and the embedded path) and 2 (the trunk) are built; failure handling and the example are not. This is the design to implement; the guide chapter comes with the code.
+**Status.** Phases 1 (the contract and the embedded path), 2 (the trunk) and 3 (failure and lifecycle) are built; the example and the guide chapter are not. This is the design to implement; the guide chapter comes with the code.
 [Decisions](#decisions) were made in discussion and are final unless something here proves unworkable;
 [open choices](#choices-left-to-the-implementer) come with a recommendation.
 
@@ -187,7 +187,7 @@ with no channels. For a new channel it:
    an explicit `henge.services.<name>.url`, else `remote-url-template`, else
    `AdvertisedEndpoints.next(service, version)`. Reuse it, and `failed(...)` on a connect failure, so
    failover and the routing table behave the same.
-2. If that lookup throws `StoreUnavailableException` (a cold routing table, store away), falls back to a
+2. If that lookup throws `StoreUnavailableException` (a cold routing table, store away: an entry is let go once the store is next reached after its refresh interval, so a frontend with channels open and no new opens for a while can have none), falls back to a
    **live trunk that has already opened this service version** (the pool remembers what each trunk has
    served). Only with none does it fail, `1013`.
 3. Opens or reuses the trunk, allocates a channel id, sends `OPEN`, and returns a proxy `ChannelHandler`

@@ -314,4 +314,42 @@ class AdvertisedEndpointsTest {
                 .hasMessageContaining("datastore is down")
                 .hasRootCauseMessage("datastore is down");
     }
+
+    @Test
+    void aStaleRouteIsEvictedOnceTheDatastoreIsReachedAgain() {
+        advertise(inner, "http://a:8080");
+        assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");
+
+        // Another service version is asked about after the interval: the datastore answers, so the route
+        // nobody has used since is let go, and with the datastore away it can no longer be served.
+        advance(REFRESH.plusSeconds(1));
+        assertThat(endpoints.next("other-service", 1)).isNull();
+        failing = true;
+
+        assertThatThrownBy(() -> endpoints.next("echo-service", 1)).isInstanceOf(StoreUnavailableException.class);
+    }
+
+    @Test
+    void aStaleRouteIsKeptWhileTheDatastoreCantBeReached() {
+        advertise(inner, "http://a:8080");
+        assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");
+
+        failing = true;
+        advance(REFRESH.plusSeconds(1));
+        assertThatThrownBy(() -> endpoints.next("other-service", 1)).isInstanceOf(StoreUnavailableException.class);
+
+        assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");
+    }
+
+    @Test
+    void aRouteWithinItsIntervalIsNotEvictedByAnotherLookup() {
+        advertise(inner, "http://a:8080");
+        assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");
+
+        advance(REFRESH.dividedBy(2));
+        endpoints.next("other-service", 1);
+        failing = true;
+
+        assertThat(endpoints.next("echo-service", 1)).isEqualTo("http://a:8080");
+    }
 }

@@ -22,7 +22,9 @@ import org.apache.commons.logging.LogFactory;
  * service per interval however many calls are made. Calls rotate through what's advertised.
  *
  * <p>The routing table is this process's copy of the datastore's answer, not a cache in front of an
- * optional store: the datastore is on the critical path. The table is only trusted as far as the datastore is: if a read comes back empty <em>and</em> the
+ * optional store: the datastore is on the critical path. An entry lives one refresh interval and is
+ * replaced, or evicted, whenever the datastore is next reached; only while it can't be reached is a
+ * stale one kept and served. The table is only trusted as far as the datastore is: if a read comes back empty <em>and</em> the
  * epoch has changed, the storage may just have been wiped and its hosts not yet had a heartbeat to
  * advertise again, so the previous answer is kept for one more interval. An empty read from the same
  * epoch is believed. A datastore that can't be read keeps serving what the table last read.
@@ -67,6 +69,15 @@ class AdvertisedEndpoints {
         });
     }
 
+    /**
+     * The datastore has just been reached, so what it hasn't been asked about since a whole interval ago is
+     * let go: an entry is only kept past its time while the datastore can't be reached to replace it.
+     */
+    private void evictStale(String justRead, Instant now) {
+        routes.entrySet().removeIf(entry -> !entry.getKey().equals(justRead)
+                && !now.isBefore(entry.getValue().fetchedAt().plus(refreshInterval)));
+    }
+
     private List<String> urls(String service, int version) {
         String key = ServiceAdvertisement.key(service, version);
         Route known = routes.get(key);
@@ -91,6 +102,7 @@ class AdvertisedEndpoints {
             }
             Route updated = new Route(maybeWiped ? known.urls() : fresh, snapshot.epoch(), now);
             routes.put(key, updated);
+            evictStale(key, now);
             return updated.urls();
         } catch (RuntimeException e) {
             if (known == null) {
