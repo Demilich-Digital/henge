@@ -1,9 +1,9 @@
 # Design: scheduled jobs
 
-**Status.** Steps 1 to 3 of the [build order](#build-order) are built: `@HengeScheduled` with the fire claim,
-the run claim with its heartbeat, `overlap`, `maxRuntime` and the batching reminder, and the startup check that
-refuses plain `@Scheduled` without `@HengeAcknowledgeThisRunsOnEveryNode`. Not built: the compile-time check in
-the processor, metrics, and the guide chapter.
+**Status.** Steps 1 to 4 of the [build order](#build-order) are built: `@HengeScheduled` with the fire claim,
+the run claim with its heartbeat, `overlap`, `maxRuntime` and the batching reminder, the startup check that
+refuses plain `@Scheduled` without `@HengeAcknowledgeThisRunsOnEveryNode`, and the same check at compile time.
+Not built: metrics, and the guide chapter.
 
 A scheduled job in Spring runs once per process. Deploy three replicas and `@Scheduled(cron = "...")`
 runs three times, silently, and only in production: with one process it looks correct. It is the same
@@ -32,8 +32,10 @@ each node counts from its own boot; they are rejected with a message pointing at
 
 ### Enforcement, in two layers
 
-1. **Compile time**, in `henge-processor`: a `@Scheduled` without the acknowledgement is a compile
-   error naming both fixes. The processor is opt-in per module, so this alone is not enough.
+1. **Compile time**, in `henge-processor`: a `@Scheduled` without the acknowledgement, on the method or
+   a class it is nested in, is a compile error naming both fixes. The processor is opt-in per module, so
+   this alone is not enough. It is also only run by the compiler for a module with annotations it claims,
+   so it can't see a `SchedulingConfigurer`, which carries none; the startup check does.
 2. **Startup**, in `henge-spring`: a bean post-processor fails context startup for any `@Scheduled`
    method without the acknowledgement, on the method or its class. A `SchedulingConfigurer` registers
    its tasks in code, where an annotation check can't see them, so one is refused unless the configurer
@@ -117,5 +119,5 @@ interrupted at `maxRuntime`, lost its renewal.
 1. `@HengeScheduled` with the fire claim, cron only, on the in-process store. *(built)*
 2. The run claim, its heartbeat, `maxRuntime`, and the startup reminder. *(built)*
 3. The startup check for `@Scheduled`, and the acknowledgement annotation. *(built)*
-4. The processor check.
+4. The processor check. *(built)*
 5. Metrics, a guide chapter, and a gotchas entry ("cron jobs that run N times").

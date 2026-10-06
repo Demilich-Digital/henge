@@ -12,6 +12,7 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -72,6 +73,8 @@ import javax.tools.JavaFileObject;
  *       ImmutableList/ImmutableSet/ImmutableMap/Optional thereof) — see {@link #validateNoCheckedExceptions} and
  *       {@link #validateBoundaryTypes}.</li>
  *   <li>{@code @ErrorStatus} codes outside {@code 400}–{@code 599}.</li>
+ *   <li>Spring's {@code @Scheduled}, which runs once per node, unless acknowledged with
+ *       {@code @HengeAcknowledgeThisRunsOnEveryNode} -- see {@link #validatePlainScheduling}.</li>
  * </ul>
  *
  * <p>Validation runs in the final round, once every generated type is resolved; only skeleton
@@ -80,7 +83,9 @@ import javax.tools.JavaFileObject;
 @SupportedAnnotationTypes({
         "digital.demilich.henge.core.HengeService",
         "digital.demilich.henge.core.ServiceVersion",
-        "digital.demilich.henge.core.ErrorStatus"})
+        "digital.demilich.henge.core.ErrorStatus",
+        "org.springframework.scheduling.annotation.Scheduled",
+        "org.springframework.scheduling.annotation.Schedules"})
 public class ServiceVersionProcessor extends AbstractProcessor {
 
     /**
@@ -127,6 +132,9 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             Set.of("java.util.Optional", IMMUTABLE_LIST, IMMUTABLE_SET, GUAVA_IMMUTABLE_LIST, GUAVA_IMMUTABLE_SET);
 
     private static final String SPRING_COMPONENT = "org.springframework.stereotype.Component";
+    private static final List<String> SPRING_SCHEDULED = List.of(
+            "org.springframework.scheduling.annotation.Scheduled", "org.springframework.scheduling.annotation.Schedules");
+    private static final String ACKNOWLEDGES_EVERY_NODE = "digital.demilich.henge.core.HengeAcknowledgeThisRunsOnEveryNode";
 
     /** Guards against non-regular generic records (e.g. {@code R<T>(R<R<T>> x)}) that would expand forever. */
     private static final int MAX_TYPE_NESTING = 32;
@@ -156,6 +164,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        validatePlainScheduling(roundEnv);
         for (Element element : roundEnv.getElementsAnnotatedWith(HengeService.class)) {
             if (element.getKind() == ElementKind.INTERFACE) {
                 TypeElement interfaceElement = (TypeElement) element;
@@ -924,5 +933,46 @@ public class ServiceVersionProcessor extends AbstractProcessor {
             }
         }
         return null;
+    }
+
+    /**
+     * Spring's {@code @Scheduled} runs once per process, so in a cluster it runs once per node, silently. It
+     * is an error unless the method, or a class it is declared in, carries
+     * {@code @HengeAcknowledgeThisRunsOnEveryNode}. Matched by name, as everything of Spring's here is, so the
+     * processor needs no Spring dependency. {@code henge-spring} refuses the same at startup, which also
+     * covers a module that doesn't run this processor, and a {@code SchedulingConfigurer}, which no
+     * annotation marks and a processor that runs only where annotations are found would never see.
+     */
+    private void validatePlainScheduling(RoundEnvironment roundEnv) {
+        Set<Element> methods = new LinkedHashSet<>();
+        for (String name : SPRING_SCHEDULED) {
+            TypeElement annotation = elementUtils.getTypeElement(name);
+            if (annotation != null) {
+                methods.addAll(roundEnv.getElementsAnnotatedWith(annotation));
+            }
+        }
+        for (Element method : methods) {
+            if (method.getKind() == ElementKind.METHOD && !acknowledgesEveryNode(method)) {
+                messager.printMessage(Diagnostic.Kind.ERROR,
+                        "@Scheduled method " + method.getEnclosingElement() + "#" + method.getSimpleName()
+                                + " would run on every node that hosts it, once each: Spring's scheduling is per process, "
+                                + "so three replicas run it three times. To run it once across the cluster, use "
+                                + "@HengeScheduled(cron = \"...\") instead. If running on every node is what you want, say "
+                                + "so by adding @HengeAcknowledgeThisRunsOnEveryNode to it.",
+                        method);
+            }
+        }
+    }
+
+    /** Whether {@code element}, or a class it is nested in, carries the acknowledgement. */
+    private static boolean acknowledgesEveryNode(Element element) {
+        for (Element e = element; e != null; e = e.getEnclosingElement()) {
+            for (AnnotationMirror mirror : e.getAnnotationMirrors()) {
+                if (((TypeElement) mirror.getAnnotationType().asElement()).getQualifiedName().contentEquals(ACKNOWLEDGES_EVERY_NODE)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }
