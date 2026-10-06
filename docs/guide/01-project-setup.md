@@ -54,7 +54,7 @@ The modules you depend on:
 | Module | Who needs it |
 |---|---|
 | `henge-core` | Contracts and services: the annotations, the immutable collections, the exceptions. Its only dependency is `spring-beans`. |
-| `henge-processor` | Contracts and services, as an **annotation processor**: it checks the boundary rules at compile time and generates version skeletons. |
+| `henge-processor` | Contracts and services, as an **annotation processor**: it checks the boundary rules at compile time and generates version skeletons. It also refuses Spring's `@Scheduled` without an acknowledgement ([chapter 9](09-scheduled-jobs.md#running-on-every-process)), so a module with scheduled methods runs it too. |
 | `henge-spring-boot-starter` | The app. |
 | `henge-redis` | The app, once you share state through Redis ([chapter 5](05-the-ephemeral-store.md)). |
 

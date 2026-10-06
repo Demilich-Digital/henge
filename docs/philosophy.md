@@ -34,7 +34,7 @@ thing forever. Two claims set Henge apart:
 Every system that goes from one process to many hits the same traps: state that was shared and quietly
 isn't, exceptions that change meaning over the wire, deploys that must happen in lockstep, connection
 pools that multiply past what the database allows, retries that repeat something that already happened,
-limits that only hold per process. They're well known, and still routinely discovered in production,
+limits that only hold per process, cron jobs that run once per replica. They're well known, and still routinely discovered in production,
 because nothing about a single process makes them visible.
 
 Henge makes them visible on the first day, while fixing them is cheap. Mutable state at a boundary is a

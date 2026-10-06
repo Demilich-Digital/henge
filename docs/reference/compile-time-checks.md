@@ -68,6 +68,15 @@ call, and the processor recognizes it by that return type:
 - `Channel` anywhere but as that last parameter, and `ChannelHandler` anywhere but as the return type, is
   an error. Declare a channel as `ChannelHandler watch(String orderId, Channel toClient)`.
 
+## Scheduled methods
+
+Spring's `@Scheduled` runs once per process, so in a cluster it runs once per node. A method annotated
+`@Scheduled` (or `@Schedules`) is an error unless it, or a class it is nested in, carries
+`@HengeAcknowledgeThisRunsOnEveryNode`. The message names the method and both ways out: `@HengeScheduled`
+for once per cluster, or the acknowledgement. Only a module that runs the processor and has Spring on its
+classpath is checked; `henge-spring` refuses the same at startup, which also covers a
+`SchedulingConfigurer` that no annotation marks. See [scheduled jobs](../guide/09-scheduled-jobs.md#running-on-every-process).
+
 ## Names
 
 A service's name, explicit or the interface's simple name in kebab case (`InventoryService` →

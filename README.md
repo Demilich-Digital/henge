@@ -72,6 +72,7 @@ The code calling inventory is the same in both runs, and doesn't know which one 
   6. [Leases and rate limits](docs/guide/06-leases-and-rate-limits.md)
   7. [Operating](docs/guide/07-operating.md)
   8. [Channels](docs/guide/08-channels.md)
+  9. [Scheduled jobs](docs/guide/09-scheduled-jobs.md)
 - **[Gotchas](docs/gotchas.md)**: every trap on the way from one process to many, and how each is caught
 - **Reference**: [configuration](docs/reference/configuration.md),
   [compile-time checks](docs/reference/compile-time-checks.md),
@@ -79,7 +80,8 @@ The code calling inventory is the same in both runs, and doesn't know which one 
   [modules](docs/reference/modules.md)
 - **More**: [the ephemeral store's contract](docs/ephemeral-store.md), [internals](docs/internals.md),
   [without Spring Boot](docs/plain-spring.md), [scope and roadmap](docs/scope.md),
-  [design: self-orchestration](docs/design/self-orchestration.md)
+  [design: self-orchestration](docs/design/self-orchestration.md),
+  [design: scheduled jobs](docs/design/scheduling.md)
 
 ## Building
 

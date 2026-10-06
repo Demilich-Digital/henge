@@ -170,5 +170,6 @@ backends over one connection each, from the same service interface and the same 
 
 ## Where next
 
+- [Scheduled jobs](09-scheduled-jobs.md): cron jobs that run once across the cluster
 - [Operating](07-operating.md), [Configuration](../reference/configuration.md#channels), the
   [design](../design/channels.md)

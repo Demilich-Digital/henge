@@ -101,7 +101,7 @@ request, and its `henge.dispatch`, all one trace.
 
 Henge also reports what it does on its own account as plain meters: lease claims and renewals, which
 services each process hosts, advertisement renewals, retries and give-ups, rate-limit grants and
-refusals, and the latency and errors of the store under all of them. A `0` on
+refusals, scheduled jobs' fires and runs, and the latency and errors of the store under all of them. A `0` on
 `henge.service.hosted` for a service configured `embedded` is a lease refusal; a run of
 `henge.advertisement.renewals` errors is a process about to drop out of the cluster.
 
@@ -136,10 +136,13 @@ the others.
 - [ ] Services that keep state in memory are hosted by one process only.
 - [ ] On Kubernetes, `livenessProbe` and `readinessProbe` use the actuator's liveness and readiness groups, so a node that can't reach the store is left alone but sent nothing.
 - [ ] `henge.advertise.url` (with a shared store) is an address other processes can actually reach.
+- [ ] More than one process means a shared store, or every process runs every `@HengeScheduled` fire.
+- [ ] Scheduled jobs are safe to run twice, and a job that runs longer than an hour is written as batches.
 
 ## Where next
 
 - [Channels](08-channels.md): long-lived connections to clients
+- [Scheduled jobs](09-scheduled-jobs.md): cron jobs that run once across the cluster
 - [Philosophy](../philosophy.md): why Henge is built this way, and where it's going
 - [Gotchas](../gotchas.md): every trap on the way from one process to many, and how each is handled
 - [Configuration](../reference/configuration.md), [Wire protocol](../reference/wire-protocol.md),

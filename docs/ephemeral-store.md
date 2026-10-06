@@ -63,6 +63,8 @@ A bucket's keyspace is separate from the members'. Implementations must be threa
 | `adv:<service>@<version>` | One per process hosting that version, valued with its address | [Advertisements](guide/05-the-ephemeral-store.md#advertisements) |
 | `lease:<name>` | One per process holding the lease, valued with its amount | [Leases](guide/06-leases-and-rate-limits.md#leases) |
 | `rate:<name>`, `rate:<name>:<subject>` | A bucket, not members | [Rate limits](guide/06-leases-and-rate-limits.md#rate-limits) |
+| `cron:<job>@<instant>` | The one process that won the fire, capacity 1, kept ten minutes and never released | [Scheduled jobs](guide/09-scheduled-jobs.md) |
+| `cron:<job>:running`, or `cron:<job>:running@<instant>` for a job that overlaps | The one run in progress, capacity 1, renewed while it executes | [Scheduled jobs](guide/09-scheduled-jobs.md#a-run-that-outlasts-its-interval) |
 
 ## What fits
 

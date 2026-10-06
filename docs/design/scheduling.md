@@ -1,9 +1,9 @@
 # Design: scheduled jobs
 
-**Status.** Steps 1 to 4, and the metrics of step 5, are built: `@HengeScheduled` with the fire claim, the run claim with its
-heartbeat, `overlap`, `maxRuntime` and the batching reminder, the startup and compile-time checks that refuse
-plain `@Scheduled` without `@HengeAcknowledgeThisRunsOnEveryNode`, and the meters. Not built: the guide
-chapter, the reference entries and the gotchas entry.
+**Status.** Built, and documented in [chapter 9](../guide/09-scheduled-jobs.md): `@HengeScheduled` with the fire
+claim, the run claim with its heartbeat, `overlap`, `maxRuntime` and the batching reminder, the startup and
+compile-time checks that refuse plain `@Scheduled` without `@HengeAcknowledgeThisRunsOnEveryNode`, and the
+meters. The guide chapter is the reference for behavior; this is why it is the way it is.
 
 A scheduled job in Spring runs once per process. Deploy three replicas and `@Scheduled(cron = "...")`
 runs three times, silently, and only in production: with one process it looks correct. It is the same
@@ -130,4 +130,4 @@ while no node was up, which is the no-catch-up rule seen from the other side.
 2. The run claim, its heartbeat, `maxRuntime`, and the startup reminder. *(built)*
 3. The startup check for `@Scheduled`, and the acknowledgement annotation. *(built)*
 4. The processor check. *(built)*
-5. Metrics *(built)*, a guide chapter, and a gotchas entry ("cron jobs that run N times").
+5. Metrics, a guide chapter, and a gotchas entry ("cron jobs that run N times"). *(built)*

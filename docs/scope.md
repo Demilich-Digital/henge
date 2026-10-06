@@ -7,6 +7,9 @@ scope excluded on purpose, the second is work deferred.
 
 - **Strong consistency in the ephemeral store.** No locks, compare-and-set, or transactions across keys.
   Anything that needs consensus belongs in a system built on it, used directly, outside Henge.
+- **A job queue, or durable jobs.** A queue's record has to survive the store, which holds nothing that
+  has to. A scheduled job's record is its annotation, and a job that must not be lost belongs in your own
+  database. A run that is cut short is never resumed: batching is the job's own.
 - **Replacing the orchestrator.** Kubernetes (or ECS, Nomad, ...) decides how many processes run; Henge
   decides, at most, what each one does.
 - **Sizing or owning your resources.** A lease is bookkeeping; your provider builds the pool from it.
@@ -29,6 +32,12 @@ scope excluded on purpose, the second is work deferred.
 - **Taking up a lease after startup.** Leases are claimed at startup only, so a refused process stays
   remote for that service until it restarts, even after the holder goes away. Switching a running
   service from remote to embedded needs the switchable proxies below.
+- **Catching up a missed fire.** A fire nobody was up for is skipped, as nothing durable records that it was
+  due. A misfire policy would need a record.
+- **Exempting a third party's `@Scheduled`.** Spring's own classes are left alone, and any other bean with a
+  `@Scheduled` method is refused unless it carries the acknowledgement, which a library's class can't.
+- **A warning for scheduled jobs on an in-process store with several processes.** Each is a cluster of one,
+  and runs every fire; nothing yet says so at startup.
 - **Other transports** (gRPC, say). `ServiceTransport` is a seam, but the serving side and the wiring are
   REST-specific too.
 - **mTLS between processes.** The optional shared secret is the only built-in protection; the network is

@@ -74,6 +74,13 @@ as for calls.
 | `henge.rate-limits.<name>.permits` / `.period` | — | A cluster-wide rate limit, injected with `@RateLimited("<name>")`: `permits` (a positive integer) drain every `period` (a duration, 1 ms to 1 h). Both required. |
 | `henge.rate-limits.<name>.capacity` | `permits` | The most the bucket holds: the burst a quiet limit lets through at once. |
 
+## Scheduled jobs
+
+There are no `henge.*` properties for jobs: a job's settings are on its `@HengeScheduled` annotation
+(`cron`, `zone`, `name`, `maxRuntime`, `overlap`), and the first four resolve `${placeholders}`, so they can
+come from any property. A job is claimed in the [ephemeral store](#the-ephemeral-store), so several
+processes need a shared one. See [scheduled jobs](../guide/09-scheduled-jobs.md).
+
 ## Environment variables
 
 Every key is a plain dotted key, read from Spring's `Environment` with no Boot-specific binding, so an
