@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastore.Epoch;
 import digital.demilich.henge.core.SystemEphemeralDatastore.MemberId;
@@ -93,9 +94,10 @@ class AdvertisedEndpoints {
             return updated.urls();
         } catch (RuntimeException e) {
             if (known == null) {
-                throw e;
+                throw e instanceof StoreUnavailableException ? e
+                        : new StoreUnavailableException("Can't look up who hosts " + key + ": " + e.getMessage(), e);
             }
-            log.warn("Couldn't refresh the advertisements for " + key + "; using the last ones read", e);
+            GuardedDatastore.logFailure(log, "Couldn't refresh the advertisements for " + key + "; using the last ones read", e);
             // Not recorded as fetched: the next call tries again.
             return known.urls();
         }

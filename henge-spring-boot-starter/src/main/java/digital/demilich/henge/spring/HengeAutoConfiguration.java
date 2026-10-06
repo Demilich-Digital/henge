@@ -51,6 +51,14 @@ public class HengeAutoConfiguration {
     static class Topology {
     }
 
+    /** A request that failed for want of the ephemeral store is a {@code 503} at this process's edge, unless the application says otherwise. */
+    @Bean
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+    @ConditionalOnMissingBean
+    HengeStoreUnavailableAdvice hengeStoreUnavailableAdvice() {
+        return new HengeStoreUnavailableAdvice();
+    }
+
     /**
      * Only in a servlet web application -- a process that serves no HTTP has nothing to dispatch to it.
      * Backs off when the application already imported {@link HengeDispatcherConfiguration} itself.

@@ -3,6 +3,8 @@ package digital.demilich.henge.spring;
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastoreProvider;
+import java.time.Duration;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -12,6 +14,7 @@ import java.util.Map;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.beans.factory.support.RootBeanDefinition;
@@ -31,7 +34,8 @@ import org.springframework.core.env.Environment;
  * {@link InProcessEphemeralDatastore} by default, or the {@link SystemEphemeralDatastoreProvider} of
  * that type found on the classpath (e.g. {@code redis}, from {@code henge-redis}). Setting a type
  * and defining a datastore bean is a contradiction and fails. More than one bean is an error unless
- * exactly one is {@code @Primary}. It then adds the datastore to the
+ * exactly one is {@code @Primary}. Whichever it is, the process uses it through a {@link GuardedDatastore}, so
+ * that one view of whether it is reachable is shared. It then adds the datastore to the
  * {@code depends-on} of every service bean ({@link HengeServiceRegistrar} passes their names), so
  * Spring creates it first and destroys it last.
  */
@@ -56,6 +60,17 @@ class HengeDatastoreInstaller implements BeanFactoryPostProcessor, EnvironmentAw
     @Override
     public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
         String datastoreBeanName = findOrRegisterDatastore(beanFactory, environment);
+        HengeProperties properties = new HengeProperties(environment);
+        Duration initialBackoff = properties.getStoreBackoffInitial();
+        Duration maxBackoff = properties.getStoreBackoffMax();
+        beanFactory.addBeanPostProcessor(new BeanPostProcessor() {
+            @Override
+            public Object postProcessAfterInitialization(Object bean, String beanName) {
+                return beanName.equals(datastoreBeanName) && bean instanceof SystemEphemeralDatastore datastore
+                        ? new GuardedDatastore(datastore, initialBackoff, maxBackoff, InstantSource.system())
+                        : bean;
+            }
+        });
         for (String serviceBeanName : serviceBeanNames) {
             BeanDefinition definition = beanFactory.getBeanDefinition(serviceBeanName);
             List<String> dependsOn = new ArrayList<>(Arrays.asList(

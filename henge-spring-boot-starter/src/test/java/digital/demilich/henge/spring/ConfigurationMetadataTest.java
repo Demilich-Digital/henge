@@ -23,7 +23,7 @@ class ConfigurationMetadataTest {
                 names.add(property.get("name").asText());
             });
             assertThat(names).doesNotHaveDuplicates().contains(
-                    "henge.serve", "henge.recent-versions", "henge.remote-url-template", "henge.advertise.url", "henge.transport.retry.max-attempts", "henge.transport.retry.backoff", "henge.transport.retry.on", "henge.store.type", "henge.store.redis.uri", "henge.server.enabled", "henge.server.path-prefix", "henge.topology.enabled",
+                    "henge.serve", "henge.recent-versions", "henge.remote-url-template", "henge.advertise.url", "henge.transport.retry.max-attempts", "henge.transport.retry.backoff", "henge.transport.retry.on", "henge.store.type", "henge.store.redis.uri", "henge.store.backoff.initial", "henge.store.backoff.max", "henge.server.enabled", "henge.server.path-prefix", "henge.topology.enabled",
                     "henge.transport.secret", "henge.transport.connect-timeout", "henge.transport.read-timeout");
         }
     }

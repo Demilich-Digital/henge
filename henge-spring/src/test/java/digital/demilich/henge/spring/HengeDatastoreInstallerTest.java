@@ -40,7 +40,9 @@ class HengeDatastoreInstallerTest {
     @Test
     void anInProcessDatastoreIsRegisteredWhenTheApplicationBringsNone() {
         try (var ctx = new AnnotationConfigApplicationContext(CounterTestConfig.class)) {
-            assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isInstanceOf(InProcessEphemeralDatastore.class);
+            assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isInstanceOf(GuardedDatastore.class);
+            assertThat(((GuardedDatastore) ctx.getBean(SystemEphemeralDatastore.class)).delegate())
+                    .isInstanceOf(InProcessEphemeralDatastore.class);
             assertThat(ctx.getBeansOfType(SystemEphemeralDatastore.class)).containsOnlyKeys("hengeDatastore");
         }
     }

@@ -117,11 +117,11 @@ class HengeStoreSelectionTest {
     void theInProcessStoreIsTheDefaultAndCanBeNamedExplicitly() {
         try (var ctx = context(Map.of(), LeasedConfig.class)) {
             ctx.refresh();
-            assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isInstanceOf(InProcessEphemeralDatastore.class);
+            assertThat(((GuardedDatastore) ctx.getBean(SystemEphemeralDatastore.class)).delegate()).isInstanceOf(InProcessEphemeralDatastore.class);
         }
         try (var ctx = context(Map.of("henge.store.type", "in-process"), LeasedConfig.class)) {
             ctx.refresh();
-            assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isInstanceOf(InProcessEphemeralDatastore.class);
+            assertThat(((GuardedDatastore) ctx.getBean(SystemEphemeralDatastore.class)).delegate()).isInstanceOf(InProcessEphemeralDatastore.class);
         }
     }
 
@@ -132,7 +132,7 @@ class HengeStoreSelectionTest {
             ctx.refresh();
 
             assertThat(FakeDatastoreProvider.SEEN.get()).isEqualTo("node-a");
-            assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isSameAs(FakeDatastoreProvider.CREATED.get());
+            assertThat(((GuardedDatastore) ctx.getBean(SystemEphemeralDatastore.class)).delegate()).isSameAs(FakeDatastoreProvider.CREATED.get());
             created = FakeDatastoreProvider.CREATED.get();
             // The chosen store really is the one in use.
             assertThat(created.read("lease:ledger-db").members()).hasSize(1); // one claim, shared by both services
@@ -181,7 +181,7 @@ class HengeStoreSelectionTest {
                 ctx.refresh();
 
                 assertThat(ctx.getBean(LedgerService.class).grant()).isEqualTo("ledger-db:40");
-                assertThat(ctx.getBean(SystemEphemeralDatastore.class)).isInstanceOf(RedisEphemeralDatastore.class);
+                assertThat(((GuardedDatastore) ctx.getBean(SystemEphemeralDatastore.class)).delegate()).isInstanceOf(RedisEphemeralDatastore.class);
 
                 var leases = observer.read("lease:ledger-db").members();
                 assertThat(leases).hasSize(1);

@@ -47,6 +47,27 @@ A caller gets an exception's type and message; the process that ran the method l
 `ERROR` for a failure answered with a `5xx`, `DEBUG` for a `4xx`. `@ErrorLogLevel` on an exception sets
 it explicitly, `NONE` included.
 
+## When the store goes away
+
+The [ephemeral store](05-the-ephemeral-store.md) is on the critical path, so Henge treats an unreachable
+one as an outage to ride out, not a mode to run in. A restart or a replacement is the expected case, and
+it is brief.
+
+- **What is already known keeps working.** A caller keeps routing to the hosts it last read, however
+  stale; a lease and its resource are kept, and re-claimed on the first heartbeat after the store
+  returns; nothing is evicted. Nothing new is learned, and this process's own advertisement lapses, so
+  traffic drains away from a node that can't renew it.
+- **Everything else fails fast.** After one failure every use of the store in the process fails at once
+  with `StoreUnavailableException`, for a backoff that doubles up to a cap (`henge.store.backoff.*`),
+  with one call at a time let through to find out. Nobody waits out a connect timeout per call.
+- **At the edge it is a `503`.** Over `internal-rest` the exception is a `503`, and a servlet application
+  on the starter answers it with a `503` too. Handle `StoreUnavailableException` yourself to answer
+  differently. Henge never retries a `503`; your clients may, and that is their choice.
+- **Logs say it once.** The start and the end of an outage are each logged once, not per call.
+
+If the store stays away, callers' routes go stale and eventually the calls fail on their own: Henge adds
+no deadline of its own.
+
 ## Metrics and traces
 
 With Spring Boot Actuator (or any `ObservationRegistry` bean), Henge observes every call:

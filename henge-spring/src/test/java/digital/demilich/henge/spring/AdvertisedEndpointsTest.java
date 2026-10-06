@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.RateLimit;
+import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import java.time.Duration;
 import java.time.Instant;
@@ -308,6 +309,9 @@ class AdvertisedEndpointsTest {
     void aDatastoreThatCantBeReadAndHasNoRoutesFailsTheCall() {
         failing = true;
 
-        assertThatThrownBy(() -> endpoints.next("echo-service", 1)).hasMessage("datastore is down");
+        assertThatThrownBy(() -> endpoints.next("echo-service", 1))
+                .isInstanceOf(StoreUnavailableException.class)
+                .hasMessageContaining("datastore is down")
+                .hasRootCauseMessage("datastore is down");
     }
 }

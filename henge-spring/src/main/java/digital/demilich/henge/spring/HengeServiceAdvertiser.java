@@ -77,7 +77,7 @@ class HengeServiceAdvertiser implements SmartLifecycle {
                 metrics.advertisementRenewed(service.name(), service.version(), true);
             } catch (RuntimeException e) {
                 metrics.advertisementRenewed(service.name(), service.version(), false);
-                log.warn("Advertising " + service.name() + "@" + service.version() + " failed; will retry on the next heartbeat", e);
+                GuardedDatastore.logFailure(log, "Advertising " + service.name() + "@" + service.version() + " failed; will retry on the next heartbeat", e);
             }
         }
     }

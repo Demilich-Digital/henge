@@ -251,7 +251,7 @@ class HengeTopologyReportTest {
     void aDatastoreThatCantBeReadLeavesTheRestOfTheReportIntact() {
         try (var ctx = context(leases(), LeasedConfig.class, DownConfig.class)) {
             ctx.refresh();
-            ((DownDatastore) ctx.getBean(SystemEphemeralDatastore.class)).down = true;
+            ((DownDatastore) ((GuardedDatastore) ctx.getBean(SystemEphemeralDatastore.class)).delegate()).down = true;
 
             Report report = reportOf(ctx);
 

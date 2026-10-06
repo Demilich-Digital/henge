@@ -57,6 +57,18 @@
       "description": "Which datastore holds this process's shared state (leases, service advertisements): in-process, or the type of an adapter module on the classpath, e.g. redis. Setting it while also defining a SystemEphemeralDatastore bean fails startup."
     },
     {
+      "name": "henge.store.backoff.initial",
+      "type": "java.time.Duration",
+      "defaultValue": "500ms",
+      "description": "After a call to the datastore fails, the wait before the first retry; every use of the datastore fails at once (StoreUnavailableException, a 503) until it has passed, then the wait doubles with each further failure. A bare number is milliseconds; 0 turns the backoff off."
+    },
+    {
+      "name": "henge.store.backoff.max",
+      "type": "java.time.Duration",
+      "defaultValue": "10s",
+      "description": "The longest the datastore is left alone after failing. What was last read about who hosts a service keeps being served meanwhile."
+    },
+    {
       "name": "henge.store.redis.uri",
       "type": "java.lang.String",
       "description": "For henge.store.type=redis: a Lettuce URI such as redis://host:6379/0 (rediss:// for TLS, redis://:password@host for a password). Required."

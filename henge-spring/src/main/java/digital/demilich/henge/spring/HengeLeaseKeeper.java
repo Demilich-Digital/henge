@@ -214,7 +214,7 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
                 }
             } catch (RuntimeException e) {
                 metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.ERROR);
-                log.warn("Renewing lease '" + need.name() + "' failed", e);
+                GuardedDatastore.logFailure(log, "Renewing lease '" + need.name() + "' failed", e);
             }
         }
     }

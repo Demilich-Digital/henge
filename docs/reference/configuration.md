@@ -48,6 +48,8 @@ whoever advertises it on the store → else the call fails, saying so.
 | `henge.store.type` | `in-process` | Which store holds this process's shared state: `in-process`, or the type of an adapter on the classpath (`redis`, from `henge-redis`). Setting it while also defining a `SystemEphemeralDatastore` bean fails startup. |
 | `henge.store.redis.uri` | — | For `type=redis`: a Lettuce URI, e.g. `redis://host:6379/0`; `rediss://` for TLS, `redis://:password@host` for a password, options as query parameters (`?timeout=5s`). |
 | `henge.store.redis.cluster-nodes` | — | For `type=redis` on Redis Cluster, instead of `uri`: comma-separated seed URIs. The other nodes are discovered, and the topology refreshed on failover or resharding. Exactly one of `uri` and `cluster-nodes` is required. |
+| `henge.store.backoff.initial` | `500ms` | After a call to the store fails, the wait before the first retry; every use of the store in the process fails at once (`StoreUnavailableException`, a `503`) until it has passed. It doubles with each further failure. `0` turns the backoff off. |
+| `henge.store.backoff.max` | `10s` | The longest the store is left alone after failing. What was last read about who hosts a service keeps being served meanwhile. |
 | `henge.advertise.url` | unset | Base URL (`http://host:port`) at which other processes reach this one's `/_henge`, published in its advertisements. Unset: advertisements say what this process hosts, but give no address. |
 
 ## Leases and rate limits

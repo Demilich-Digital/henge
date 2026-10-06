@@ -101,6 +101,16 @@ public class HengeProperties {
         return environment.getProperty("henge.remote-url-template");
     }
 
+    /** {@code henge.store.backoff.initial}, default 500 ms -- see {@link GuardedDatastore}. {@code 0} turns the backoff off. */
+    public Duration getStoreBackoffInitial() {
+        return timeout("henge.store.backoff.initial", GuardedDatastore.DEFAULT_INITIAL_BACKOFF, "no backoff");
+    }
+
+    /** {@code henge.store.backoff.max}, default 10 seconds: the longest the datastore is left alone after failing. */
+    public Duration getStoreBackoffMax() {
+        return timeout("henge.store.backoff.max", GuardedDatastore.DEFAULT_MAX_BACKOFF, "no backoff");
+    }
+
     /** {@code henge.transport.connect-timeout}, default 2 seconds -- see {@link #timeout}. */
     public Duration getConnectTimeout() {
         return timeout("henge.transport.connect-timeout", Duration.ofSeconds(2), "no timeout");
