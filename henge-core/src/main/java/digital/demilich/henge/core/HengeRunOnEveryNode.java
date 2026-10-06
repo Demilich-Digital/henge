@@ -16,7 +16,8 @@ import java.lang.annotation.Target;
  * be everywhere is one deployment setting away from not being. Henge refuses to start a process that would
  * reach it remotely: one whose {@code henge.serve} leaves it out, one configured {@code internal-rest}, and
  * one whose implementation waits on a {@link RequiresLease}, which a full lease would refuse. Such a service takes no leases: what needs one belongs in another
- * service, which it calls. Add the service
+ * service, which it calls. A {@link RateLimited} limiter is fine: it is only an operation on the ephemeral
+ * store, which every node is assumed to reach. Add the service
  * to {@code henge.serve} (or drop the annotation) to resolve it.
  *
  * <p>It is a statement about placement and nothing more: it doesn't make the service stateless, or its
