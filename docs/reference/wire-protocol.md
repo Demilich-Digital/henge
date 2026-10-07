@@ -29,6 +29,7 @@ Henge-Internal-Secret: <secret>          (only when henge.transport.secret is se
 | `204` | none | A `void` method returned. |
 | `400` | error | The arguments couldn't be read. |
 | `403` | error | The secret is missing or wrong. Checked before the body is read. |
+| `413` | error | The body is over `henge.transport.max-body-bytes`. Reading stops at the limit; the method isn't called. |
 | `404` | error | This process doesn't serve that service, version or method. |
 | `4xx`/`5xx` from `@ErrorStatus` | error, with the exception | The method threw an exception annotated `@ErrorStatus`. |
 | `501` | error, with the exception | `ServiceVersionUnsupportedException`: the method isn't in this version's range. |
@@ -47,6 +48,11 @@ The error body:
 `exceptionType` and `exceptionMessage` are present only when the method itself threw. The dispatcher's
 own failures (`400`, `403`, `404`) carry no exception, so they stay distinguishable from a business
 exception that uses the same status.
+
+An `ImmutableBytes` is a JSON string of standard base64 with padding, the text Jackson writes for a
+`byte[]`; an empty one is `""`. `henge.transport.max-body-bytes` (10 MiB) bounds the body in both
+directions: the dispatcher answers `413` to a request over it, and a caller refuses to send an argument
+over it, or to read a response over it, before wasting the trip.
 
 Arguments and return values are written by the transport's own `ObjectMapper`, never the application's,
 so an application's Jackson configuration doesn't change what's on the wire. It reads Henge's immutable

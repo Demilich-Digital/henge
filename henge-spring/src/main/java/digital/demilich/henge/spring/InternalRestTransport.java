@@ -17,12 +17,14 @@ import java.net.PortUnreachableException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.UnknownHostException;
+import java.nio.charset.Charset;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.BeanClassLoaderAware;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -56,6 +58,7 @@ class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoClos
     private final SystemMetrics metrics;
     private final RetryPolicy retryPolicy;
     private final TrunkPool trunks;
+    private final int maxBodyBytes;
 
     InternalRestTransport(RestClient restClient, ObjectMapper objectMapper, HengeProperties properties) {
         this(restClient, objectMapper, properties, null);
@@ -76,6 +79,7 @@ class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoClos
         this.advertisedEndpoints = advertisedEndpoints;
         this.metrics = metrics;
         this.retryPolicy = properties.getRetryPolicy(); // validated at startup, not on the first failure
+        this.maxBodyBytes = properties.getMaxBodyBytes();
         requireKnownPlaceholders(properties.getRemoteUrlTemplate());
         properties.getServerPathPrefix(); // validated at startup, not on the first call
         this.trunks = new TrunkPool(properties.getChannelSettings(), properties.getConnectTimeout(),
@@ -141,6 +145,11 @@ class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoClos
     public Object invoke(ServiceInvocation invocation) {
         Endpoint endpoint = resolveEndpoint(invocation.serviceName(), invocation.serviceVersion());
         byte[] body = writeArguments(invocation);
+        if (body.length > maxBodyBytes) {
+            throw new RemoteServiceException("Henge service call not sent: " + invocation.serviceName() + "#"
+                    + invocation.methodName() + " has " + BodyLimit.describe(body.length) + " of arguments, over "
+                    + BodyLimit.PROPERTY + " (" + BodyLimit.describe(maxBodyBytes) + ")");
+        }
 
         byte[] responseBody;
         for (int attempt = 1; ; attempt++) {
@@ -332,8 +341,7 @@ class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoClos
                         }
                     })
                     .body(body)
-                    .retrieve()
-                    .body(byte[].class);
+                    .exchange((request, response) -> readResponse(invocation, response), true);
         } catch (RestClientResponseException e) {
             RemoteServiceException fallback = new RemoteServiceException("Henge service call failed: " + invocation.serviceName() + "#"
                     + invocation.methodName() + " -> " + e.getStatusCode() + " " + e.getResponseBodyAsString(), e);
@@ -359,6 +367,30 @@ class InternalRestTransport implements ServiceTransport, ChannelOpener, AutoClos
             }
             throw new RemoteServiceException(message, e);
         }
+    }
+
+    /**
+     * The response body, which is refused once it is over the limit; a failure status becomes the exception
+     * {@code retrieve()} would have thrown, its body bounded the same way.
+     */
+    private byte[] readResponse(ServiceInvocation invocation, RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response)
+            throws IOException {
+        byte[] responseBody;
+        try {
+            responseBody = BodyLimit.readAll(response.getBody(), maxBodyBytes);
+        } catch (BodyLimit.Exceeded e) {
+            throw new RemoteServiceException("Henge service call failed: " + invocation.serviceName() + "#"
+                    + invocation.methodName() + " answered with a body over " + BodyLimit.PROPERTY + " ("
+                    + BodyLimit.describe(maxBodyBytes) + ")", e);
+        }
+        HttpStatusCode status = response.getStatusCode();
+        if (status.isError()) {
+            Charset charset = response.getHeaders().getContentType() != null
+                    ? response.getHeaders().getContentType().getCharset() : null;
+            throw new RestClientResponseException("Henge service call failed with " + status, status,
+                    response.getStatusText(), response.getHeaders(), responseBody, charset);
+        }
+        return responseBody;
     }
 
     /**

@@ -75,6 +75,8 @@ So everything that crosses a `@HengeService` method, parameters and return value
 
 - records and enums (records are checked component by component)
 - primitives, `String`, `java.time.*`, `UUID`, `BigDecimal`, `BigInteger`
+- `ImmutableBytes` (from `henge-core`) for binary data: an array is mutable, so `byte[]` is rejected. It's
+  small payloads only; see [Compile-time checks](../reference/compile-time-checks.md#binary-data)
 - `ImmutableList`, `ImmutableSet`, `ImmutableMap` (from `henge-core`, or Guava's) and `Optional`, of the
   above
 

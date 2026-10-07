@@ -121,6 +121,16 @@ public class HengeProperties {
         return timeout("henge.transport.read-timeout", Duration.ofSeconds(10), "no timeout");
     }
 
+    /**
+     * {@code henge.transport.max-body-bytes}, default 10 MiB: the most one call's body may hold, in either
+     * direction -- the dispatcher answers {@code 413} to a larger request, and a caller refuses to send, or to
+     * read, a larger one. A positive integer.
+     */
+    public int getMaxBodyBytes() {
+        Integer configured = positiveInt(environment, BodyLimit.PROPERTY);
+        return configured == null ? BodyLimit.DEFAULT_MAX_BYTES : configured;
+    }
+
     /** What bounds a channel and its trunk: see {@link #getChannelSettings}. */
     record ChannelSettings(int queueSize, int maxFrameBytes, Duration pingInterval, Duration idleTimeout) {
     }

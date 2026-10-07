@@ -48,6 +48,7 @@ class HengeDispatcherController {
     private final ObjectMapper objectMapper;
     private final SharedSecret secret;
     private final ServiceDispatchObserver observer;
+    private final int maxBodyBytes;
 
     HengeDispatcherController(HengeServiceRegistry registry, ObjectMapper objectMapper, HengeProperties properties,
             ServiceDispatchObserver observer) {
@@ -55,6 +56,7 @@ class HengeDispatcherController {
         this.objectMapper = objectMapper;
         this.observer = observer;
         this.secret = SharedSecret.from(properties);
+        this.maxBodyBytes = properties.getMaxBodyBytes(); // validated at startup, not on the first call
         properties.getServerPathPrefix(); // validates it; the @RequestMapping above reads the same property
         if (!secret.isRequired()) {
             log.info("henge.transport.secret is not set: /_henge accepts calls without authentication and "
@@ -151,7 +153,7 @@ class HengeDispatcherController {
      */
     private Object[] readArguments(Method method, InputStream requestBody) {
         Object[] args = new Object[method.getParameterCount()];
-        try (JsonParser parser = objectMapper.createParser(requestBody)) {
+        try (JsonParser parser = objectMapper.createParser(BodyLimit.limit(requestBody, maxBodyBytes))) {
             JsonToken first = parser.nextToken();
             if (first == JsonToken.START_ARRAY) {
                 args = ServiceArguments.readArray(objectMapper, method, args.length, parser);
@@ -166,6 +168,9 @@ class HengeDispatcherController {
             }
             requireEndOfInput(parser);
             return args;
+        } catch (BodyLimit.Exceeded e) {
+            throw new HengeDispatchException(HttpStatus.PAYLOAD_TOO_LARGE, "Request body for " + method.getName()
+                    + " is over " + BodyLimit.PROPERTY + " (" + BodyLimit.describe(maxBodyBytes) + ")");
         } catch (StreamReadException e) {
             throw new HengeDispatchException(HttpStatus.BAD_REQUEST, "Request body is not valid JSON");
         } catch (IOException e) {

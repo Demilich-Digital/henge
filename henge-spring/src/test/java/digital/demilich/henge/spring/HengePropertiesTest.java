@@ -193,4 +193,25 @@ class HengePropertiesTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("henge.recent-versions");
     }
+
+    private static HengeProperties withMaxBodyBytes(String value) {
+        StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("test", Map.of("henge.transport.max-body-bytes", value)));
+        return new HengeProperties(environment);
+    }
+
+    @Test
+    void maxBodyBytesDefaultsToTenMebibytes() {
+        assertThat(new HengeProperties(new StandardEnvironment()).getMaxBodyBytes()).isEqualTo(10 * 1024 * 1024);
+        assertThat(withMaxBodyBytes("2048").getMaxBodyBytes()).isEqualTo(2048);
+    }
+
+    @Test
+    void maxBodyBytesMustBeAPositiveInteger() {
+        for (String bad : new String[] {"0", "-1", "10MB", "lots"}) {
+            assertThatThrownBy(() -> withMaxBodyBytes(bad).getMaxBodyBytes())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("henge.transport.max-body-bytes=" + bad + " is not a positive integer");
+        }
+    }
 }

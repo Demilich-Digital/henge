@@ -14,6 +14,7 @@ through record components and type arguments. Allowed:
 
 - records (each component checked) and enums
 - primitives, `String`, and immutable JDK value types: `java.time.*`, `UUID`, `BigDecimal`, `BigInteger`
+- `ImmutableBytes` from `henge-core`, for binary data (see [below](#binary-data))
 - `ImmutableList<T>`, `ImmutableSet<T>`, `ImmutableMap<K, V>` from `henge-core`, Guava's classes of the
   same names, and `Optional<T>`, of allowed types
 
@@ -26,8 +27,10 @@ Rejected, with the reason:
 - **Sealed interfaces**: JSON has no type information to pick a subtype with, so they work embedded and
   fail once split. Model a tagged union as a record: a `kind` enum and the fields each kind needs.
 - **Map keys other than** `String`, a boxed primitive, an enum or one of the value types above. A key
-  travels as a JSON object key, a string, so a record, `Optional` or collection key can't be read back.
-- **Arrays, type variables, and wildcards without a usable bound** (`?`, `? super X`).
+  travels as a JSON object key, a string, so a record, `Optional`, collection or `ImmutableBytes` key can't
+  be read back.
+- **Arrays, type variables, and wildcards without a usable bound** (`?`, `? super X`). A `byte[]` is
+  answered with "use ImmutableBytes", any other array with "use ImmutableList<T>".
   `ImmutableList<? extends Point>` is fine.
 - Types nested deeper than the processor follows.
 
@@ -35,6 +38,18 @@ Rejected, with the reason:
 mutators throw. They're distinctly named so the processor can recognize the *type*, and the transport
 deserializes them (and Guava's, when Guava is on the classpath; Henge never adds it). `henge-core`
 itself doesn't depend on Jackson.
+
+## Binary data
+
+`ImmutableBytes` is the boundary type for a byte sequence, because a `byte[]` can be mutated by whoever
+holds it. It copies on the way in (`copyOf`) and out (`toByteArray`), and compares by content, so a record
+with an `ImmutableBytes` component has the `equals` you'd expect. On the wire it is a base64 string, the
+text Jackson writes for a `byte[]`.
+
+The whole body of a call is held in memory, and `henge.transport.max-body-bytes` (10 MiB by default,
+counting the base64, so about 7.5 MiB of binary) bounds it. For anything larger, use a
+[channel](../guide/08-channels.md), which carries binary frames, or pass a reference to where the data
+lives.
 
 ## Exceptions
 

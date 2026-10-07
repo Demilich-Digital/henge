@@ -1,15 +1,19 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.ImmutableBytes;
 import digital.demilich.henge.core.ImmutableList;
 import digital.demilich.henge.core.ImmutableMap;
 import digital.demilich.henge.core.ImmutableSet;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.BeanProperty;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.deser.ContextualDeserializer;
+import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -20,7 +24,7 @@ import java.util.function.Function;
 import org.springframework.util.ClassUtils;
 
 /**
- * Deserialization support for the immutable collection types {@code henge-processor} allows at
+ * Wire support for {@link ImmutableBytes}, and deserialization support for the immutable collection types {@code henge-processor} allows at
  * a {@code @HengeService} boundary: {@link ImmutableList}/{@link ImmutableSet}/{@link ImmutableMap},
  * and Guava's {@code ImmutableList}/{@code ImmutableSet}/{@code ImmutableMap} when Guava is on the
  * classpath. None of them has the construct-then-{@code add()} shape Jackson's default collection
@@ -30,10 +34,14 @@ import org.springframework.util.ClassUtils;
  * Jackson-free; only the transport (already a jackson-databind consumer) needs to know how these
  * serialize on the wire. Serialization needs no special handling: they all implement the standard
  * {@code Collection}/{@code Map} interfaces, so Jackson's default container serializers handle them.
+ * {@link ImmutableBytes} is written and read as a base64 string, which is what Jackson does with a
+ * {@code byte[]}.
  */
 final class HengeCollectionsModule extends SimpleModule {
 
     HengeCollectionsModule() {
+        addSerializer(ImmutableBytes.class, new BytesSerializer());
+        addDeserializer(ImmutableBytes.class, new BytesDeserializer());
         addDeserializer(ImmutableList.class, new CollectionDeserializer<>(ImmutableList::copyOf));
         addDeserializer(ImmutableSet.class, new CollectionDeserializer<>(ImmutableSet::copyOf));
         addDeserializer(ImmutableMap.class, new MapDeserializer<>(ImmutableMap::copyOf));
@@ -55,6 +63,22 @@ final class HengeCollectionsModule extends SimpleModule {
                     new CollectionDeserializer<>(com.google.common.collect.ImmutableSet::copyOf));
             module.addDeserializer(com.google.common.collect.ImmutableMap.class,
                     new MapDeserializer<>(com.google.common.collect.ImmutableMap::copyOf));
+        }
+    }
+
+    private static final class BytesSerializer extends JsonSerializer<ImmutableBytes> {
+
+        @Override
+        public void serialize(ImmutableBytes value, JsonGenerator generator, SerializerProvider provider) throws IOException {
+            generator.writeBinary(value.toByteArray());
+        }
+    }
+
+    private static final class BytesDeserializer extends JsonDeserializer<ImmutableBytes> {
+
+        @Override
+        public ImmutableBytes deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+            return ImmutableBytes.copyOf(parser.getBinaryValue());
         }
     }
 

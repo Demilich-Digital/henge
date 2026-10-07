@@ -574,6 +574,35 @@ class CompileTimeChecksTest {
         assertThat(wildcardRecordKey.hasErrorContaining("JSON object key")).isTrue();
     }
 
+    @Test
+    void immutableBytesIsABoundaryTypeButAByteArrayIsNot() {
+        var ok = compile(
+                src("bytesok", "Sheet", "public record Sheet(String name, ImmutableBytes png) {}"),
+                src("bytesok", "Svc", "@HengeService public interface Svc { "
+                        + "ImmutableBytes put(ImmutableBytes a, Sheet b, java.util.Optional<ImmutableBytes> c, "
+                        + "ImmutableList<ImmutableBytes> d, ImmutableMap<String, ImmutableBytes> e); }"));
+        assertThat(ok.success()).isTrue();
+
+        var array = compile(src("bytesarray", "Svc", "@HengeService public interface Svc { void put(byte[] a); }"));
+        assertThat(array.success()).isFalse();
+        assertThat(array.hasErrorContaining("use ImmutableBytes instead")).isTrue();
+
+        var recordArray = compile(
+                src("bytesrec", "Sheet", "public record Sheet(byte[] png) {}"),
+                src("bytesrec", "Svc", "@HengeService public interface Svc { void put(Sheet s); }"));
+        assertThat(recordArray.success()).isFalse();
+        assertThat(recordArray.hasErrorContaining("use ImmutableBytes instead")).isTrue();
+    }
+
+    @Test
+    void immutableBytesCannotBeAMapKey() {
+        var result = compile(src("byteskey", "Svc",
+                "@HengeService public interface Svc { void put(ImmutableMap<ImmutableBytes, String> m); }"));
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.hasErrorContaining("JSON object key")).isTrue();
+    }
+
     // ---- generated skeletons ----
 
     @Test

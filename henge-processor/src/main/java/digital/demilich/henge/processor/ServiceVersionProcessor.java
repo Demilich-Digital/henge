@@ -34,6 +34,7 @@ import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.RecordComponentElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeKind;
@@ -94,7 +95,10 @@ public class ServiceVersionProcessor extends AbstractProcessor {
      * after construction, so embedded and internal-rest dispatch can never observe them
      * differently.
      */
+    private static final String IMMUTABLE_BYTES = "digital.demilich.henge.core.ImmutableBytes";
+
     private static final Set<String> ALLOWED_LEAF_TYPES = Set.of(
+            IMMUTABLE_BYTES,
             Boolean.class.getName(), Byte.class.getName(), Short.class.getName(), Character.class.getName(),
             Integer.class.getName(), Long.class.getName(), Float.class.getName(), Double.class.getName(),
             String.class.getName(),
@@ -664,7 +668,9 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 // primitives are always safe: no aliasing, no serialization ambiguity
             }
             case ARRAY -> reportBoundaryError(method, position, type,
-                    "arrays are mutable and alias across the embedded/internal-rest boundary; use ImmutableList<T> instead");
+                    "arrays are mutable and alias across the embedded/internal-rest boundary; use "
+                            + (((ArrayType) type).getComponentType().getKind() == TypeKind.BYTE
+                                    ? "ImmutableBytes" : "ImmutableList<T>") + " instead");
             case DECLARED -> checkDeclaredBoundaryType((DeclaredType) type, method, position, visiting);
             case TYPEVAR -> reportBoundaryError(method, position, type,
                     "a type variable has no concrete type at runtime, so it would be bound as an untyped JSON map");
@@ -744,10 +750,12 @@ public class ServiceVersionProcessor extends AbstractProcessor {
         }
         if (key.getKind() == TypeKind.DECLARED) {
             TypeElement keyElement = (TypeElement) ((DeclaredType) key).asElement();
-            if (!ALLOWED_LEAF_TYPES.contains(keyElement.getQualifiedName().toString()) && keyElement.getKind() != ElementKind.ENUM) {
+            String keyName = keyElement.getQualifiedName().toString();
+            if ((!ALLOWED_LEAF_TYPES.contains(keyName) || IMMUTABLE_BYTES.equals(keyName)) && keyElement.getKind() != ElementKind.ENUM) {
                 reportBoundaryError(method, keyPosition, key,
                         "a map key travels as a JSON object key, a string, and only String, boxed primitives, enums and "
-                                + "the listed immutable value types can be read back from one -- not a record or container");
+                                + "the listed immutable value types can be read back from one -- not a record, a container "
+                                + "or ImmutableBytes");
                 return;
             }
         }
@@ -772,7 +780,7 @@ public class ServiceVersionProcessor extends AbstractProcessor {
                 position + " " + type + " of method '" + method.getSimpleName() + "' on " + method.getEnclosingElement()
                         + " is not a valid @HengeService boundary type (" + reason + "). Boundary types must be "
                         + "records, enums, primitives, String, well-known immutable value types (java.time.*, UUID, "
-                        + "BigDecimal, BigInteger), or ImmutableList/ImmutableSet/ImmutableMap/Optional thereof, "
+                        + "BigDecimal, BigInteger, ImmutableBytes), or ImmutableList/ImmutableSet/ImmutableMap/Optional thereof, "
                         + "recursively -- see "
                         + "docs/reference/compile-time-checks.md.",
                 method);

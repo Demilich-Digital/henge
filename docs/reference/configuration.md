@@ -28,6 +28,7 @@ whoever advertises it on the store → else the call fails, saying so.
 |---|---|---|
 | `henge.transport.connect-timeout` | `2s` | A bare number is milliseconds; `500ms`, `2s` and ISO-8601 (`PT2S`) work too. `0` means no timeout. |
 | `henge.transport.read-timeout` | `10s` | Same format. |
+| `henge.transport.max-body-bytes` | `10485760` | The most one call's body may hold, 10 MiB, counted on the wire: base64 makes `ImmutableBytes` a third larger. A caller refuses to send an argument over it, and to read a response over it, with a `RemoteServiceException` naming the method; the dispatcher answers `413` to a request over it, without running the method. A positive integer. |
 | `henge.transport.retry.max-attempts` | `3` | Calls made at most per invocation, the first included; `1` turns retries off. |
 | `henge.transport.retry.backoff` | `50ms` | Wait before each retry; same format, `0` retries at once. |
 | `henge.transport.retry.on` | `connect,not-served` | Which failures are retried: `connect` (no connection was made), `not-served` (any `404`), or both. |

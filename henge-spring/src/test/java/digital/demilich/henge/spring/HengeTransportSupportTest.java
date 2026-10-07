@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
+import digital.demilich.henge.core.ImmutableBytes;
 import digital.demilich.henge.core.ImmutableList;
 import digital.demilich.henge.core.ImmutableMap;
 import digital.demilich.henge.core.ImmutableSet;
@@ -176,5 +177,48 @@ class HengeTransportSupportTest {
     void genericRecordsRoundTripWithTheirTypeArguments() throws Exception {
         Box<Point> box = new Box<>(new Point(1, 2), ImmutableList.of(new Point(3, 4)));
         assertThat(roundTrip(box, new TypeReference<Box<Point>>() {})).isEqualTo(box);
+    }
+
+    record Sheet(String name, ImmutableBytes png) {
+    }
+
+    @Test
+    void immutableBytesTravelAsABase64String() throws Exception {
+        assertThat(mapper.writeValueAsString(ImmutableBytes.of(0xCA, 0xFE, 0x01))).isEqualTo("\"yv4B\"");
+        assertThat(mapper.writeValueAsString(ImmutableBytes.of())).isEqualTo("\"\"");
+        // The same text Jackson writes for a byte[], so a peer that has one reads it.
+        assertThat(mapper.writeValueAsString(new byte[] {(byte) 0xCA, (byte) 0xFE, 1})).isEqualTo("\"yv4B\"");
+    }
+
+    @Test
+    void immutableBytesRoundTrip() throws Exception {
+        byte[] everyByte = new byte[256];
+        for (int i = 0; i < everyByte.length; i++) {
+            everyByte[i] = (byte) i;
+        }
+        ImmutableBytes bytes = ImmutableBytes.copyOf(everyByte);
+
+        assertThat(roundTrip(bytes, new TypeReference<ImmutableBytes>() {})).isEqualTo(bytes);
+        assertThat(roundTrip(ImmutableBytes.of(), new TypeReference<ImmutableBytes>() {})).isEqualTo(ImmutableBytes.of());
+        assertThat(roundTrip(bytes.slice(10, 20), new TypeReference<ImmutableBytes>() {})).isEqualTo(bytes.slice(10, 20));
+    }
+
+    @Test
+    void immutableBytesInsideRecordsAndContainersRoundTrip() throws Exception {
+        Sheet sheet = new Sheet("hero", ImmutableBytes.of(1, 2, 3));
+
+        assertThat(roundTrip(sheet, new TypeReference<Sheet>() {})).isEqualTo(sheet);
+        assertThat(roundTrip(java.util.Optional.of(sheet.png()), new TypeReference<java.util.Optional<ImmutableBytes>>() {}))
+                .contains(sheet.png());
+        assertThat(roundTrip(ImmutableList.of(sheet.png()), new TypeReference<ImmutableList<ImmutableBytes>>() {}))
+                .containsExactly(sheet.png());
+        assertThat(roundTrip(ImmutableMap.copyOf(java.util.Map.of("k", sheet.png())), new TypeReference<ImmutableMap<String, ImmutableBytes>>() {}))
+                .containsEntry("k", sheet.png());
+    }
+
+    @Test
+    void aMissingOrNullBytesComponentReadsAsNull() throws Exception {
+        assertThat(mapper.readValue("{\"name\":\"hero\"}", Sheet.class)).isEqualTo(new Sheet("hero", null));
+        assertThat(mapper.readValue("{\"name\":\"hero\",\"png\":null}", Sheet.class)).isEqualTo(new Sheet("hero", null));
     }
 }
