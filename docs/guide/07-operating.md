@@ -108,9 +108,10 @@ In plain Spring, inject the `HengeBootGate` bean and ask its `isReady()` from yo
 
 ## Deploying a new version
 
-Replacing processes is where [leases](06-leases-and-rate-limits.md) bite, because a lease is claimed once, at
-startup, and never taken up later. A process refused one stays remote for that service until it restarts,
-**even after the holder is gone**. Tested on three replicas of the shop on Docker Compose, two of which could
+Replacing processes is where [leases](06-leases-and-rate-limits.md) bite, because a process refused one is
+reached remotely until its next look at the lease, which comes every 30 seconds or so and backs off to 5
+minutes while the lease stays full. The cases below were tested before that look existed, when a refused process
+stayed remote until it restarted, **even after the holder was gone**; what each is now is said at its end. Tested on three replicas of the shop on Docker Compose, two of which could
 hold the `inventory-db` lease:
 
 - **One at a time, waiting for each to be healthy: clean.** A process that stops gracefully hands its lease
@@ -122,12 +123,13 @@ hold the `inventory-db` lease:
 - **A holder that crashes and restarts at once: the service stays down.** The lease is still held when it
   starts, so it, and every other process, is refused. The lease lapses after its 30 seconds, but no one claims
   it. Callers get `RemoteServiceException` (a `500`: no url configured, and no process advertises the
-  service) until some process is restarted.
+  service) until some process is restarted. With the poll, until the first look after the lease lapses.
 
 So with leases: roll one process at a time and wait for readiness (a rolling update does this by default
 on Kubernetes), keep a spare slot's worth of capacity, and alert on a service that nobody hosts, which is
-`henge.service.hosted` at `0` across the cluster. Taking up a lease after startup, and rebalancing who holds
-them, is on the [roadmap](../scope.md#roadmap) and removes all three cases.
+`henge.service.hosted` at `0` across the cluster. A refused process taking up a lease later closes the gap in
+the last two cases, within a poll interval of the lease lapsing; rebalancing who holds them is on the
+[roadmap](../scope.md#roadmap).
 
 Docker Compose has no rolling update: `docker compose up` replaces a service's containers without waiting
 for the others to be healthy. Do the replacement yourself (a script that scales up, waits for health, and

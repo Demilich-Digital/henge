@@ -73,6 +73,18 @@
       "description": "The longest the datastore is left alone after failing. What was last read about who hosts a service keeps being served meanwhile."
     },
     {
+      "name": "henge.lease-poll.interval",
+      "type": "java.time.Duration",
+      "defaultValue": "30s",
+      "description": "How often a process that was refused a lease looks for room in it, give or take half, so processes refused together don't ask together. When there is room it claims the lease and hosts the service."
+    },
+    {
+      "name": "henge.lease-poll.max-interval",
+      "type": "java.time.Duration",
+      "defaultValue": "5m",
+      "description": "The longest between looks for room in a refused lease. The wait doubles from the interval with each refusal, so a cluster that is really full is asked less and less often."
+    },
+    {
       "name": "henge.store.redis.uri",
       "type": "java.lang.String",
       "description": "For henge.store.type=redis: a Lettuce URI such as redis://host:6379/0 (rediss:// for TLS, redis://:password@host for a password). Required."

@@ -111,6 +111,22 @@ public class HengeProperties {
         return timeout("henge.store.backoff.max", GuardedDatastore.DEFAULT_MAX_BACKOFF, "no backoff");
     }
 
+    /**
+     * {@code henge.lease-poll.interval}, default 30 seconds: how often a process refused a lease looks for
+     * room in it, give or take half, so processes refused together don't ask together. Positive.
+     */
+    public Duration getLeasePollInterval() {
+        return positiveTimeout("henge.lease-poll.interval", HengeLeasePoller.DEFAULT_INTERVAL);
+    }
+
+    /**
+     * {@code henge.lease-poll.max-interval}, default 5 minutes: the longest between looks, which double
+     * from the interval with each refusal. Positive; below the interval, it is the interval.
+     */
+    public Duration getLeasePollMaxInterval() {
+        return positiveTimeout("henge.lease-poll.max-interval", HengeLeasePoller.DEFAULT_MAX_INTERVAL);
+    }
+
     /** {@code henge.transport.connect-timeout}, default 2 seconds -- see {@link #timeout}. */
     public Duration getConnectTimeout() {
         return timeout("henge.transport.connect-timeout", Duration.ofSeconds(2), "no timeout");

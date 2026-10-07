@@ -57,8 +57,9 @@ A process claims a lease **once, at startup**, before it constructs any service 
   its share back after the lease's 30-second time to live.
 - **Refused**: the services that needed it aren't built here, the pool is never opened, and they're
   reached remotely instead, like any `internal-rest` service: at their configured `url`, or wherever
-  they're advertised. A refused process stays that way until it restarts. It doesn't take over when a
-  holder goes away; that is a later rung.
+  they're advertised. A refused process keeps looking: every 30 seconds or so (see
+  [Taking up a lease later](#taking-up-a-lease-later)) it checks whether the lease has room, and
+  if it does it claims it and hosts the services after all.
 
 All of a service's leases are granted, or none are. A provider is optional: a service can take a `Lease`
 parameter instead (`@RequiresLease("inventory-db") Lease lease`) and build its own resource from
@@ -71,6 +72,38 @@ is there to make untrue. In practice, leases come with a shared store, and adver
 Henge keeps the books; it never sees a connection. Keep the real resource inside the provider: a pool
 built as an ordinary shared bean opens its connections on every process, granted or not, which is
 the next section.
+
+### Taking up a lease later
+
+A process that was refused a lease keeps a list of what it would host if it had one, and looks at the
+lease every `henge.lease-poll.interval` (30 seconds), give or take half, so that processes refused
+together at a deploy don't look together. If the lease has room, it claims it, builds the implementation
+and starts answering and advertising it. The proxy that callers already hold switches from the network
+to the implementation, so nothing has to be reinjected. A process whose leases were all granted never
+looks, and costs the store nothing.
+
+What keeps several refused processes from getting in each other's way:
+
+- **A look is a read, then the claim.** The process reads every lease the service needs, and claims only if
+  they all show room, straight away, with nothing in between. A process that claimed one lease of a
+  set and was then refused the next would hold the first for a moment, and turn away a process that
+  would have fitted. Reading first means a set that can't be completed is never started on.
+- **Looks are spread out.** The jitter is tens of seconds; the read and the claim are two round trips to the
+  store. Two processes only collide if their looks land within that gap, and the one that loses the race
+  is refused like any other and tries again later, at a longer interval.
+- **A full lease is asked about less and less.** Each refusal doubles the wait, up to
+  `henge.lease-poll.max-interval` (5 minutes). The cost to a cluster of refused processes is a read every
+  few minutes each.
+
+One case it doesn't close: if the store is restarted or wiped, a refused process can claim a lease in the
+moment before its holders have renewed theirs, and the cluster then holds more of it than its capacity.
+Waiting a lease TTL after the store's epoch changes narrows that window, and in a Docker test of three
+shop replicas it still happened in two of four wipes. The process that fails to renew warns, and keeps its services
+running on the lease, because nothing yet makes a process give one up: the pool it opened stays open, so the
+database can see more connections than the capacity until a process restarts.
+
+A lease handed to a service that was retired on purpose is not taken up again. Nothing asks a holder to
+give a lease up: a process that has one keeps it, and a refused one only gets it when its holder goes away.
 
 ## A DataSource, from lease to close
 

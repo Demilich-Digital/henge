@@ -29,11 +29,10 @@ scope excluded on purpose, the second is work deferred.
 - **Giving up a lost lease.** A lease can be over-granted when the store's view is incomplete; the next
   renewal notices, and the claim lapses, but the services on it keep running on the resource. Until
   de-allocation exists, the intentional margin below the real limit is all that covers it.
-- **Taking up a lease after startup.** Leases are claimed at startup only, so a refused process stays
-  remote for that service until it restarts, even after the holder goes away. Switching a running
-  service from remote to embedded needs the switchable proxies below. In practice: a lease holder that
-  crashes and restarts before its lease lapses leaves its service with no host, and it stays that way until
-  some process restarts ([deploying](guide/07-operating.md#deploying-a-new-version)).
+- **Taking up a lease is a poll.** A refused process looks for room every 30 seconds or so, backing off
+  to 5 minutes while the lease stays full, so a service can be without a host for up to that long after
+  its holder is gone, plus the lease's 30-second lapse if the holder crashed. Nothing makes a holder
+  give a lease up, so a node that holds one stays on it.
 - **Catching up a missed fire.** A fire nobody was up for is skipped, as nothing durable records that it was
   due. A misfire policy would need a record.
 - **Exempting a third party's `@Scheduled`.** Spring's own classes are left alone, and any other bean with a
@@ -74,8 +73,9 @@ Roughly in order:
 - **Topology, further**: log the `service@version → mode → url` table at startup, expose it through
   Actuator, and aggregate the view across processes.
 - **Metrics, further**: the dependency graph's remote edges as a gauge.
-- **Dynamic lease filling and rebalancing**, the next thing: a refused process claims a lease when a slot
-  frees up, and holders rebalance toward a target spread. It needs a service to be built and torn down in
+- **Giving up a lease**, the next thing: a process that can't renew a lease (the cluster holds more than its capacity,
+  as can happen after the store is wiped) retires the services standing on it and closes the resource, and becomes
+  a candidate again. Then lease rebalancing: holders move toward a target spread. It needs a service to be built and torn down in
   a running process, which waits on better service isolation (the per-version proxies).
 - **Docker Compose is the supported small-scale deployment** (see [`examples/docker`](../examples/docker));
   keep it tested as the shop and Henge change. **Kubernetes** is the next step up: a manifest set and the

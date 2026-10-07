@@ -281,6 +281,45 @@ class HengeLeasesTest {
         }
     }
 
+    @Configuration
+    static class OtherHolderConfig {
+        @Bean
+        SystemEphemeralDatastore datastore() {
+            // Another process holds 70 of 100, for far longer than the test runs, until it lets go.
+            var store = new InProcessEphemeralDatastore();
+            store.claim("lease:ledger-db", "other-process", 70, 100, Duration.ofHours(1));
+            return store;
+        }
+    }
+
+    @Test
+    void aRefusedServiceIsHostedOnceTheLeaseHasRoom() throws Exception {
+        Map<String, Object> properties = new HashMap<>(leases(100, 40));
+        properties.put("henge.lease-poll.interval", "20ms");
+        properties.put("henge.lease-poll.max-interval", "40ms");
+        try (var ctx = context(properties, LeasedConfig.class, OtherHolderConfig.class, HengeTransportConfiguration.class)) {
+            ctx.refresh();
+            var registry = ctx.getBean(HengeServiceRegistry.class);
+            var datastore = ctx.getBean(SystemEphemeralDatastore.class);
+            assertThat(registry.find("ledger-service", 1)).isEmpty();
+
+            datastore.remove("lease:ledger-db", "other-process");
+
+            long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+            while ((registry.find("ledger-service", 1).isEmpty() || registry.find("report-service", 1).isEmpty())
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(registry.find("ledger-service", 1)).isPresent();
+            assertThat(registry.find("report-service", 1)).isPresent();
+            // The same proxy callers already held now reaches the implementation here.
+            assertThat(ctx.getBean(LedgerService.class).grant()).isEqualTo("ledger-db:40");
+            assertThat(datastore.read("lease:ledger-db").members().values())
+                    .extracting(SystemEphemeralDatastore::claimedAmount).containsExactly(40);
+            assertThat(datastore.read("adv:ledger-service@1").members()).hasSize(1);
+        }
+    }
+
     @Test
     void servicesOnTheSameLeaseAreBothHostedWhenOneClaimFits() {
         // 70 held elsewhere leaves 30: one claim of 20 fits, and both services stand on it.

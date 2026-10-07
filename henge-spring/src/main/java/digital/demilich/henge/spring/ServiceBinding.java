@@ -253,6 +253,17 @@ final class ServiceBinding {
         target = new Remote(serviceName, transport);
     }
 
+    /**
+     * A binding that was refused its lease is hosted here after all, by {@code implementation}, because
+     * the lease has since been granted. Only for a binding that was refused: a retired one stays retired.
+     */
+    synchronized void rehost(Object implementation) {
+        if (!(target instanceof Remote)) {
+            throw new IllegalStateException("Henge service '" + serviceName + "' version " + serviceVersion + " is not reached remotely");
+        }
+        target = new Local(implementation);
+    }
+
     private void requirePending() {
         if (!(target instanceof Pending)) {
             throw new IllegalStateException("Henge service '" + serviceName + "' version " + serviceVersion + " is already decided");

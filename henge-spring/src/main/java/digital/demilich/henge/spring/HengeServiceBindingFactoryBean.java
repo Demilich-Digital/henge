@@ -36,7 +36,8 @@ import org.springframework.context.ConfigurableApplicationContext;
  *       it would have opened) is never constructed on this node. A refusal means other processes hold the
  *       lease, so the service is reached at its configured url, or else wherever it is advertised. If the
  *       datastore can't be reached to ask, the decision waits ({@link HengeBootGate}) and calls fail
- *       meanwhile as the datastore being unavailable;
+ *       meanwhile as the datastore being unavailable. A refused service stays a candidate of the
+ *       {@link HengeLeasePoller}, which hosts it here if its leases are granted later;
  *   <li>the transport, for a service configured {@code internal-rest}.
  * </ul>
  *
@@ -126,8 +127,28 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
         if (refused != null) {
             log.info("Lease '" + refused.name() + "' is full; " + spec.localName() + " is reached remotely from this process");
             pending.becomeRemote(transport());
+            applicationContext.getBean(HengeLeasePoller.class).add(
+                    new HengeLeasePoller.Candidate(spec.localName(), spec.leased().needs(), () -> rehost(pending)));
         } else {
             pending.becomeLocal(constructImplementation());
+        }
+        return true;
+    }
+
+    /**
+     * Claims the leases again, for the poller, and hosts the service here if they are granted. False if
+     * they are refused. If the implementation can't be built, what was claimed is handed back (see
+     * {@link #constructImplementation}) and the failure goes to the poller.
+     */
+    private boolean rehost(ServiceBinding binding) {
+        if (keeper.acquireAll(spec.localName(), spec.leased().needs()) != null) {
+            return false;
+        }
+        binding.rehost(constructImplementation());
+        log.info("A lease was granted after all: " + spec.localName() + " is hosted by this process");
+        HengeServiceAdvertiser advertiser = applicationContext.getBeanProvider(HengeServiceAdvertiser.class).getIfAvailable();
+        if (advertiser != null) {
+            advertiser.renew();
         }
         return true;
     }

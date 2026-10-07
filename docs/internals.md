@@ -24,7 +24,8 @@ meta-annotation. For every (interface, version) in play, and within the `henge.r
 An application that injected an implementation by its concrete class has to take the interface instead.
 
 A service that needs leases is bound when its leases are granted or refused, at startup: built here if
-granted, and reached remotely if not. Each configured rate limit is one `RateLimiter` bean, qualified
+granted, and reached remotely if not; a refused one stays a candidate of the `HengeLeasePoller`, which
+switches its binding to the implementation if a later look finds room. Each configured rate limit is one `RateLimiter` bean, qualified
 `@RateLimited(name)`. The store is created before any service bean, whatever the application orders, so a
 service can depend on it during construction.
 

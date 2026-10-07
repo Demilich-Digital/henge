@@ -157,7 +157,8 @@ It is a mode to ride out, not a way to run without the store. During a long outa
 - **Shares are frozen.** A rate limit's share is a fraction of the number of nodes counted before the
   outage. Nodes that join during it are not counted, and together can let a little more through than the
   limit; nodes that leave leave their share unused.
-- **Leases can't change hands.** A service that needs one and was refused it, or couldn't ask, waits.
+- **Leases only move to a process that was refused.** A refused process picks one up when it has room
+  ([chapter 6](06-leases-and-rate-limits.md#taking-up-a-lease-later)). A holder is never asked to give one up.
 - **It is soft.** The limits and leases are over-granted, if at all, by a bounded amount; that is what
   the margin of [chapter 6](06-leases-and-rate-limits.md#soft-limits) is for.
 

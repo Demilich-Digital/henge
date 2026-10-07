@@ -277,9 +277,14 @@ henge:
   loses a lease stops hosting the services on it, closes the resource, and reaches them remotely
   instead. That needs a service that can switch from embedded to remote while running, so it waits on
   phase 5, and it is the first thing phase 5 is for.
-- **A refusal is final for the process's life.** Taking up capacity freed later means switching a running
-  service from remote to embedded, which needs the switchable proxies of phase 5 (see [Open
-  questions](#open-questions)).
+- **A refusal is retried by polling** (`HengeLeasePoller`). A refused service is a candidate: after a jittered
+  interval, and with the wait doubling at each refusal, the poller reads every lease it needs, and only if
+  all show room does it claim them and switch the binding to the implementation. The read is advisory and
+  the claim the decision; reading first keeps a set that can't be completed from being claimed in part and
+  handed back, which would turn away a node that fitted. The read and the claim are back to back, so the
+  window for a stale read is a few round trips, against attempts spread over tens of seconds: contention
+  resolves by being unlikely to repeat, with no queue or fairness guarantee. A retired service is not a
+  candidate.
 - **A service with several leases stays all-or-nothing**, and different leases are independent keys with
   independent capacities. A node that holds lease X for one service and is refused Y for another sends
   the second remote; X stays held by the first.
@@ -405,8 +410,8 @@ a leased one and a remote one are all a binding that differs only in its target.
   no child context yet: the implementation is a runtime-registered bean, and Spring's destroy logic closes
   what it owns, nothing more.
 
-Not built until it is needed: switching back from remote to local (a refusal and a retirement are both
-final for the process's life), and strict mode, each an addition to the binding and not a new proxy.
+Switching from remote to local is built for a refused lease only (a retirement is final for the process's
+life). Strict mode is not built. Each is an addition to the binding, not a new proxy.
 
 Callers hold the interface, so an implementation is not something to inject by its concrete class: it is
 the hidden bean `<name>-<version>.impl`. It is still the only bean of its class, so
@@ -464,8 +469,6 @@ Each phase is independently useful and testable, and maps onto the ladder's rung
 ## Open questions
 
 - **Heartbeat defaults** for leases: fixed, or derived from the adapter?
-- **Taking up a lease after startup.** Today a refusal is final for the process's life; a periodic retry
-  would let a node pick up capacity freed later, at the cost of switching a service from remote to
-  embedded at runtime, which needs phase 5.
+- **Poll defaults**: a 30-second interval doubling to 5 minutes, chosen for the cost to the store, not measured.
 - **Valkey** hash-field TTL support, to verify.
 - **Partial grants.** The API (`amount()`) leaves room; leases are all-or-nothing today.

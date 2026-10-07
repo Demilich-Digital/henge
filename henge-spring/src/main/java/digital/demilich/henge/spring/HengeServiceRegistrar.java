@@ -83,6 +83,7 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
     private static final String SCHEDULED_JOBS_BEAN_NAME = "hengeScheduledJobs";
     private static final String TOPOLOGY_CATALOG_BEAN_NAME = "hengeTopologyCatalog";
     static final String LEASE_KEEPER_BEAN_NAME = "hengeLeaseKeeper";
+    static final String LEASE_POLLER_BEAN_NAME = "hengeLeasePoller";
     static final String TRUNK_BEAN_NAME = "hengeTrunkConfiguration";
     private static final String IMPORTED_BY_ATTRIBUTE = HengeServiceRegistrar.class.getName() + ".importedBy";
 
@@ -306,6 +307,13 @@ class HengeServiceRegistrar implements ImportBeanDefinitionRegistrar, Environmen
             BeanDefinition keeper = BeanDefinitionBuilder.genericBeanDefinition(HengeLeaseKeeper.class).getBeanDefinition();
             keeper.getConstructorArgumentValues().addIndexedArgumentValue(1, HengeLeaseKeeper.DEFAULT_TTL);
             registry.registerBeanDefinition(LEASE_KEEPER_BEAN_NAME, keeper);
+
+            // The datastore, the keeper and the boot gate (arguments 0, 1 and 5) are autowired.
+            BeanDefinition poller = BeanDefinitionBuilder.genericBeanDefinition(HengeLeasePoller.class).getBeanDefinition();
+            poller.getConstructorArgumentValues().addIndexedArgumentValue(2, properties.getLeasePollInterval());
+            poller.getConstructorArgumentValues().addIndexedArgumentValue(3, properties.getLeasePollMaxInterval());
+            poller.getConstructorArgumentValues().addIndexedArgumentValue(4, HengeLeaseKeeper.DEFAULT_TTL);
+            registry.registerBeanDefinition(LEASE_POLLER_BEAN_NAME, poller);
         }
 
         // The datastore and the registry (arguments 0 and 1) are autowired.

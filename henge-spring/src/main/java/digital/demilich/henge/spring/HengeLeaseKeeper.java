@@ -133,6 +133,11 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
         return null;
     }
 
+    /** Whether this node already holds {@code lease}, for some service of its own: a claim it needn't ask the cluster for. */
+    synchronized boolean isHeld(String lease) {
+        return heldByLease.containsKey(lease);
+    }
+
     /** The resource of {@code lease}, which this node must hold and which must have a provider. */
     synchronized Object resource(String lease) {
         Held held = heldByLease.get(lease);

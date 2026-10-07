@@ -73,6 +73,8 @@ as for calls.
 |---|---|---|
 | `henge.leases.<lease>.capacity` | — | Cluster-wide capacity of a resource that services claim shares of with `@RequiresLease`. A positive integer; required for every lease in use. |
 | `henge.leases.<lease>.amount` | — | How much one process claims, however many of its services need the lease. A positive integer, at most the capacity; required for every lease in use. |
+| `henge.lease-poll.interval` | `30s` | How often a process refused a lease looks for room in it, give or take half, so processes refused together don't look together. With room it claims the lease and hosts the services. |
+| `henge.lease-poll.max-interval` | `5m` | The longest between looks. The wait doubles from the interval with each refusal, so a cluster that is really full is asked less and less. |
 | `henge.rate-limits.<name>.permits` / `.period` | — | A cluster-wide rate limit, injected with `@RateLimited("<name>")`: `permits` (a positive integer) drain every `period` (a duration, 1 ms to 1 h). Both required. |
 | `henge.rate-limits.<name>.capacity` | `permits` | The most the bucket holds: the burst a quiet limit lets through at once. |
 
