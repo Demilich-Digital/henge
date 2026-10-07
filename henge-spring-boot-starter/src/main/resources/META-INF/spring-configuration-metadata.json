@@ -78,6 +78,12 @@
       "description": "For henge.store.type=redis: a Lettuce URI such as redis://host:6379/0 (rediss:// for TLS, redis://:password@host for a password). Required."
     },
     {
+      "name": "henge.store.redis.timeout",
+      "type": "java.time.Duration",
+      "defaultValue": "500ms",
+      "description": "For henge.store.type=redis: how long a command, a connection attempt or a reconnect may take before it fails. A bare number is milliseconds. Must be positive; replaces a ?timeout= on the URI. Deliberately short, since the store is on the critical path."
+    },
+    {
       "name": "henge.transport.retry.max-attempts",
       "type": "java.lang.Integer",
       "defaultValue": 3,

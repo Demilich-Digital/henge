@@ -146,7 +146,12 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
      * @throws StoreUnavailableException if it can't be reached; a malformed {@code uri} is an {@link IllegalStateException}
      */
     public static RedisEphemeralDatastore connect(String uri) {
-        RedisURI redisUri = parse(uri);
+        return connect(uri, null);
+    }
+
+    /** As {@link #connect(String)}, with {@code timeout} (if not {@code null}) in place of the URI's or the default. */
+    public static RedisEphemeralDatastore connect(String uri, Duration timeout) {
+        RedisURI redisUri = parse(uri, timeout);
         RedisClient client = RedisClient.create(redisUri);
         client.setOptions(ClientOptions.builder().socketOptions(socketOptions(redisUri)).build());
         try {
@@ -171,7 +176,12 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
      * {@link #claim} and {@link #tryAcquire} already accept.
      */
     public static RedisEphemeralDatastore connectCluster(List<String> seedUris) {
-        List<RedisURI> seeds = Objects.requireNonNull(seedUris, "seedUris").stream().map(RedisEphemeralDatastore::parse).toList();
+        return connectCluster(seedUris, null);
+    }
+
+    /** As {@link #connectCluster(List)}, with {@code timeout} (if not {@code null}) in place of the URIs' or the default. */
+    public static RedisEphemeralDatastore connectCluster(List<String> seedUris, Duration timeout) {
+        List<RedisURI> seeds = Objects.requireNonNull(seedUris, "seedUris").stream().map(uri -> parse(uri, timeout)).toList();
         if (seeds.isEmpty()) {
             throw new IllegalArgumentException("A Redis Cluster needs at least one seed node");
         }
@@ -194,7 +204,7 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     /**
      * How long a command, or a connection attempt, may take unless the URI says otherwise with
-     * {@code ?timeout=}. Lettuce's own default is a minute, and a store that drops packets (rather than
+     * {@code ?timeout=} or {@code henge.store.redis.timeout}. Lettuce's own default is a minute, and a store that drops packets (rather than
      * refusing the connection) holds every caller for all of it before the first failure starts the
      * backoff that makes the rest fail fast.
      */
@@ -205,10 +215,12 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
         return SocketOptions.builder().connectTimeout(uri.getTimeout()).build();
     }
 
-    private static RedisURI parse(String uri) {
+    private static RedisURI parse(String uri, Duration timeout) {
         try {
             RedisURI parsed = RedisURI.create(Objects.requireNonNull(uri, "uri"));
-            if (!uri.contains("timeout=")) {
+            if (timeout != null) {
+                parsed.setTimeout(timeout);
+            } else if (!uri.contains("timeout=")) {
                 parsed.setTimeout(DEFAULT_TIMEOUT);
             }
             return parsed;
