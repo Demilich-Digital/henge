@@ -235,6 +235,9 @@ Four things to get right:
   reasons the cluster runs short of them. Page on the cause, not the symptom, as
   [Operating](07-operating.md#when-the-store-goes-away) describes, and have your automation treat a
   container that stays unhealthy as a store problem before it restarts it.
+- **Compose can't roll an update.** `docker compose up` replaces containers without waiting for health, and
+  a lease holder that crashes and restarts quickly leaves its service with no host. See
+  [Deploying a new version](07-operating.md#deploying-a-new-version).
 - **Run at least three.** See [how many instances](07-operating.md#how-many-instances).
 
 ## Per service, per version

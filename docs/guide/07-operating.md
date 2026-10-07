@@ -106,6 +106,33 @@ Only this first contact is gated. A node that has been ready stays ready through
 Without Actuator there are no health endpoints, so the node reports nothing and every request is `503`.
 In plain Spring, inject the `HengeBootGate` bean and ask its `isReady()` from your own health check.
 
+## Deploying a new version
+
+Replacing processes is where [leases](06-leases-and-rate-limits.md) bite, because a lease is claimed once, at
+startup, and never taken up later. A process refused one stays remote for that service until it restarts,
+**even after the holder is gone**. Tested on three replicas of the shop on Docker Compose, two of which could
+hold the `inventory-db` lease:
+
+- **One at a time, waiting for each to be healthy: clean.** A process that stops gracefully hands its lease
+  back, and its replacement claims it. Every request in the test was answered.
+- **New processes alongside the old, then the old removed: works only with a free slot.** A new process is
+  refused while the old holders still hold the lease, so the new set ends up with the lease only if it had
+  room to claim it. Had both slots been held by old processes, none of the new ones would have it, and
+  removing the old ones would leave the service with no host. The test happened to have one slot free.
+- **A holder that crashes and restarts at once: the service stays down.** The lease is still held when it
+  starts, so it, and every other process, is refused. The lease lapses after its 30 seconds, but no one claims
+  it. Callers get `RemoteServiceException` (a `500`: no url configured, and no process advertises the
+  service) until some process is restarted.
+
+So with leases: roll one process at a time and wait for readiness (a rolling update does this by default
+on Kubernetes), keep a spare slot's worth of capacity, and alert on a service that nobody hosts, which is
+`henge.service.hosted` at `0` across the cluster. Taking up a lease after startup, and rebalancing who holds
+them, is on the [roadmap](../scope.md#roadmap) and removes all three cases.
+
+Docker Compose has no rolling update: `docker compose up` replaces a service's containers without waiting
+for the others to be healthy. Do the replacement yourself (a script that scales up, waits for health, and
+removes the old ones), or use an orchestrator that does it.
+
 ## Metrics and traces
 
 With Spring Boot Actuator (or any `ObservationRegistry` bean), Henge observes every call:

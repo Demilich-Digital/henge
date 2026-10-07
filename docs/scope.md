@@ -31,7 +31,9 @@ scope excluded on purpose, the second is work deferred.
   de-allocation exists, the intentional margin below the real limit is all that covers it.
 - **Taking up a lease after startup.** Leases are claimed at startup only, so a refused process stays
   remote for that service until it restarts, even after the holder goes away. Switching a running
-  service from remote to embedded needs the switchable proxies below.
+  service from remote to embedded needs the switchable proxies below. In practice: a lease holder that
+  crashes and restarts before its lease lapses leaves its service with no host, and it stays that way until
+  some process restarts ([deploying](guide/07-operating.md#deploying-a-new-version)).
 - **Catching up a missed fire.** A fire nobody was up for is skipped, as nothing durable records that it was
   due. A misfire policy would need a record.
 - **Exempting a third party's `@Scheduled`.** Spring's own classes are left alone, and any other bean with a
@@ -72,6 +74,9 @@ Roughly in order:
 - **Topology, further**: log the `service@version → mode → url` table at startup, expose it through
   Actuator, and aggregate the view across processes.
 - **Metrics, further**: the dependency graph's remote edges as a gauge.
+- **Dynamic lease filling and rebalancing**, the next thing: a refused process claims a lease when a slot
+  frees up, and holders rebalance toward a target spread. It needs a service to be built and torn down in
+  a running process, which waits on better service isolation (the per-version proxies).
 - **Docker Compose is the supported small-scale deployment** (see [`examples/docker`](../examples/docker));
   keep it tested as the shop and Henge change. **Kubernetes** is the next step up: a manifest set and the
   same checks (a replica lost to a store outage, a rolling update against a missing store) run against a
