@@ -101,3 +101,7 @@ set, in which case the build fails instead of passing without having tested Redi
 ## License
 
 [MIT](LICENSE)
+
+To build against a local checkout from another project, run `./gradlew publishToMavenLocal` and add
+`mavenLocal()` to that project's repositories. The coordinates are `digital.demilich.henge:henge-spring-boot-starter`
+(and `henge-core`, `henge-spring`, `henge-redis`, `henge-processor`), version `0.1.0-SNAPSHOT`.
