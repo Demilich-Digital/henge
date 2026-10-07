@@ -225,7 +225,9 @@ Four things to get right:
   static upstreams would get real active checks, but Compose names and counts them for you, which is what
   `dynamic a` is for. Don't use liveness for either: a node waiting for its store is live, and restarting
   it won't bring the store back.
-- **Accept the failures, and alert on the cause.** With passive checks, a replica that isn't ready costs one
+- **Accept the failures, and alert on the cause.** This cost is particular to Compose and a proxy in front:
+  Kubernetes removes a pod that fails its readiness probe from the Service's endpoints, so the proxy in
+  front never sees it, and Consul and Nomad do the same through their catalog. With passive checks, a replica that isn't ready costs one
   failed request per replica per `fail_duration`, and the share of requests that is shrinks as replicas are
   added. Caddy can retry a `503` for a `GET`, but not a request with a body (the body is lost on the
   retry), so writes are left to the client, who sees `Retry-After: 1`. What the edge can't fix is a store

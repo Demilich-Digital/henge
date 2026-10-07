@@ -72,6 +72,10 @@ Roughly in order:
 - **Topology, further**: log the `service@version → mode → url` table at startup, expose it through
   Actuator, and aggregate the view across processes.
 - **Metrics, further**: the dependency graph's remote edges as a gauge.
+- **Docker Compose is the supported small-scale deployment** (see [`examples/docker`](../examples/docker));
+  keep it tested as the shop and Henge change. **Kubernetes** is the next step up: a manifest set and the
+  same checks (a replica lost to a store outage, a rolling update against a missing store) run against a
+  real cluster, as docs and test integrations.
 - **Publishing and CI**, with the public repository.
 
 ## Toward self-management
