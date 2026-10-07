@@ -193,7 +193,8 @@ class HengeLeasePoller implements SmartLifecycle {
         MemberId own = new MemberId(datastore.nodeId(), HengeLeaseKeeper.MEMBER);
         long others = snapshot.members().entrySet().stream()
                 .filter(member -> !member.getKey().equals(own))
-                .mapToLong(member -> SystemEphemeralDatastore.claimedAmount(member.getValue()))
+                // Including what is being given up: the resource is in use until it has been closed.
+                .mapToLong(member -> Math.abs((long) SystemEphemeralDatastore.claimedAmount(member.getValue())))
                 .sum();
         return others + need.amount() <= need.capacity() ? Outcome.ROOM : Outcome.FULL;
     }

@@ -47,7 +47,7 @@ The Java interface is `SystemEphemeralDatastore`, in `henge-core`:
 | `remove(key, localName)` | Removes this node's member early, for a graceful exit | |
 | `read(key)` | The live members, and the epoch | Sees fewer members than exist; writers re-assert on their heartbeat. |
 | `tryAcquire(key, amount, limit)` | Leaks a leaky bucket for the time since it was last touched, then takes `amount` permits if they fit. Atomic within a copy of the bucket. | Reads a level that is correct or too low: a limit lets a bounded few too many through, and never refuses a call it should allow. |
-| `claim(key, localName, amount, capacity, ttl)` | Writes this node's member only if the sum of everyone else's amounts plus this one fits the capacity. Atomic within a copy of the key. | Reads a sum that is correct or too low: a lease can be over-granted by a bounded amount, and is never refused when there is room. |
+| `claim(key, localName, amount, capacity, ttl)` | Writes this node's member only if the sum of everyone else's amounts plus this one fits the capacity, the caller's own. Atomic within a copy of the key. A negative amount is a claim being given up: always granted, still counted against new claims and not against renewals. A refused renewal turns the claim into one being given up. | Reads a sum that is correct or too low: a lease can be over-granted by a bounded amount, and is never refused when there is room. |
 
 Both limits err the same way, toward over-admitting, and both are handled the same way: the configured
 capacity is an intentional underestimate of the real limit, so a bounded over-grant lands inside the

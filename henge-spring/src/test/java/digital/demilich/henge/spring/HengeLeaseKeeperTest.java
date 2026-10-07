@@ -196,6 +196,58 @@ class HengeLeaseKeeperTest {
         assertThat(evicted).hasValue(1);
     }
 
+    private int memberAmount(String member) {
+        var members = store.read("lease:db").members();
+        var value = members.get(new SystemEphemeralDatastore.MemberId(store.nodeId(), member));
+        return value == null ? Integer.MIN_VALUE : SystemEphemeralDatastore.claimedAmount(value);
+    }
+
+    @Test
+    void aLeaseBeingGivenUpIsKeptAliveAsOneBeingGivenUpAndWrittenAgainIfTheStoreLostIt() throws Exception {
+        var need = new LeaseNeed("db", 5, 10);
+        assertThat(keeper.acquireAll("a@1", List.of(need))).isNull();
+        keeper.onEviction("a@1", () -> { });
+        loseClaim(10);
+
+        keeper.renewAll();
+        assertThat(memberAmount(HengeLeaseKeeper.MEMBER)).isEqualTo(-5);
+
+        // The store is wiped while it is being given up: the next heartbeat says so again.
+        store.remove("lease:db", HengeLeaseKeeper.MEMBER);
+        keeper.renewAll();
+        assertThat(memberAmount(HengeLeaseKeeper.MEMBER)).isEqualTo(-5);
+    }
+
+    @Test
+    void aServiceCantJoinALeaseBeingGivenUp() throws Exception {
+        var need = new LeaseNeed("db", 5, 10);
+        assertThat(keeper.acquireAll("a@1", List.of(need))).isNull();
+        keeper.onEviction("a@1", () -> { });
+        loseClaim(10);
+        keeper.renewAll();
+
+        assertThat(keeper.acquireAll("b@1", List.of(need))).isEqualTo(need);
+        assertThat(keeper.isHeld("db")).isFalse();
+    }
+
+    @Test
+    void theNodesStayingAreNotRefusedOnceAnotherHasStartedGivingUp() throws Exception {
+        var evicted = new AtomicInteger();
+        // This node believes in a capacity of 10, and holds 5 of it, as it fitted.
+        assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+        keeper.onEviction("a@1", evicted::incrementAndGet);
+        // Then nodes that believe in 15 claim 5 each, which fits theirs: the store holds 15, and this node is refused.
+        assertThat(store.claim("lease:db", "n", 5, 15, Duration.ofSeconds(30))).isTrue();
+        assertThat(store.claim("lease:db", "b", 5, 15, Duration.ofSeconds(30))).isTrue();
+
+        keeper.renewAll();
+        awaitTrue(() -> evicted.get() > 0);
+
+        assertThat(evicted).hasValue(1);
+        // Another node that believes in 10 renews its claim, and isn't asked to make room for the one that is going.
+        assertThat(store.claim("lease:db", "b", 5, 10, Duration.ofSeconds(30))).isTrue();
+    }
+
     @Test
     void everyServiceOnALostLeaseIsGivenUp() throws Exception {
         var evicted = new AtomicInteger();

@@ -6,7 +6,6 @@ import digital.demilich.henge.core.SystemEphemeralDatastore;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -70,6 +69,8 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
         final Set<String> holders = new LinkedHashSet<>();
         ResourceProvider<Object> provider;
         Object resource;
+        /** Being given up: the claim is written as one until it is handed back, and no service may join it. */
+        boolean leaving;
 
         Held(LeaseNeed need) {
             this.need = need;
@@ -83,8 +84,6 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
     private final Map<String, List<String>> leasesByService = new LinkedHashMap<>();
     /** What gives a service up when its lease is lost, by {@code service@version}. */
     private final Map<String, Runnable> evictors = new LinkedHashMap<>();
-    /** Leases being given up: not asked again, since their renewals keep being refused until they are handed back. */
-    private final Set<String> evicting = new HashSet<>();
     private ScheduledExecutorService heartbeat;
     private BeanFactory beanFactory;
 
@@ -109,8 +108,14 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
         List<LeaseNeed> ordered = needs.stream().sorted(Comparator.comparing(LeaseNeed::name)).toList();
         List<LeaseNeed> claimedHere = new ArrayList<>();
         for (LeaseNeed need : ordered) {
-            if (heldByLease.containsKey(need.name())) {
+            Held held = heldByLease.get(need.name());
+            if (held != null && !held.leaving) {
                 continue;
+            }
+            if (held != null) {
+                // Being given up: nothing joins it, and it can't be claimed again until it has been handed back.
+                claimedHere.forEach(claimed -> drop(claimed.name()));
+                return need;
             }
             boolean granted;
             try {
@@ -156,7 +161,8 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
 
     /** Whether this node already holds {@code lease}, for some service of its own: a claim it needn't ask the cluster for. */
     synchronized boolean isHeld(String lease) {
-        return heldByLease.containsKey(lease);
+        Held held = heldByLease.get(lease);
+        return held != null && !held.leaving;
     }
 
     /** The resource of {@code lease}, which this node must hold and which must have a provider. */
@@ -215,7 +221,6 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
     }
 
     private void drop(String lease) {
-        evicting.remove(lease);
         Held held = heldByLease.remove(lease);
         if (held != null) {
             metrics.leaseHeld(lease, 0);
@@ -243,13 +248,19 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
     }
 
     void renewAll() {
-        List<LeaseNeed> held;
-        synchronized (this) {
-            held = heldByLease.values().stream().map(h -> h.need).toList();
+        record Renewal(LeaseNeed need, boolean leaving) {
         }
-        for (LeaseNeed need : held) {
+        List<Renewal> held;
+        synchronized (this) {
+            held = heldByLease.values().stream().map(h -> new Renewal(h.need, h.leaving)).toList();
+        }
+        for (Renewal renewal : held) {
+            LeaseNeed need = renewal.need();
             try {
-                if (datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl)) {
+                if (renewal.leaving()) {
+                    // Being given up: the claim is kept as one until it is handed back, and written again if the store lost it.
+                    datastore.claim(key(need.name()), MEMBER, -need.amount(), need.capacity(), ttl);
+                } else if (datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl)) {
                     metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.RENEWED);
                 } else {
                     metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.LOST);
@@ -267,9 +278,10 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
         List<Runnable> toRun = new ArrayList<>();
         synchronized (this) {
             Held held = heldByLease.get(need.name());
-            if (held == null || !evicting.add(need.name())) {
+            if (held == null || held.leaving) {
                 return;
             }
+            held.leaving = true;
             held.holders.forEach(holder -> {
                 Runnable evictor = evictors.get(holder);
                 if (evictor != null) {
@@ -280,6 +292,13 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
         log.warn("Lease '" + need.name() + "' can't be kept: the rest of the cluster holds more of it than leaves room for this "
                 + "node's " + need.amount() + " within the capacity of " + need.capacity() + " it is configured with (its claim was lost, "
                 + "or other nodes are configured with another capacity). " + toRun.size() + " service(s) stop being hosted here.");
+        try {
+            // Said at once, not at the next heartbeat: the store has turned an existing claim into this itself, but a
+            // claim that was gone has to be written, and the nodes staying must not be asked to make room meanwhile.
+            datastore.claim(key(need.name()), MEMBER, -need.amount(), need.capacity(), ttl);
+        } catch (RuntimeException e) {
+            GuardedDatastore.logFailure(log, "Marking lease '" + need.name() + "' as given up failed; the heartbeat will", e);
+        }
         // Each takes a grace period and a drain, so none runs on the heartbeat, which has other leases to renew.
         toRun.forEach(evictor -> Thread.ofVirtual().name("henge-lease-eviction").start(evictor));
     }

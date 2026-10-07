@@ -118,6 +118,14 @@ what the others hold is refused and stops renewing, and one whose capacity is la
 is gone (lapsed, or the store was wiped) is checked the same way. So the store is never over *a* capacity at the
 moment a claim is made, and a claim that is refused is never written.
 
+**A claim being given up.** A negative amount is a claim on its way out: always granted, written (or renewed, or
+written again after a wipe) as that negative amount, and kept up by the node's heartbeat until it ends it with
+`remove`. It still counts against a *new* claim, since the resource is in use until the node has closed it, and
+counts for nothing against a *renewal*, so the nodes staying aren't asked to make room for the one that is going.
+A renewal the store refuses turns the member into one being given up, in the same step, at what it held. That is
+what keeps nodes that are refused together from all leaving: of several, those refused after the first find it
+already gone from their sums. A negative member shows in `read` as the negative amount.
+
 The check and the write are atomic within a copy of the key. A claim's decision depends on everyone
 else's entries, so a partial view of them (a replica that missed writes, two serializers during a
 failover) under-counts, and grants a claim that a complete view would have refused. That is the same
@@ -292,7 +300,11 @@ henge:
   re-asserted) leaves the claims over everyone's. A node that is refused its renewal sees the cluster over the
   capacity *it* believes in: either a newer node believes in a larger one, in which case this node makes room
   for it, or it is about to be replaced by the rollout; either way it stops renewing and gives the lease up,
-  with no ranking or negotiation. Eviction is the retirement above, with the switch undone: the version is
+  with no ranking or negotiation, and with the store's step above to stop all of those refused together from
+  leaving: the first to be refused is turned into a claim being given up, which the others' renewals don't count.
+  The node keeps writing that claim from its heartbeat until it has closed the resource and removed it, so a
+  refused node waiting to be hosted again sees the share as in use until then, and a wipe doesn't lose it.
+  Eviction is the retirement above, with the switch undone: the version is
   advertised again when it is hosted again, and it is a poller candidate, which looks at room under the capacity
   it believes in, so a node that is outvoted keeps finding the lease full. In a wiped store the holder that
   loses is whichever renewed after the poller's claim; the epoch wait makes that unlikely, not impossible.

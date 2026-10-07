@@ -107,8 +107,14 @@ checked like any claim, and one the store refuses means this process sees the re
 for its claim to fit: it lost the claim (it lapsed, or the store was wiped and another process claimed the capacity
 first), or newer processes are configured with a larger capacity. Either way it should not carry on, and it makes
 room for the processes that are not refused, which are the new ones in a rollout, or is about to be replaced
-by one. It stops renewing, and for each service on the lease does what a retirement does, in the order a caller can follow without a failed
-call: it stops advertising the service, waits `henge.lease-evict.grace` (10 seconds, the callers'
+by one. The store turns its claim into one being given up in the same step that refused it, and the process keeps
+writing it as that, from its heartbeat, until it has finished; a store that was wiped gets it written again.
+A claim being given up counts against a new claim, since the pool is open until the process has closed it, and
+counts for nothing against a renewal. So of several processes refused together, only the first leaves: the
+others' renewals no longer have to make room for it, and succeed.
+
+For each service on the lease the process does what a retirement does, in the order a caller can follow without a
+failed call: it stops advertising the service, waits `henge.lease-evict.grace` (10 seconds, the callers'
 refresh interval), switches the service to the network, gives the calls already running
 `henge.lease-evict.drain-timeout` (30 seconds) to finish, destroys the implementation, which closes the pool,
 and hands the claim back. It then waits to be hosted again like a process that was refused, which it will be once the
@@ -119,8 +125,8 @@ resource that is no longer its to use; that is the overlap the margin below the 
 can be shortened. A store that is away is not a refusal: holders sit still.
 
 In a Docker test of three shop replicas, a fourth started with a capacity of 15 against their 10: its claim was
-granted, both holders that believed in 10 were refused and gave the lease up, and a process that had been refused took
-one of the freed shares. The cluster ended at two holders, none of them flapping, and every request in the test was
+granted, and of the two holders that believed in 10 only the first to be refused gave the lease up. The other kept
+its claim and kept serving, the cluster was never down to fewer than two holders, and every request in the test was
 answered. Wiping the store three times, in the same cluster, never held more than two claims.
 
 A lease handed to a service that was retired on purpose is not taken up again. Nothing asks a holder to

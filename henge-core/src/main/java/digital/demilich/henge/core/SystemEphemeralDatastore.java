@@ -43,17 +43,25 @@ public interface SystemEphemeralDatastore {
      * Atomically within a copy of the key: if the sum of the live members' amounts under {@code key}, excluding this node's
      * own member {@code localName} (so renewing never fails against itself), plus {@code amount} is at
      * most {@code capacity}, writes (or renews) this node's member and returns {@code true};
-     * otherwise writes nothing and returns {@code false}.
+     * otherwise returns {@code false}.
      *
      * <p>The capacity is the caller's: each node is configured with its own, so during a rollout that changes
      * it, nodes differ on it. A renewal is checked like a claim, so a node that finds the claims in the store over
-     * the capacity it believes in is refused, and stops renewing. A claim that is gone (it lapsed, or the store
-     * was wiped) is checked the same way, so the store is never over any capacity at the moment a claim is made.
+     * the capacity it believes in is refused. A claim that is gone (it lapsed, or the store was wiped) is checked
+     * the same way, so the store is never over any capacity at the moment a claim is made.
      *
-     * <p>A claimed member's value is its amount, as a 4-byte big-endian {@code int}, so {@link #read}
-     * shows what is claimed. A key is for claims or for {@link #put}, never both.
+     * <p>A <b>negative</b> {@code amount} is a claim being given up: it is always granted, it writes (or renews, or
+     * re-creates after a wipe) this node's member with that negative amount, and the node keeps writing it until it
+     * has finished, which it ends with {@link #remove}. Its magnitude is still what the node holds, and it counts
+     * against a <em>new</em> claim, since the resource is in use until the node has closed it, but not against a
+     * <em>renewal</em>, so the nodes staying are not asked to make room for the one that is going. A renewal that is
+     * refused turns the member into one being given up, in the same step that refused it, so that of several
+     * nodes refused together, those refused after the first are not.
      *
-     * @throws IllegalArgumentException if {@code amount} or {@code capacity} is negative
+     * <p>A claimed member's value is its amount, as a 4-byte big-endian signed {@code int}, so {@link #read}
+     * shows what is claimed and what is being given up. A key is for claims or for {@link #put}, never both.
+     *
+     * @throws IllegalArgumentException if {@code capacity} is negative
      */
     boolean claim(String key, String localName, int amount, int capacity, Duration ttl);
 
@@ -74,7 +82,7 @@ public interface SystemEphemeralDatastore {
      */
     boolean tryAcquire(String key, int amount, RateLimit limit);
 
-    /** The amount a member written by {@link #claim} holds, decoded from its value. */
+    /** The amount a member written by {@link #claim} holds, decoded from its value; negative if it is being given up. */
     static int claimedAmount(byte[] value) {
         if (value.length != Integer.BYTES) {
             throw new IllegalArgumentException("Not a claimed amount: " + value.length + " bytes, expected " + Integer.BYTES);

@@ -78,21 +78,45 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
             return result
             """;
 
-    /** KEYS: hash. ARGV: field, amount, capacity, ttl-millis, amount as 4 big-endian bytes. */
+    /**
+     * KEYS: hash. ARGV: field, amount, capacity, ttl-millis, amount as 4 big-endian bytes. A member's value is a signed amount: negative is a claim being given up, which a claim being
+     * renewed isn't asked to make room for, and a new one is.
+     */
     private static final String CLAIM = """
-            local others = 0
+            local ttl, field = ARGV[4], ARGV[1]
+            local amount = tonumber(ARGV[2])
+            local function write(value)
+              redis.call('HSET', KEYS[1], field, value)
+            """ + EXPIRE + """
+            end
+            if amount < 0 then write(ARGV[5]); return 1 end
+            local own = nil
+            local others, leaving = 0, 0
             local all = redis.call('HGETALL', KEYS[1])
             for i = 1, #all, 2 do
-              if all[i] ~= ARGV[1] then
-                if #all[i + 1] ~= 4 then return redis.error_reply('not a claimed amount: ' .. all[i]) end
-                local b1, b2, b3, b4 = string.byte(all[i + 1], 1, 4)
-                others = others + (((b1 * 256 + b2) * 256 + b3) * 256 + b4)
+              if #all[i + 1] ~= 4 then return redis.error_reply('not a claimed amount: ' .. all[i]) end
+              local b1, b2, b3, b4 = string.byte(all[i + 1], 1, 4)
+              local value = ((b1 * 256 + b2) * 256 + b3) * 256 + b4
+              if value >= 2147483648 then value = value - 4294967296 end
+              if all[i] == field then
+                own = value
+              elseif value < 0 then
+                leaving = leaving - value
+              else
+                others = others + value
               end
             end
-            if others + tonumber(ARGV[2]) > tonumber(ARGV[3]) then return 0 end
-            redis.call('HSET', KEYS[1], ARGV[1], ARGV[5])
-            local ttl, field = ARGV[4], ARGV[1]
-            """ + EXPIRE + """
+            local renewing = own ~= nil and own >= 0
+            if not renewing then others = others + leaving end
+            if others + amount > tonumber(ARGV[3]) then
+              if renewing then
+                -- Kept at what it holds, now as a claim being given up: 4 big-endian bytes of -own.
+                local n = 4294967296 - own
+                write(string.char(math.floor(n / 16777216) % 256, math.floor(n / 65536) % 256, math.floor(n / 256) % 256, n % 256))
+              end
+              return 0
+            end
+            write(ARGV[5])
             return 1
             """;
 
@@ -259,8 +283,8 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     @Override
     public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
-        if (amount < 0 || capacity < 0) {
-            throw new IllegalArgumentException("amount and capacity must not be negative, got " + amount + " and " + capacity);
+        if (capacity < 0) {
+            throw new IllegalArgumentException("capacity must not be negative, got " + capacity);
         }
         Long granted;
         try {

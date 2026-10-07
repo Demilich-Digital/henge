@@ -189,7 +189,8 @@ class RedisEphemeralDatastoreTest {
         assertThat(otherNode.claim(key, "a", 40, 100, Duration.ofSeconds(30))).isTrue();
 
         assertThat(store.claim(key, "a", 61, 100, Duration.ofSeconds(30))).isFalse();
-        assertThat(store.read(key).members().get(new MemberId(store.nodeId(), "a"))).containsExactly(amount(60));
+        // Refused, so given up, at what it held.
+        assertThat(store.read(key).members().get(new MemberId(store.nodeId(), "a"))).containsExactly(amount(-60));
     }
 
     @Test
@@ -222,11 +223,50 @@ class RedisEphemeralDatastoreTest {
     }
 
     @Test
-    void aNegativeAmountOrCapacityIsRejected() {
-        assertThatThrownBy(() -> store.claim(freshKey(), "a", -1, 100, Duration.ofSeconds(30)))
-                .isInstanceOf(IllegalArgumentException.class);
+    void aNegativeCapacityIsRejected() {
         assertThatThrownBy(() -> store.claim(freshKey(), "a", 1, -1, Duration.ofSeconds(30)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aClaimBeingGivenUpIsAlwaysGrantedAndReadsAsNegative() {
+        String key = freshKey();
+        assertThat(store.claim(key, "a", 5, 10, Duration.ofSeconds(30))).isTrue();
+        assertThat(store.claim(key, "b", 5, 10, Duration.ofSeconds(30))).isTrue();
+
+        // Whatever the others hold: giving up needs no room.
+        assertThat(store.claim(key, "a", -5, 1, Duration.ofSeconds(30))).isTrue();
+
+        assertThat(store.read(key).members().get(new MemberId(store.nodeId(), "a"))).containsExactly(amount(-5));
+    }
+
+    @Test
+    void aClaimBeingGivenUpIsWrittenAgainWhenTheStoreLostIt() {
+        String key = freshKey();
+
+        assertThat(store.claim(key, "a", -5, 10, Duration.ofSeconds(30))).isTrue();
+
+        assertThat(store.read(key).members().get(new MemberId(store.nodeId(), "a"))).containsExactly(amount(-5));
+    }
+
+    @Test
+    void aRefusedRenewalTurnsTheClaimIntoOneBeingGivenUpAndTheNodesStayingAreNotRefusedBecauseOfIt() {
+        String key = freshKey();
+        // Three claims of 5, made by nodes that believe in a capacity of 15.
+        for (String node : new String[] {"a", "b", "n"}) {
+            assertThat(store.claim(key, node, 5, 15, Duration.ofSeconds(30))).isTrue();
+        }
+
+        // "a" believes in 10, and is refused; so is turned into a claim being given up, in the same step.
+        assertThat(store.claim(key, "a", 5, 10, Duration.ofSeconds(30))).isFalse();
+        assertThat(store.read(key).members().get(new MemberId(store.nodeId(), "a"))).containsExactly(amount(-5));
+        // "b" believes in 10 too, and now isn't refused: a renewal isn't asked to make room for one that is going.
+        assertThat(store.claim(key, "b", 5, 10, Duration.ofSeconds(30))).isTrue();
+        // A new claim is: what is going is in use until it has gone.
+        assertThat(store.claim(key, "c", 5, 10, Duration.ofSeconds(30))).isFalse();
+        store.remove(key, "a");
+        assertThat(store.claim(key, "c", 5, 10, Duration.ofSeconds(30))).isFalse();
+        assertThat(store.claim(key, "c", 5, 15, Duration.ofSeconds(30))).isTrue();
     }
 
     @Test

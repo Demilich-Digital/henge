@@ -66,19 +66,31 @@ public final class InProcessEphemeralDatastore implements SystemEphemeralDatasto
 
     @Override
     public synchronized boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
-        if (amount < 0 || capacity < 0) {
-            throw new IllegalArgumentException("amount and capacity must not be negative, got " + amount + " and " + capacity);
+        if (capacity < 0) {
+            throw new IllegalArgumentException("capacity must not be negative, got " + capacity);
         }
         Instant deadline = deadline(ttl);
         Map<String, Entry> members = liveMembers(key, true);
+        if (amount < 0) {
+            // Leaving: needs no room, and counts for nothing against a renewal.
+            members.put(localName, new Entry(ByteBuffer.allocate(Integer.BYTES).putInt(amount).array(), deadline));
+            return true;
+        }
+        Entry own = members.get(localName);
+        int ownAmount = own == null ? 0 : amountOf(key, localName, own);
+        boolean renewing = own != null && ownAmount >= 0;
         long claimedByOthers = 0;
         for (Map.Entry<String, Entry> member : members.entrySet()) {
             if (!member.getKey().equals(localName)) {
-                claimedByOthers += amountOf(key, member.getKey(), member.getValue());
+                int held = amountOf(key, member.getKey(), member.getValue());
+                // A claim being renewed is not asked to make room for those who are leaving; a new one is.
+                claimedByOthers += renewing && held < 0 ? 0 : Math.abs((long) held);
             }
         }
         if (claimedByOthers + amount > capacity) {
-            if (members.isEmpty()) {
+            if (renewing) {
+                members.put(localName, new Entry(ByteBuffer.allocate(Integer.BYTES).putInt(-ownAmount).array(), deadline));
+            } else if (members.isEmpty()) {
                 keys.remove(key);
             }
             return false;

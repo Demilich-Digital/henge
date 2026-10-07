@@ -174,7 +174,7 @@ class GuardedDatastoreTest {
 
     @Test
     void aCallersMistakeIsNotTheStoresFailure() {
-        assertThatThrownBy(() -> guarded.claim("k", "m", -1, 1, Duration.ofSeconds(30)))
+        assertThatThrownBy(() -> guarded.claim("k", "m", 1, -1, Duration.ofSeconds(30)))
                 .isInstanceOf(IllegalArgumentException.class);
 
         calls.set(0);
