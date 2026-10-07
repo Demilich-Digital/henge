@@ -100,7 +100,8 @@ class HengeTopologyReport {
     record Dependency(String from, String to, boolean remote) {
     }
 
-    record Holder(String node, int amount, boolean self) {
+    /** One claim on a lease: {@code amount} is what it holds, whether or not it is being given up, which is {@code leaving}. */
+    record Holder(String node, int amount, boolean leaving, boolean self) {
     }
 
     record LeaseStatus(String name, Integer capacity, int claimed, List<Holder> holders) {
@@ -239,8 +240,11 @@ class HengeTopologyReport {
         Map<MemberId, byte[]> members = datastore.read(HengeLeaseKeeper.key(lease)).members();
         return members.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey(Comparator.comparing(MemberId::nodeId).thenComparing(MemberId::localName)))
-                .map(member -> new Holder(member.getKey().nodeId(),
-                        SystemEphemeralDatastore.claimedAmount(member.getValue()), member.getKey().nodeId().equals(datastore.nodeId())))
+                .map(member -> {
+                    int claimed = SystemEphemeralDatastore.claimedAmount(member.getValue());
+                    return new Holder(member.getKey().nodeId(), Math.abs(claimed), claimed < 0,
+                            member.getKey().nodeId().equals(datastore.nodeId()));
+                })
                 .toList();
     }
 

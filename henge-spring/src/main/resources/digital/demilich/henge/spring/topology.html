@@ -355,7 +355,7 @@
       var bar = el("div", { "class": "bar" + (cap && l.claimed >= cap ? " over" : "") }, el("div", { style: "width:" + pct + "%" }));
       var holders = el("td");
       if (!data.store.readable) { holders.appendChild(el("span", { "class": "none" }, "unknown")); }
-      l.holders.forEach(function (h) { holders.appendChild(el("div", {}, h.amount + "  (node " + h.node.substring(0, 8) + (h.self ? ", this process" : "") + ")")); });
+      l.holders.forEach(function (h) { holders.appendChild(el("div", {}, h.amount + "  (node " + h.node.substring(0, 8) + (h.self ? ", this process" : "") + (h.leaving ? ", giving it up" : "") + ")")); });
       body.appendChild(el("tr", {}, [el("td", {}, l.name), el("td", {}, l.claimed + " / " + (cap == null ? "?" : cap)), el("td", {}, bar), holders]));
     });
     t.appendChild(body);

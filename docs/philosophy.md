@@ -100,7 +100,8 @@ system nor the team. Behavior that emerges from local decisions has no such bott
 process at a time instead of all at once.
 
 It isn't built yet, and isn't needed to get value from what is. But the pieces that are built already work
-this way. Advertisements are re-asserted and decay; callers spread over whatever is advertised. A process
+this way: a process refused a lease looks again, and takes it when it has room; one that loses its lease gives
+it up, and the cluster fills the gap. Advertisements are re-asserted and decay; callers spread over whatever is advertised. A process
 that dies gives its lease back by going quiet. In [chapter 6](guide/06-leases-and-rate-limits.md#the-cluster-deciding)
 of the guide, two identical processes are started and work out between them which one builds inventory,
 from nothing but the capacity of a database. Self-organized role selection is the same mechanism, applied
@@ -121,7 +122,7 @@ None of this is all-or-nothing. Henge is a ladder, and every rung is somewhere a
 | 1. Split | Flags, your orchestrator's DNS, and a configured store | The same jar as independently deployed services, routed by the platform you already run |
 | 2. Shared store | A fast ephemeral store | Processes that find each other and fail over, with no addresses configured |
 | 3. Shared limits | Leases, rate limits | Resource caps and rate limits that hold across the whole cluster |
-| 4. Self-management | *Not built yet* | A cluster that decides its own topology |
+| 4. Self-management | *Begun*: leases are taken up and given up as processes come and go. Role selection isn't built | A cluster that decides its own topology |
 
 You can deploy on Kubernetes with flags and DNS, and never use a lease or a rate limiter. What you can't do
 is split without saying where the cluster's shared state lives: a process that hosts only part of the

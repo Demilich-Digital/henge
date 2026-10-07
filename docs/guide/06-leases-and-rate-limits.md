@@ -49,7 +49,7 @@ henge:
       amount: 5        # what one process claims
 ```
 
-A process claims a lease **once, at startup**, before it constructs any service that needs it:
+A process claims a lease at startup, before it constructs any service that needs it, and, if it was refused, again later:
 
 - **Granted**: the provider builds the pool, every service on the process that asked for
   `inventory-db` gets the same one (here, both versions of inventory), and the claim is renewed on a
@@ -129,8 +129,9 @@ granted, and of the two holders that believed in 10 only the first to be refused
 its claim and kept serving, the cluster was never down to fewer than two holders, and every request in the test was
 answered. Wiping the store three times, in the same cluster, never held more than two claims.
 
-A lease handed to a service that was retired on purpose is not taken up again. Nothing asks a holder to
-give a lease up: a process that has one keeps it, and a refused one only gets it when its holder goes away.
+A lease handed to a service that was retired on purpose is not taken up again. A holder gives a lease up only
+when its own renewal is refused: nothing asks a process that has one to hand it over so that another can have a
+share, so a refused process only gets one when its holder goes away or loses it.
 
 ## A DataSource, from lease to close
 

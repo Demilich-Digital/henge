@@ -25,7 +25,9 @@ An application that injected an implementation by its concrete class has to take
 
 A service that needs leases is bound when its leases are granted or refused, at startup: built here if
 granted, and reached remotely if not; a refused one stays a candidate of the `HengeLeasePoller`, which
-switches its binding to the implementation if a later look finds room. Each configured rate limit is one `RateLimiter` bean, qualified
+switches its binding to the implementation if a later look finds room. The other way round, a lease whose
+renewal the store refuses is given up: `HengeLeaseKeeper` runs each holder's eviction, which retires the
+service (see `HengeServiceRegistry.retire`), hands the claim back, and makes it a candidate again. Each configured rate limit is one `RateLimiter` bean, qualified
 `@RateLimited(name)`. The store is created before any service bean, whatever the application orders, so a
 service can depend on it during construction.
 

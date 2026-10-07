@@ -6,9 +6,10 @@ how to use what's built; this is why it's built that way, and the plan for the r
 
 **Status.** Phases 1 to 4 (see [Phasing](#phasing)) are built: the store contract with its in-process
 and Redis adapters, leases, cluster-wide rate limits, and advertisement-based routing with retries and
-failover. Not built: load-weighted routing and withdrawal when overloaded, the built-in DHT, switchable
-proxies with a child context per service, eviction, and self-organized role selection. Sections below say
-which parts are built where it isn't obvious.
+failover. Also built: a refused lease is taken up later by polling, and a lease that can't be kept is given up
+(de-allocation). Not built: load-weighted routing and withdrawal when overloaded, the built-in DHT, a child
+context per service, eviction under memory pressure, lease rebalancing, and self-organized role selection.
+Sections below say which parts are built where it isn't obvious.
 
 ## Summary
 
@@ -270,10 +271,11 @@ henge:
 
 ### Behavior
 
-- **At startup, and only then**, for each embedded service version that declares leases, the node
+- **At startup**, for each embedded service version that declares leases, the node
   acquires **every** lease it needs, in lease-name order. All granted: the implementation is constructed
   as usual. Any refused: what was acquired for it is released, and the service is reached remotely; its
-  implementation, and so its resource, is never built on this node. Grants are all-or-nothing.
+  implementation, and so its resource, is never built on this node, until a later look finds room (below).
+  Grants are all-or-nothing.
 - **The decision is the binding's target.** The registrar runs before any bean exists, so it can't consult
   the store; a factory bean per leased service decides when it's created, and the service binding's
   target becomes either the implementation or the transport. Callers inject exactly as they would
@@ -284,9 +286,6 @@ henge:
   or failed to construct) closes the provider's resource, if there is one, and hands the claim back.
 - **Held claims are renewed** on a heartbeat of a third of the TTL (30 seconds), and expire with the node,
   so a crash returns its capacity one TTL later.
-- **A lost lease is given up** (de-allocation, below): a refused renewal means the node sees the cluster over
-  the capacity it is configured with, so left alone its services would keep running on a resource that is no longer
-  its to use.
 - **A refusal is retried by polling** (`HengeLeasePoller`). A refused service is a candidate: after a jittered
   interval, and with the wait doubling at each refusal, the poller reads every lease it needs, and only if
   all show room does it claim them and switch the binding to the implementation. The read is advisory and
@@ -295,19 +294,21 @@ henge:
   window for a stale read is a few round trips, against attempts spread over tens of seconds: contention
   resolves by being unlikely to repeat, with no queue or fairness guarantee. A retired service is not a
   candidate.
-- **A lease that can't be renewed is given up.** Capacity is each node's own configuration, so a rollout that
-  changes it leaves nodes with different views, and an over-grant (a store wiped, and claimed before its holders
-  re-asserted) leaves the claims over everyone's. A node that is refused its renewal sees the cluster over the
-  capacity *it* believes in: either a newer node believes in a larger one, in which case this node makes room
-  for it, or it is about to be replaced by the rollout; either way it stops renewing and gives the lease up,
-  with no ranking or negotiation, and with the store's step above to stop all of those refused together from
-  leaving: the first to be refused is turned into a claim being given up, which the others' renewals don't count.
-  The node keeps writing that claim from its heartbeat until it has closed the resource and removed it, so a
-  refused node waiting to be hosted again sees the share as in use until then, and a wipe doesn't lose it.
-  Eviction is the retirement above, with the switch undone: the version is
-  advertised again when it is hosted again, and it is a poller candidate, which looks at room under the capacity
-  it believes in, so a node that is outvoted keeps finding the lease full. In a wiped store the holder that
-  loses is whichever renewed after the poller's claim; the epoch wait makes that unlikely, not impossible.
+- **A lease that can't be kept is given up** (de-allocation). Capacity is each node's own configuration, so a
+  rollout that changes it leaves nodes with different views, and an over-grant (a store wiped, and claimed before
+  its holders re-asserted) leaves the claims over everyone's. A node whose renewal the store refuses sees the
+  cluster over the capacity *it* believes in: either newer nodes believe in a larger one, so this one makes room for
+  them, or it is about to be replaced by the rollout. Either way it stops renewing and gives the lease up, with no
+  ranking or negotiation. It does so by **a claim being given up** (a negative claim, see
+  [`claim`](#claim)): the store turns the refused claim into one in the same step, which the other nodes'
+  renewals don't count, so of several nodes refused together only the first leaves. The node keeps writing that
+  claim from its heartbeat until it has closed the resource and removed it, so a node waiting for the lease sees
+  the share as in use until then, and a wipe doesn't lose it. The services on the lease are retired as above
+  (stop advertising, grace, switch, drain, destroy), then the claim is handed back, and each is a poller candidate
+  again, advertised again when it is hosted again, looking for room under the capacity its node believes in: a
+  node that is outvoted keeps finding the lease full. In a wiped store the holder that loses is whichever renewed
+  after the poller's claim; the epoch wait makes that unlikely, not impossible. Only a store that answers and
+  refuses is a loss; one that is away is not, and holders sit still.
 - **A service with several leases stays all-or-nothing**, and different leases are independent keys with
   independent capacities. A node that holds lease X for one service and is refused Y for another sends
   the second remote; X stays held by the first.
@@ -325,12 +326,12 @@ partial grant leaves capacity briefly claimed by a node that then declined, and 
 race to it is refused for that moment. Claiming in a fixed order keeps two nodes from refusing each
 other's multi-lease services in a cycle.
 
-Planned refinements, not built:
+Two refinements are built in the poller, which takes up a lease after startup, and not in the claim at startup:
 
-- **A speculative read first**: if the live members already leave too little, give up without writing.
-  A pure optimization, which keeps a full lease from turning every starting node into a write.
-- **A grace period after a wipe**: a claimant that sees the epoch change waits one heartbeat before
-  claiming, so existing holders re-assert first and a wipe doesn't look like free capacity.
+- **A speculative read first**: if the live members already leave too little, give up without writing, which
+  keeps a full lease from turning every polling node into a write, and a set of leases from being claimed in part.
+- **A grace period after a wipe**: a poller that sees a lease's epoch change waits one lease TTL before trusting
+  what it reads, so existing holders re-assert first and a wipe doesn't look like free capacity.
 
 An over-grant is still possible whenever the store's view is incomplete (a Redis failover, say). The
 intentional margin absorbs it, and de-allocation corrects it.
@@ -396,13 +397,13 @@ costly or harmful, and only if others can take it.
    owns. Closing it is real deallocation: Spring runs every bean's destroy logic in reverse dependency
    order (pools close, executors stop). This is the same mechanism the roadmap's isolated mode needs (see
    [Scope](../scope.md#roadmap)).
-3. **Drain before evict** (not built): stop advertising, wait at least one TTL plus in-flight calls, then
-   close.
+3. **Drain before giving up** (built, as retirement): stop advertising, wait for callers that already read
+   the advertisement, then switch, wait for in-flight calls, and close.
 4. Limits that remain: resources outside Spring's lifecycle (hand-started threads, static caches,
    `ThreadLocal`s, global JDBC driver registration) leak; class metadata stays loaded; activating a child
    context costs tens to hundreds of milliseconds plus warmup, so roles must not thrash.
 
-### The service binding (built, with retirement; strict mode and switching back to local are not)
+### The service binding (built, with retirement and switching back to local; strict mode is not)
 
 One `ServiceBinding` per `service@version`, and one JDK proxy over it, registered under the version's
 bean name, as primary and qualifier. Every injection point holds that proxy: an embedded implementation,
@@ -422,7 +423,7 @@ a leased one and a remote one are all a binding that differs only in its target.
 - **Hosting follows the target.** A version is hosted here when its binding's target is local, so the
   advertiser, the topology report and the dispatcher's registry follow a switch with no further wiring.
 
-- **Retirement** (built, nothing triggers it yet). `HengeServiceRegistry.retire(name, version, grace,
+- **Retirement** (built; a lease that can't be kept triggers it, below). `HengeServiceRegistry.retire(name, version, grace,
   drainTimeout)` stops hosting one version, in the order a caller can follow without a failed call:
   withdraw its advertisement, wait `grace` (callers that already read it keep being served), switch the
   target to remote, wait up to `drainTimeout` for the calls already running in the implementation, destroy
@@ -433,8 +434,9 @@ a leased one and a remote one are all a binding that differs only in its target.
   no child context yet: the implementation is a runtime-registered bean, and Spring's destroy logic closes
   what it owns, nothing more.
 
-Switching from remote to local is built for a refused lease only (a retirement is final for the process's
-life). Strict mode is not built. Each is an addition to the binding, not a new proxy.
+Switching from remote to local is built for a service that was refused its lease, or gave it up (a deliberate
+retirement is final for the process's life). Strict mode is not built. Each is an addition to the binding, not a
+new proxy.
 
 Callers hold the interface, so an implementation is not something to inject by its concrete class: it is
 the hidden bean `<name>-<version>.impl`. It is still the only bean of its class, so
@@ -479,11 +481,12 @@ Each phase is independently useful and testable, and maps onto the ladder's rung
 4. **Redis adapter** (built): proves the contract against a store Henge doesn't control, and makes rungs 2
    and 3 cluster-wide.
 5. **Switchable proxies and a child context per service**, and with them **de-allocation** (built, without
-   the child context): a node that loses a lease stops hosting the services on it and closes the resource.
-   It also unblocks
-   the roadmap's isolated mode. The stable proxy (the service binding) is built; retargeting, draining and
-   the child contexts are not. *Rung 4 begins.*
-6. **Eviction**: memory pressure and misbehavior, drain, remembered evictions, on the same mechanism.
+   the child context): a node that loses a lease stops hosting the services on it and closes the resource, and
+   a refused one takes a lease up when it has room. It also unblocks the roadmap's isolated mode. The stable
+   proxy (the service binding), retargeting, draining and polling are built; the child contexts are not.
+   *Rung 4 begins.*
+6. **Eviction**: memory pressure and misbehavior, drain, remembered evictions, on the same mechanism. (Not the
+   same as giving up a lost lease, above, which is not a choice.)
 7. **Built-in DHT**: a fast ephemeral store built into the cluster, for private networks. *No separate
    system to run.*
 8. **Self-organized role selection**, preceded by a discrete-event simulation of the decision loop, with
@@ -492,6 +495,8 @@ Each phase is independently useful and testable, and maps onto the ladder's rung
 ## Open questions
 
 - **Heartbeat defaults** for leases: fixed, or derived from the adapter?
-- **Poll defaults**: a 30-second interval doubling to 5 minutes, chosen for the cost to the store, not measured.
+- **Poll and give-up defaults**: a 30-second interval doubling to 5 minutes, and a 10-second grace and 30-second
+  drain when giving a lease up, chosen for the cost to the store and for what callers can follow, not measured.
+- **Rebalancing**: nothing moves a lease from a holder that has it to one that doesn't; only a loss does.
 - **Valkey** hash-field TTL support, to verify.
 - **Partial grants.** The API (`amount()`) leaves room; leases are all-or-nothing today.

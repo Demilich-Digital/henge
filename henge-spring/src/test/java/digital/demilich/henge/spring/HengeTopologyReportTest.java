@@ -187,6 +187,23 @@ class HengeTopologyReportTest {
     }
 
     @Test
+    void aClaimBeingGivenUpIsReportedAsHeldAndMarkedLeaving() {
+        try (var ctx = context(leases(), LeasedConfig.class, HengeTransportConfiguration.class)) {
+            ctx.refresh();
+            // Another node is giving up 20: it is still in use until it has closed the resource.
+            ctx.getBean(SystemEphemeralDatastore.class).claim("lease:ledger-db", "other", -20, 100, java.time.Duration.ofSeconds(30));
+
+            Report report = reportOf(ctx);
+
+            assertThat(report.leases()).singleElement().satisfies(lease -> {
+                assertThat(lease.claimed()).isEqualTo(50);
+                assertThat(lease.holders()).filteredOn(HengeTopologyReport.Holder::leaving).singleElement()
+                        .satisfies(holder -> assertThat(holder.amount()).isEqualTo(20));
+            });
+        }
+    }
+
+    @Test
     void aServiceWhoseLeaseWasRefusedIsReportedRemoteAndRoutedLikeACall() {
         Map<String, Object> properties = leases();
         properties.put("henge.leases.ledger-db.amount", 40);

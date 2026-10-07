@@ -236,7 +236,7 @@ Four things to get right:
   [Operating](07-operating.md#when-the-store-goes-away) describes, and have your automation treat a
   container that stays unhealthy as a store problem before it restarts it.
 - **Compose can't roll an update.** `docker compose up` replaces containers without waiting for health, and
-  a lease holder that crashes and restarts quickly leaves its service with no host. See
+  a lease holder that crashes and restarts quickly leaves its service without a host until its lease lapses and another process takes it up, about a lease TTL plus a poll interval. See
   [Deploying a new version](07-operating.md#deploying-a-new-version).
 - **Run at least three.** See [how many instances](07-operating.md#how-many-instances).
 

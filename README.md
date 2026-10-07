@@ -23,7 +23,7 @@ Every layer is opt-in, and every rung is a place to stop:
 | 1. Split | Flags, your orchestrator's DNS, and a configured store | The same jar as independently deployed services, routed by Kubernetes (or whatever you run) |
 | 2. Shared store | A fast ephemeral store (Redis) | Processes that find each other and fail over, with no addresses configured |
 | 3. Shared limits | Leases, rate limits | Connection caps and rate limits that hold across the whole cluster |
-| 4. Self-management | *Not built yet* | A cluster that decides its own topology, by emergent behavior rather than central control |
+| 4. Self-management | *Begun*: a lease moves to a process that has room, and is given up by one that loses it. Role selection isn't built | A cluster that decides its own topology, by emergent behavior rather than central control |
 
 ## Two minutes
 

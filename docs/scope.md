@@ -33,8 +33,8 @@ scope excluded on purpose, the second is work deferred.
   Which of two nodes with different capacities gives way is not chosen: the one that is refused does.
 - **Taking up a lease is a poll.** A refused process looks for room every 30 seconds or so, backing off
   to 5 minutes while the lease stays full, so a service can be without a host for up to that long after
-  its holder is gone, plus the lease's 30-second lapse if the holder crashed. Nothing makes a holder
-  give a lease up, so a node that holds one stays on it.
+  its holder is gone, plus the lease's 30-second lapse if the holder crashed. A holder only gives a lease up
+  when its renewal is refused: nothing asks one to, to even out who holds what.
 - **Catching up a missed fire.** A fire nobody was up for is skipped, as nothing durable records that it was
   due. A misfire policy would need a record.
 - **Exempting a third party's `@Scheduled`.** Spring's own classes are left alone, and any other bean with a
@@ -72,8 +72,9 @@ Roughly in order:
   Actuator, and aggregate the view across processes.
 - **Metrics, further**: the dependency graph's remote edges as a gauge.
 - **Lease rebalancing**, the next thing: holders move toward a target spread, so a cluster that has drifted
-  (one process holds every lease, another none) evens out. Giving a lease up is only for an over-grant. It needs a service to be built and torn down in
-  a running process, which waits on better service isolation (the per-version proxies).
+  (one process holds every lease, another none) evens out. Building and tearing down a service in a running
+  process is there now (a lost lease and a refused one use it), so what is missing is the policy that asks a holder
+  to leave, and not to flap.
 - **Docker Compose is the supported small-scale deployment** (see [`examples/docker`](../examples/docker));
   keep it tested as the shop and Henge change. **Kubernetes** is the next step up: a manifest set and the
   same checks (a replica lost to a store outage, a rolling update against a missing store) run against a
@@ -86,9 +87,9 @@ The [ladder's](philosophy.md#every-layer-is-opt-in) top rung, in phases, each us
 [design doc](design/self-orchestration.md#phasing)):
 
 1. **Switchable proxies and a child context per service**: a service that can move between embedded and
-   remote while the process runs, and be torn down cleanly. Its first use, de-allocation on a lost
-   lease, is built. The stable proxy is built, and a service can be retired (drained and destroyed, its lease released);
-   the child contexts aren't.
+   remote while the process runs, and be torn down cleanly. Built: the stable proxy, switching in both directions,
+   and retiring a service (drained and destroyed, its lease released), used to take up a lease later and to give up
+   a lost one. Not built: the child contexts.
 2. **Eviction**: a process that stops hosting a service under memory pressure or misbehavior, draining
    first.
 3. A **built-in DHT** as the ephemeral store, with no separate system to run.

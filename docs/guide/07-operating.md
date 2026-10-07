@@ -108,28 +108,28 @@ In plain Spring, inject the `HengeBootGate` bean and ask its `isReady()` from yo
 
 ## Deploying a new version
 
-Replacing processes is where [leases](06-leases-and-rate-limits.md) bite, because a process refused one is
-reached remotely until its next look at the lease, which comes every 30 seconds or so and backs off to 5
-minutes while the lease stays full. The cases below were tested before that look existed, when a refused process
-stayed remote until it restarted, **even after the holder was gone**; what each is now is said at its end. Tested on three replicas of the shop on Docker Compose, two of which could
-hold the `inventory-db` lease:
+Replacing processes is where [leases](06-leases-and-rate-limits.md) bite, because a process that is refused one is
+reached remotely until its next look at the lease ([taking it up later](06-leases-and-rate-limits.md#taking-up-a-lease-later)),
+which comes every 30 seconds or so and backs off to 5 minutes while the lease stays full. Tested on three replicas of the
+shop on Docker Compose, two of which could hold the `inventory-db` lease, with the look every 5 seconds (up to 15):
 
 - **One at a time, waiting for each to be healthy: clean.** A process that stops gracefully hands its lease
   back, and its replacement claims it. Every request in the test was answered.
-- **New processes alongside the old, then the old removed: works only with a free slot.** A new process is
-  refused while the old holders still hold the lease, so the new set ends up with the lease only if it had
-  room to claim it. Had both slots been held by old processes, none of the new ones would have it, and
-  removing the old ones would leave the service with no host. The test happened to have one slot free.
-- **A holder that crashes and restarts at once: the service stays down.** The lease is still held when it
-  starts, so it, and every other process, is refused. The lease lapses after its 30 seconds, but no one claims
-  it. Callers get `RemoteServiceException` (a `500`: no url configured, and no process advertises the
-  service) until some process is restarted. With the poll, until the first look after the lease lapses.
+- **New processes alongside the old, then the old removed: works, a look later.** A new process is refused while
+  the old holders hold the lease; when they go it takes the lease up at its next look.
+- **A holder that crashes and restarts at once, or every process killed at once: recovers by itself.** A killed
+  process doesn't hand its lease back, and its advertisement stays too, so for the lease's 30 seconds callers
+  get `RemoteServiceException` (a `500`: the advertised process is gone, and nothing else hosts the service).
+  Then the lease lapses, a process takes it up, and the service is back, with two holders again, and no restart
+  of anything. At the default look the wait after the 30 seconds is up to the poll interval, longer if the lease
+  has been full for a while.
+- **The capacity changing in a rollout** (new processes configured with a larger one): the old holders that
+  now see the cluster over their own capacity give the lease up, one at a time, and the services move to the new
+  process, with every request answered. See [Giving a lease up](06-leases-and-rate-limits.md#giving-a-lease-up).
 
 So with leases: roll one process at a time and wait for readiness (a rolling update does this by default
-on Kubernetes), keep a spare slot's worth of capacity, and alert on a service that nobody hosts, which is
-`henge.service.hosted` at `0` across the cluster. A refused process taking up a lease later closes the gap in
-the last two cases, within a poll interval of the lease lapsing; rebalancing who holds them is on the
-[roadmap](../scope.md#roadmap).
+on Kubernetes), and alert on a service that nobody hosts, which is `henge.service.hosted` at `0` across the
+cluster for longer than a lease TTL plus a poll interval.
 
 Docker Compose has no rolling update: `docker compose up` replaces a service's containers without waiting
 for the others to be healthy. Do the replacement yourself (a script that scales up, waits for health, and
@@ -169,7 +169,7 @@ open http://localhost:8080/_henge/topology/ui
 For each service version: how it was configured and why (explicit, `henge.serve`, or the default), its
 state here (`hosted`, `remote`, or `lease-refused`), the route a call would take, and who advertises it.
 Then which of your beans inject which services, with the edges that cross the network marked, and each
-lease's capacity and holders, read fresh from the store.
+lease's capacity and holders (marking one that is giving the lease up, which still counts as held), read fresh from the store.
 
 It is off by default, since it lists every service's host. When on, it follows the same rules as
 `/_henge`: a private network, and the secret where one is set. The page holds no data itself, asks for
