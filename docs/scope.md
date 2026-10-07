@@ -26,9 +26,11 @@ scope excluded on purpose, the second is work deferred.
   or load.
 - **Retrying a call that may have run.** Only calls that provably never ran are retried; whether
   repeating anything else is safe depends on the method, and there's no way yet to declare it.
-- **Giving up a lost lease.** A lease can be over-granted when the store's view is incomplete; the next
-  renewal notices, and the claim lapses, but the services on it keep running on the resource. Until
-  de-allocation exists, the intentional margin below the real limit is all that covers it.
+- **Giving up a lost lease** works on a refused renewal, so on a store that answers: the process sees the
+  cluster over the capacity it is configured with, stops renewing, stops advertising, waits 10 seconds, switches
+  to the network, drains for up to 30, and closes the resource. In that time it uses what is no longer its to use,
+  which the intentional margin below the real limit covers. A store that is away is not a refusal: holders sit still.
+  Which of two nodes with different capacities gives way is not chosen: the one that is refused does.
 - **Taking up a lease is a poll.** A refused process looks for room every 30 seconds or so, backing off
   to 5 minutes while the lease stays full, so a service can be without a host for up to that long after
   its holder is gone, plus the lease's 30-second lapse if the holder crashed. Nothing makes a holder
@@ -58,10 +60,6 @@ scope excluded on purpose, the second is work deferred.
 
 Roughly in order:
 
-- **De-allocation on a lost lease**, the critical path to using leases in production: a node whose
-  renewal fails stops hosting the services on the lease, closes the resource, and reaches them remotely.
-  It needs switchable proxies and a child context per service, the first phase [toward
-  self-management](#toward-self-management).
 - **Shared-singleton detection.** Two services that inject the same stateful bean share one instance in
   a monolith, and silently get independent copies once split. A startup walk of the bean graph,
   heuristic and suppressible, would at least turn that into a loud warning.
@@ -73,9 +71,8 @@ Roughly in order:
 - **Topology, further**: log the `service@version → mode → url` table at startup, expose it through
   Actuator, and aggregate the view across processes.
 - **Metrics, further**: the dependency graph's remote edges as a gauge.
-- **Giving up a lease**, the next thing: a process that can't renew a lease (the cluster holds more than its capacity,
-  as can happen after the store is wiped) retires the services standing on it and closes the resource, and becomes
-  a candidate again. Then lease rebalancing: holders move toward a target spread. It needs a service to be built and torn down in
+- **Lease rebalancing**, the next thing: holders move toward a target spread, so a cluster that has drifted
+  (one process holds every lease, another none) evens out. Giving a lease up is only for an over-grant. It needs a service to be built and torn down in
   a running process, which waits on better service isolation (the per-version proxies).
 - **Docker Compose is the supported small-scale deployment** (see [`examples/docker`](../examples/docker));
   keep it tested as the shop and Henge change. **Kubernetes** is the next step up: a manifest set and the
@@ -89,8 +86,9 @@ The [ladder's](philosophy.md#every-layer-is-opt-in) top rung, in phases, each us
 [design doc](design/self-orchestration.md#phasing)):
 
 1. **Switchable proxies and a child context per service**: a service that can move between embedded and
-   remote while the process runs, and be torn down cleanly. Its first use is de-allocation on a lost
-   lease. The stable proxy is built, and a service can be retired (drained and destroyed, its lease released); nothing triggers that yet, and the child contexts aren't built.
+   remote while the process runs, and be torn down cleanly. Its first use, de-allocation on a lost
+   lease, is built. The stable proxy is built, and a service can be retired (drained and destroyed, its lease released);
+   the child contexts aren't.
 2. **Eviction**: a process that stops hosting a service under memory pressure or misbehavior, draining
    first.
 3. A **built-in DHT** as the ephemeral store, with no separate system to run.

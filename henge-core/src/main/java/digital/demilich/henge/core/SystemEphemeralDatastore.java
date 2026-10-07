@@ -45,6 +45,11 @@ public interface SystemEphemeralDatastore {
      * most {@code capacity}, writes (or renews) this node's member and returns {@code true};
      * otherwise writes nothing and returns {@code false}.
      *
+     * <p>The capacity is the caller's: each node is configured with its own, so during a rollout that changes
+     * it, nodes differ on it. A renewal is checked like a claim, so a node that finds the claims in the store over
+     * the capacity it believes in is refused, and stops renewing. A claim that is gone (it lapsed, or the store
+     * was wiped) is checked the same way, so the store is never over any capacity at the moment a claim is made.
+     *
      * <p>A claimed member's value is its amount, as a 4-byte big-endian {@code int}, so {@link #read}
      * shows what is claimed. A key is for claims or for {@link #put}, never both.
      *

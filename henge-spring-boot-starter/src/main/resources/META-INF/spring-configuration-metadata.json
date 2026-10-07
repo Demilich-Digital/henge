@@ -85,6 +85,18 @@
       "description": "The longest between looks for room in a refused lease. The wait doubles from the interval with each refusal, so a cluster that is really full is asked less and less often."
     },
     {
+      "name": "henge.lease-evict.grace",
+      "type": "java.time.Duration",
+      "defaultValue": "10s",
+      "description": "When a process has to give a lease up, how long after it stops advertising a service it stops answering it, so callers that already read the advertisement are still served. At least their refresh interval, a third of the advertisement's TTL. 0 switches at once."
+    },
+    {
+      "name": "henge.lease-evict.drain-timeout",
+      "type": "java.time.Duration",
+      "defaultValue": "30s",
+      "description": "How long calls already running in a service being given up have to finish before it is destroyed anyway. 0 destroys it at once."
+    },
+    {
       "name": "henge.store.redis.uri",
       "type": "java.lang.String",
       "description": "For henge.store.type=redis: a Lettuce URI such as redis://host:6379/0 (rediss:// for TLS, redis://:password@host for a password). Required."

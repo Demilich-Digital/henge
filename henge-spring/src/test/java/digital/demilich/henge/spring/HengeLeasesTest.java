@@ -320,6 +320,49 @@ class HengeLeasesTest {
         }
     }
 
+    private static void await(java.util.function.BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertThat(condition.getAsBoolean()).isTrue();
+    }
+
+    @Test
+    void aServiceWhoseLeaseIsLostStopsBeingHostedAndIsHostedAgainWhenThereIsRoom() throws Exception {
+        Map<String, Object> properties = new HashMap<>(leases(100, 20));
+        properties.put("henge.lease-poll.interval", "20ms");
+        properties.put("henge.lease-poll.max-interval", "40ms");
+        properties.put("henge.lease-evict.grace", "0");
+        properties.put("henge.lease-evict.drain-timeout", "1s");
+        try (var ctx = context(properties, LeasedConfig.class, OtherHolderConfig.class, HengeTransportConfiguration.class)) {
+            ctx.refresh();
+            var registry = ctx.getBean(HengeServiceRegistry.class);
+            var datastore = ctx.getBean(SystemEphemeralDatastore.class);
+            // 70 held elsewhere and 20 here fits; the poller isn't involved, as nothing was refused.
+            assertThat(registry.find("ledger-service", 1)).isPresent();
+            assertThat(registry.find("report-service", 1)).isPresent();
+
+            // The store is wiped and another process claims what is left before this node re-claims: the
+            // renewal finds this node's claim gone and no room for it, which is a lost lease.
+            datastore.remove("lease:ledger-db", HengeLeaseKeeper.MEMBER);
+            datastore.put("lease:ledger-db", "a-extra",
+                    java.nio.ByteBuffer.allocate(Integer.BYTES).putInt(30).array(), Duration.ofHours(1));
+            ctx.getBean(HengeLeaseKeeper.class).renewAll();
+
+            await(() -> registry.find("ledger-service", 1).isEmpty() && registry.find("report-service", 1).isEmpty());
+            await(() -> datastore.read("lease:ledger-db").members().size() == 2);
+            assertThat(datastore.read("adv:ledger-service@1").members()).isEmpty();
+            assertThat(java.lang.reflect.Proxy.isProxyClass(ctx.getBean(LedgerService.class).getClass())).isTrue();
+
+            // The excess goes away, and the lease has room again: the services come back, advertised.
+            datastore.remove("lease:ledger-db", "a-extra");
+            await(() -> registry.find("ledger-service", 1).isPresent() && registry.find("report-service", 1).isPresent());
+            assertThat(ctx.getBean(LedgerService.class).grant()).isEqualTo("ledger-db:20");
+            await(() -> datastore.read("adv:ledger-service@1").members().size() == 1);
+        }
+    }
+
     @Test
     void servicesOnTheSameLeaseAreBothHostedWhenOneClaimFits() {
         // 70 held elsewhere leaves 30: one claim of 20 fits, and both services stand on it.

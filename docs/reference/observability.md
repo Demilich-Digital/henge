@@ -53,7 +53,7 @@ henge.call → http.client.requests (one per attempt) → the host's request →
 | Meter | Kind | Tags | Tells you |
 |---|---|---|---|
 | `henge.lease.claims` | counter | `lease`, `outcome` (`granted`, `refused`) | This process asked the cluster for a lease. A refusal holds nothing, so each leased service that asks after one is a refusal too. |
-| `henge.lease.renewals` | counter | `lease`, `outcome` (`renewed`, `over-capacity`, `error`) | The heartbeat that keeps a held lease. `over-capacity` is the cluster holding more than its capacity (nothing evicts yet); `error` is the store failing. |
+| `henge.lease.renewals` | counter | `lease`, `outcome` (`renewed`, `lost`, `error`) | The heartbeat that keeps a held lease. `lost` is the store refusing it: the rest of the cluster holds too much of the lease for this node's claim to fit its configured capacity (its claim was lost, or other nodes are configured with another capacity, as in a rollout), so the services standing on it stop being hosted here (a `WARN` in the log); `error` is the store failing. |
 | `henge.lease.held` | gauge | `lease` | The amount this process holds; `0` once it hands it back. |
 | `henge.service.hosted` | gauge | `service`, `version`, `mode` (as configured) | `1` if this process serves the version, `0` if it's reached remotely. A `0` on an `embedded` version is a lease refusal. |
 | `henge.advertisement.renewals` | counter | `service`, `version`, `outcome` (`success`, `error`) | This process keeping its advertisements alive. A run of `error` is a process about to disappear from the cluster. |

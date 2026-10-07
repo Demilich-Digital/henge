@@ -112,6 +112,12 @@ Writes this node's member only if the sum of everyone else's live amounts plus t
 capacity. The node's own existing member doesn't count against it, so renewing never fails against
 itself. A claimed member's value is its amount, so `read` shows who holds what.
 
+The capacity is the caller's, and each node is configured with its own, so a rollout that changes it leaves
+nodes disagreeing for a while. A renewal is checked like any claim, so a node whose capacity is smaller than
+what the others hold is refused and stops renewing, and one whose capacity is larger carries on. A claim that
+is gone (lapsed, or the store was wiped) is checked the same way. So the store is never over *a* capacity at the
+moment a claim is made, and a claim that is refused is never written.
+
 The check and the write are atomic within a copy of the key. A claim's decision depends on everyone
 else's entries, so a partial view of them (a replica that missed writes, two serializers during a
 failover) under-counts, and grants a claim that a complete view would have refused. That is the same
@@ -119,8 +125,7 @@ direction as a bucket's error, and handled the same way: the configured capacity
 underestimate of the real limit, so a bounded over-grant lands inside the margin.
 
 An over-grant is also *noticed*: the next renewal reads a sum over the capacity and fails. What happens
-then is the gap described under [Behavior](#behavior): today the node keeps running on a lease it no
-longer holds.
+then is described under [Behavior](#behavior): the node stops renewing and gives the lease up.
 
 ### Adapters
 
@@ -271,12 +276,9 @@ henge:
   or failed to construct) closes the provider's resource, if there is one, and hands the claim back.
 - **Held claims are renewed** on a heartbeat of a third of the TTL (30 seconds), and expire with the node,
   so a crash returns its capacity one TTL later.
-- **A lost lease isn't given up yet.** A renewal that finds the cluster over capacity (an over-grant,
-  noticed) writes nothing, so the node's claim lapses after its TTL, but its services keep running on the
-  resource: the cluster then counts less than is really in use. The fix is **de-allocation**: a node that
-  loses a lease stops hosting the services on it, closes the resource, and reaches them remotely
-  instead. That needs a service that can switch from embedded to remote while running, so it waits on
-  phase 5, and it is the first thing phase 5 is for.
+- **A lost lease is given up** (de-allocation, below): a refused renewal means the node sees the cluster over
+  the capacity it is configured with, so left alone its services would keep running on a resource that is no longer
+  its to use.
 - **A refusal is retried by polling** (`HengeLeasePoller`). A refused service is a candidate: after a jittered
   interval, and with the wait doubling at each refusal, the poller reads every lease it needs, and only if
   all show room does it claim them and switch the binding to the implementation. The read is advisory and
@@ -285,6 +287,15 @@ henge:
   window for a stale read is a few round trips, against attempts spread over tens of seconds: contention
   resolves by being unlikely to repeat, with no queue or fairness guarantee. A retired service is not a
   candidate.
+- **A lease that can't be renewed is given up.** Capacity is each node's own configuration, so a rollout that
+  changes it leaves nodes with different views, and an over-grant (a store wiped, and claimed before its holders
+  re-asserted) leaves the claims over everyone's. A node that is refused its renewal sees the cluster over the
+  capacity *it* believes in: either a newer node believes in a larger one, in which case this node makes room
+  for it, or it is about to be replaced by the rollout; either way it stops renewing and gives the lease up,
+  with no ranking or negotiation. Eviction is the retirement above, with the switch undone: the version is
+  advertised again when it is hosted again, and it is a poller candidate, which looks at room under the capacity
+  it believes in, so a node that is outvoted keeps finding the lease full. In a wiped store the holder that
+  loses is whichever renewed after the poller's claim; the epoch wait makes that unlikely, not impossible.
 - **A service with several leases stays all-or-nothing**, and different leases are independent keys with
   independent capacities. A node that holds lease X for one service and is refused Y for another sends
   the second remote; X stays held by the first.
@@ -310,7 +321,7 @@ Planned refinements, not built:
   claiming, so existing holders re-assert first and a wipe doesn't look like free capacity.
 
 An over-grant is still possible whenever the store's view is incomplete (a Redis failover, say). The
-intentional margin absorbs it, and de-allocation, once built, corrects it.
+intentional margin absorbs it, and de-allocation corrects it.
 
 ### Decided constraints
 
@@ -455,9 +466,9 @@ Each phase is independently useful and testable, and maps onto the ladder's rung
    withdrawal when overloaded: calls rotate over what's advertised), with retries and failover. *Rung 2.*
 4. **Redis adapter** (built): proves the contract against a store Henge doesn't control, and makes rungs 2
    and 3 cluster-wide.
-5. **Switchable proxies and a child context per service**, and with them **de-allocation**: a node
-   that loses a lease stops hosting the services on it and closes the resource. This is on the critical
-   path to usability, since until it exists an over-granted lease is never given back. It also unblocks
+5. **Switchable proxies and a child context per service**, and with them **de-allocation** (built, without
+   the child context): a node that loses a lease stops hosting the services on it and closes the resource.
+   It also unblocks
    the roadmap's isolated mode. The stable proxy (the service binding) is built; retargeting, draining and
    the child contexts are not. *Rung 4 begins.*
 6. **Eviction**: memory pressure and misbehavior, drain, remembered evictions, on the same mechanism.

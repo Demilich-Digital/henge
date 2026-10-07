@@ -127,10 +127,10 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
         if (refused != null) {
             log.info("Lease '" + refused.name() + "' is full; " + spec.localName() + " is reached remotely from this process");
             pending.becomeRemote(transport());
-            applicationContext.getBean(HengeLeasePoller.class).add(
-                    new HengeLeasePoller.Candidate(spec.localName(), spec.leased().needs(), () -> rehost(pending)));
+            applicationContext.getBean(HengeLeasePoller.class).add(candidate(pending));
         } else {
             pending.becomeLocal(constructImplementation());
+            keeper.onEviction(spec.localName(), this::evict);
         }
         return true;
     }
@@ -145,12 +145,44 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
             return false;
         }
         binding.rehost(constructImplementation());
+        keeper.onEviction(spec.localName(), this::evict);
         log.info("A lease was granted after all: " + spec.localName() + " is hosted by this process");
         HengeServiceAdvertiser advertiser = applicationContext.getBeanProvider(HengeServiceAdvertiser.class).getIfAvailable();
         if (advertiser != null) {
             advertiser.renew();
         }
         return true;
+    }
+
+    private HengeLeasePoller.Candidate candidate(ServiceBinding binding) {
+        return new HengeLeasePoller.Candidate(spec.localName(), spec.leased().needs(), () -> rehost(binding));
+    }
+
+    /**
+     * Gives this service up because a lease it stands on can't be kept (see {@link HengeLeaseKeeper}): stops
+     * hosting it as a retirement does, releasing what it held, and then waits to be hosted again like a service
+     * that was refused its lease, since the lease may well come back. Unlike a retirement, which is final.
+     */
+    private void evict() {
+        HengeProperties properties = new HengeProperties(applicationContext.getEnvironment());
+        try {
+            applicationContext.getBean(HengeServiceRegistry.class).retire(spec.serviceName(), spec.version(),
+                    properties.getLeaseEvictGrace(), properties.getLeaseEvictDrainTimeout());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        } catch (RuntimeException e) {
+            log.error("Giving up " + spec.localName() + " failed; it is still hosted here", e);
+            return;
+        }
+        retired.set(false);
+        HengeServiceAdvertiser advertiser = applicationContext.getBeanProvider(HengeServiceAdvertiser.class).getIfAvailable();
+        if (advertiser != null) {
+            advertiser.resume(spec.serviceName(), spec.version());
+        }
+        applicationContext.getBean(HengeLeasePoller.class).add(candidate(binding()));
+        log.warn(spec.localName() + " is no longer hosted by this process: its lease was lost. It is reached remotely, "
+                + "and hosted here again if the lease has room later");
     }
 
     private ServiceBinding remote() {

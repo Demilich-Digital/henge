@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <table>
  *   <caption>Meters</caption>
  *   <tr><td>{@code henge.lease.claims}</td><td>counter of asks of the cluster: {@code lease}, {@code outcome} ({@code granted} or {@code refused})</td></tr>
- *   <tr><td>{@code henge.lease.renewals}</td><td>counter: {@code lease}, {@code outcome} ({@code renewed}, {@code over-capacity} or {@code error})</td></tr>
+ *   <tr><td>{@code henge.lease.renewals}</td><td>counter: {@code lease}, {@code outcome} ({@code renewed}, {@code lost} or {@code error})</td></tr>
  *   <tr><td>{@code henge.lease.held}</td><td>gauge: {@code lease}; the amount this node holds, {@code 0} after it hands it back</td></tr>
  *   <tr><td>{@code henge.advertisement.renewals}</td><td>counter: {@code service}, {@code version}, {@code outcome} ({@code success} or {@code error})</td></tr>
  *   <tr><td>{@code henge.service.advertisers}</td><td>gauge: {@code service}, {@code version}; the nodes advertising it as last seen by a caller looking for it</td></tr>

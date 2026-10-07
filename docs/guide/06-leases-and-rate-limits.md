@@ -95,12 +95,33 @@ What keeps several refused processes from getting in each other's way:
   `henge.lease-poll.max-interval` (5 minutes). The cost to a cluster of refused processes is a read every
   few minutes each.
 
-One case it doesn't close: if the store is restarted or wiped, a refused process can claim a lease in the
-moment before its holders have renewed theirs, and the cluster then holds more of it than its capacity.
-Waiting a lease TTL after the store's epoch changes narrows that window, and in a Docker test of three
-shop replicas it still happened in two of four wipes. The process that fails to renew warns, and keeps its services
-running on the lease, because nothing yet makes a process give one up: the pool it opened stays open, so the
-database can see more connections than the capacity until a process restarts.
+If the store is restarted or wiped, a refused process can claim a lease before its holders have renewed
+theirs, and one of the holders then finds its claim gone and the lease full. Waiting a lease TTL after the
+store's epoch changes narrows that window, and the next section is what happens when it doesn't.
+
+### Giving a lease up
+
+The store checks a claim against the capacity of the node that makes it, and each node is configured with its
+own, so a rollout that changes `henge.leases.<lease>.capacity` leaves nodes disagreeing for a while. A renewal is
+checked like any claim, and one the store refuses means this process sees the rest of the cluster holding too much
+for its claim to fit: it lost the claim (it lapsed, or the store was wiped and another process claimed the capacity
+first), or newer processes are configured with a larger capacity. Either way it should not carry on, and it makes
+room for the processes that are not refused, which are the new ones in a rollout, or is about to be replaced
+by one. It stops renewing, and for each service on the lease does what a retirement does, in the order a caller can follow without a failed
+call: it stops advertising the service, waits `henge.lease-evict.grace` (10 seconds, the callers'
+refresh interval), switches the service to the network, gives the calls already running
+`henge.lease-evict.drain-timeout` (30 seconds) to finish, destroys the implementation, which closes the pool,
+and hands the claim back. It then waits to be hosted again like a process that was refused, which it will be once the
+lease has room under its own capacity. Unlike a retirement, which is final.
+
+Between the refusal and closing the pool, about 40 seconds at the defaults, the process is still using a
+resource that is no longer its to use; that is the overlap the margin below the real limit is for. The grace and drain
+can be shortened. A store that is away is not a refusal: holders sit still.
+
+In a Docker test of three shop replicas, a fourth started with a capacity of 15 against their 10: its claim was
+granted, both holders that believed in 10 were refused and gave the lease up, and a process that had been refused took
+one of the freed shares. The cluster ended at two holders, none of them flapping, and every request in the test was
+answered. Wiping the store three times, in the same cluster, never held more than two claims.
 
 A lease handed to a service that was retired on purpose is not taken up again. Nothing asks a holder to
 give a lease up: a process that has one keeps it, and a refused one only gets it when its holder goes away.
@@ -190,7 +211,7 @@ Rules for the end of the lease:
 - A failure in `close` is logged and the claim is still deleted; the process is going away anyway.
 - A process that crashes never calls `close`; its connections die with it, and its claim lapses with the
   lease's 30-second time to live.
-- A lost lease (the over-capacity case in [Soft limits](#soft-limits)) doesn't close the pool yet.
+- A [lost lease](#giving-a-lease-up) closes the pool, once the calls running on it have finished or the drain times out.
 
 ## Rate limits
 
@@ -282,9 +303,8 @@ its bucket as correct or emptier than it is, and a lease claimed from one counts
 are (in a Redis failover, say). So set every capacity as an intentional underestimate of the real limit:
 the margin is what an over-grant lands in.
 
-An over-granted lease is noticed at its next renewal, which fails, and the process logs a warning and
-counts it (`henge.lease.renewals` with `outcome=over-capacity`). It doesn't give the lease up yet: its
-services keep running on the resource until the process stops. Giving up a lost lease, closing the
-resource and reaching the services remotely, is the next thing on the [roadmap](../scope.md#roadmap). Anything that
+A lease can be over-granted when the store's view is incomplete: a claim is made against fewer holders than
+there are. The next renewal of a holder notices, and [the lease is given up](#giving-a-lease-up).
+Anything that
 needs a hard guarantee, mutual exclusion or exactly-once, belongs in a system built on consensus, not in
 the ephemeral store.

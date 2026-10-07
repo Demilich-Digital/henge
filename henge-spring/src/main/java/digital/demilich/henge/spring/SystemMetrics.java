@@ -19,7 +19,7 @@ interface SystemMetrics {
 
     /** How a held lease's renewal went. */
     enum Renewal {
-        RENEWED, OVER_CAPACITY, ERROR
+        RENEWED, LOST, ERROR
     }
 
     /** What became of one fire of a scheduled job on this node. */

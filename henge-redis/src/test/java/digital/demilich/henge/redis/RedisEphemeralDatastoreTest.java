@@ -171,6 +171,28 @@ class RedisEphemeralDatastoreTest {
     }
 
     @Test
+    void aNodeThatSeesTheClaimsOverItsCapacityIsRefusedItsRenewal() {
+        String key = freshKey();
+        assertThat(store.claim(key, "a", 60, 100, Duration.ofSeconds(30))).isTrue();
+        assertThat(otherNode.claim(key, "a", 40, 100, Duration.ofSeconds(30))).isTrue();
+
+        // Capacity is each node's own: one that believes in 50 isn't let renew what the others' 40 leave no room for.
+        assertThat(store.claim(key, "a", 60, 50, Duration.ofSeconds(30))).isFalse();
+        // One that believes in 100 renews fine.
+        assertThat(otherNode.claim(key, "a", 40, 100, Duration.ofSeconds(30))).isTrue();
+    }
+
+    @Test
+    void aClaimThatChangesItsAmountIsCheckedAsANewOne() {
+        String key = freshKey();
+        assertThat(store.claim(key, "a", 60, 100, Duration.ofSeconds(30))).isTrue();
+        assertThat(otherNode.claim(key, "a", 40, 100, Duration.ofSeconds(30))).isTrue();
+
+        assertThat(store.claim(key, "a", 61, 100, Duration.ofSeconds(30))).isFalse();
+        assertThat(store.read(key).members().get(new MemberId(store.nodeId(), "a"))).containsExactly(amount(60));
+    }
+
+    @Test
     void anExpiredClaimFreesItsCapacity() throws Exception {
         String key = freshKey();
         assertThat(store.claim(key, "a", 100, 100, Duration.ofMillis(300))).isTrue();

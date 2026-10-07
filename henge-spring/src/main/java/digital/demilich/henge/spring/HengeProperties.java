@@ -127,6 +127,24 @@ public class HengeProperties {
         return positiveTimeout("henge.lease-poll.max-interval", HengeLeasePoller.DEFAULT_MAX_INTERVAL);
     }
 
+    /**
+     * {@code henge.lease-evict.grace}, default 10 seconds: when a process has to give a lease up, how long
+     * after it stops advertising a service before it stops answering it, so the callers that already
+     * read the advertisement are still served. At least their refresh interval, a third of the advertisement's
+     * TTL. {@code 0} switches at once.
+     */
+    public Duration getLeaseEvictGrace() {
+        return timeout("henge.lease-evict.grace", HengeLeaseKeeper.DEFAULT_TTL.dividedBy(3), "no grace");
+    }
+
+    /**
+     * {@code henge.lease-evict.drain-timeout}, default 30 seconds: how long calls already running in a service
+     * that is being given up have to finish, before it is destroyed anyway. {@code 0} destroys it at once.
+     */
+    public Duration getLeaseEvictDrainTimeout() {
+        return timeout("henge.lease-evict.drain-timeout", Duration.ofSeconds(30), "no wait");
+    }
+
     /** {@code henge.transport.connect-timeout}, default 2 seconds -- see {@link #timeout}. */
     public Duration getConnectTimeout() {
         return timeout("henge.transport.connect-timeout", Duration.ofSeconds(2), "no timeout");

@@ -106,6 +106,11 @@ class HengeServiceAdvertiser implements SmartLifecycle {
         datastore.remove(ServiceAdvertisement.key(service, version), MEMBER);
     }
 
+    /** Undoes {@link #withdraw}: the service version is advertised again from the next {@link #renew}, once it is hosted here. */
+    synchronized void resume(String service, int version) {
+        withdrawn.remove(service + "@" + version);
+    }
+
     @Override
     public synchronized void stop() {
         if (!running) {

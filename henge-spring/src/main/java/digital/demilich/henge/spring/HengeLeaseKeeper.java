@@ -6,6 +6,7 @@ import digital.demilich.henge.core.SystemEphemeralDatastore;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -33,6 +34,14 @@ import org.springframework.lang.Nullable;
  *
  * <p>A lease with a provider ({@code @LeasedResource}) has its resource opened when the claim is first
  * granted, shared by every service that holds it, and closed when the claim is handed back.
+ *
+ * <p>A renewal the store refuses means the claims in the store, this node's own excluded, leave no room
+ * for it under the capacity this node is configured with: its own claim was lost (it lapsed, or the store
+ * was wiped and another node claimed the capacity first), or another node believes in a different
+ * capacity, as nodes do during a rollout that changes it. Either way the store is never made to hold more
+ * than a claim's capacity at the time it is made, and this node must not carry on: it stops renewing, so every service
+ * standing on the lease stops being hosted here and runs its eviction ({@link #onEviction}), which hands
+ * the lease back and makes room for the nodes that are not refused.
  *
  * <p>A service whose lease was refused here is reached remotely, and must not answer here: the
  * caller of {@link #acquireAll} makes that its {@link ServiceBinding}'s target, and
@@ -72,6 +81,10 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
     private final SystemMetrics metrics;
     private final Map<String, Held> heldByLease = new LinkedHashMap<>();
     private final Map<String, List<String>> leasesByService = new LinkedHashMap<>();
+    /** What gives a service up when its lease is lost, by {@code service@version}. */
+    private final Map<String, Runnable> evictors = new LinkedHashMap<>();
+    /** Leases being given up: not asked again, since their renewals keep being refused until they are handed back. */
+    private final Set<String> evicting = new HashSet<>();
     private ScheduledExecutorService heartbeat;
     private BeanFactory beanFactory;
 
@@ -133,6 +146,14 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
         return null;
     }
 
+    /**
+     * What to run, off the heartbeat, when {@code localName}'s lease can't be kept: it must stop hosting
+     * the service and {@link #release} it, which hands the lease back once its last holder here has.
+     */
+    synchronized void onEviction(String localName, Runnable evictor) {
+        evictors.put(localName, evictor);
+    }
+
     /** Whether this node already holds {@code lease}, for some service of its own: a claim it needn't ask the cluster for. */
     synchronized boolean isHeld(String lease) {
         return heldByLease.containsKey(lease);
@@ -170,6 +191,7 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
 
     /** {@code localName} lets go of its leases; each one nobody else here holds is handed back. */
     synchronized void release(String localName) {
+        evictors.remove(localName);
         List<String> leases = leasesByService.remove(localName);
         if (leases == null) {
             return;
@@ -193,6 +215,7 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
     }
 
     private void drop(String lease) {
+        evicting.remove(lease);
         Held held = heldByLease.remove(lease);
         if (held != null) {
             metrics.leaseHeld(lease, 0);
@@ -229,15 +252,36 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
                 if (datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl)) {
                     metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.RENEWED);
                 } else {
-                    metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.OVER_CAPACITY);
-                    log.warn("Lease '" + need.name() + "' could not be renewed: the cluster now holds more of it than its "
-                            + "capacity of " + need.capacity() + ". Its services keep running here, since nothing evicts yet.");
+                    metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.LOST);
+                    lost(need);
                 }
             } catch (RuntimeException e) {
                 metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.ERROR);
                 GuardedDatastore.logFailure(log, "Renewing lease '" + need.name() + "' failed", e);
             }
         }
+    }
+
+    /** The renewal of {@code need} was refused: this node stops renewing, and everything standing on it stops being hosted here. */
+    private void lost(LeaseNeed need) {
+        List<Runnable> toRun = new ArrayList<>();
+        synchronized (this) {
+            Held held = heldByLease.get(need.name());
+            if (held == null || !evicting.add(need.name())) {
+                return;
+            }
+            held.holders.forEach(holder -> {
+                Runnable evictor = evictors.get(holder);
+                if (evictor != null) {
+                    toRun.add(evictor);
+                }
+            });
+        }
+        log.warn("Lease '" + need.name() + "' can't be kept: the rest of the cluster holds more of it than leaves room for this "
+                + "node's " + need.amount() + " within the capacity of " + need.capacity() + " it is configured with (its claim was lost, "
+                + "or other nodes are configured with another capacity). " + toRun.size() + " service(s) stop being hosted here.");
+        // Each takes a grace period and a drain, so none runs on the heartbeat, which has other leases to renew.
+        toRun.forEach(evictor -> Thread.ofVirtual().name("henge-lease-eviction").start(evictor));
     }
 
     @Override

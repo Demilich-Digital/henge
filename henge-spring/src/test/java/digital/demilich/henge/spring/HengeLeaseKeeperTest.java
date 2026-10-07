@@ -120,6 +120,98 @@ class HengeLeaseKeeperTest {
         }
     }
 
+    /** A claim of {@code amount} as another node makes it. */
+    private void foreignClaim(String member, int amount) {
+        store.put("lease:db", member, java.nio.ByteBuffer.allocate(Integer.BYTES).putInt(amount).array(), Duration.ofSeconds(30));
+    }
+
+    /** What the store does to this node's claim when it is wiped, and another node claims the capacity. */
+    private void loseClaim(int takenByOthers) {
+        store.remove("lease:db", HengeLeaseKeeper.MEMBER);
+        foreignClaim("other", takenByOthers);
+    }
+
+    private static void awaitTrue(java.util.function.BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(5);
+        }
+    }
+
+    @Test
+    void aNodeWhoseClaimIsGoneAndWhoseCapacityIsTakenGivesTheLeaseUp() throws Exception {
+        var evicted = new AtomicInteger();
+        assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+        keeper.onEviction("a@1", evicted::incrementAndGet);
+        loseClaim(10);
+
+        keeper.renewAll();
+
+        awaitTrue(() -> evicted.get() > 0);
+        assertThat(evicted).hasValue(1);
+    }
+
+    @Test
+    void aNodeWhoseClaimIsGoneButWhoseCapacityIsFreeSimplyHasItAgain() throws Exception {
+        var evicted = new AtomicInteger();
+        assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+        keeper.onEviction("a@1", evicted::incrementAndGet);
+        loseClaim(5);
+
+        keeper.renewAll();
+        Thread.sleep(50);
+
+        assertThat(evicted).hasValue(0);
+        assertThat(store.read("lease:db").members()).hasSize(2);
+    }
+
+    @Test
+    void aNodeThatSeesTheClusterOverItsOwnCapacityStandsDownEvenWithItsClaimHeld() throws Exception {
+        var evicted = new AtomicInteger();
+        assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+        keeper.onEviction("a@1", evicted::incrementAndGet);
+        // Another node, rolled out with a larger capacity, claimed 10 beside this node's 5: to this node, which
+        // believes in 10, the cluster is over, and it makes room for the nodes that don't.
+        foreignClaim("other", 10);
+
+        keeper.renewAll();
+
+        awaitTrue(() -> evicted.get() > 0);
+        assertThat(evicted).hasValue(1);
+    }
+
+    @Test
+    void aLeaseBeingGivenUpIsNotGivenUpAgainOnTheNextHeartbeat() throws Exception {
+        var evicted = new AtomicInteger();
+        assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+        keeper.onEviction("a@1", evicted::incrementAndGet);
+        loseClaim(10);
+
+        keeper.renewAll();
+        keeper.renewAll();
+        keeper.renewAll();
+
+        awaitTrue(() -> evicted.get() > 0);
+        Thread.sleep(50);
+        assertThat(evicted).hasValue(1);
+    }
+
+    @Test
+    void everyServiceOnALostLeaseIsGivenUp() throws Exception {
+        var evicted = new AtomicInteger();
+        var need = new LeaseNeed("db", 5, 10);
+        keeper.acquireAll("a@1", List.of(need));
+        keeper.acquireAll("b@1", List.of(need));
+        keeper.onEviction("a@1", evicted::incrementAndGet);
+        keeper.onEviction("b@1", evicted::incrementAndGet);
+        loseClaim(10);
+
+        keeper.renewAll();
+
+        awaitTrue(() -> evicted.get() == 2);
+        assertThat(evicted).hasValue(2);
+    }
+
     @Test
     void servicesOnTheSameLeaseShareOneClaim() {
         var need = new LeaseNeed("db", 10, 10);

@@ -137,10 +137,11 @@ class MicrometerSystemMetricsTest {
         keeper.renewAll();
         assertThat(count("henge.lease.renewals", "lease", "db", "outcome", "renewed")).isEqualTo(1);
 
-        // Another node's member now takes more than is left beside ours.
+        // Our claim is gone (the store was wiped, say) and another node's now takes more than is left for it.
+        store.remove("lease:db", HengeLeaseKeeper.MEMBER);
         store.put("lease:db", "other-node", ByteBuffer.allocate(Integer.BYTES).putInt(8).array(), Duration.ofSeconds(30));
         keeper.renewAll();
-        assertThat(count("henge.lease.renewals", "lease", "db", "outcome", "over-capacity")).isEqualTo(1);
+        assertThat(count("henge.lease.renewals", "lease", "db", "outcome", "lost")).isEqualTo(1);
 
         store.failing = true;
         keeper.renewAll();
