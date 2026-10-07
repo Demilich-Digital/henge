@@ -225,6 +225,14 @@ Four things to get right:
   static upstreams would get real active checks, but Compose names and counts them for you, which is what
   `dynamic a` is for. Don't use liveness for either: a node waiting for its store is live, and restarting
   it won't bring the store back.
+- **Accept the failures, and alert on the cause.** With passive checks, a replica that isn't ready costs one
+  failed request per replica per `fail_duration`, and the share of requests that is shrinks as replicas are
+  added. Caddy can retry a `503` for a `GET`, but not a request with a body (the body is lost on the
+  retry), so writes are left to the client, who sees `Retry-After: 1`. What the edge can't fix is a store
+  that stays away: new and restarted replicas stay not ready, and as ready ones are replaced for other
+  reasons the cluster runs short of them. Page on the cause, not the symptom, as
+  [Operating](07-operating.md#when-the-store-goes-away) describes, and have your automation treat a
+  container that stays unhealthy as a store problem before it restarts it.
 - **Run at least three.** See [how many instances](07-operating.md#how-many-instances).
 
 ## Per service, per version

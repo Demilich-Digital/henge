@@ -73,6 +73,10 @@ operate is below.
 
 - **Watch it.** `henge.store.operations` with `outcome=error`, and `henge.rate-limit.degraded`, say
   that the store is away. The start and the end of an outage are each logged once.
+- **Alert on it, and on a node that stays not ready.** A replica that started while the store was away
+  is alive and not ready for as long as it stays away (see below), and restarting it doesn't help. Alert
+  on the store, and on containers or pods that stay unhealthy past their start period, so the fix is
+  aimed at the store.
 - **Tune the probing.** After one failure every use of the store fails at once, for a backoff that
   doubles up to a cap (`henge.store.backoff.*`), with one call at a time let through to find out.
 - **Decide what a `503` means to your clients.** Henge never retries it; yours may.
