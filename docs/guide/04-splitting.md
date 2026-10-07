@@ -156,6 +156,55 @@ The mode is resolved the same way: `henge.services.<name>.mode` when set, else `
 names the service (or is unset), else `internal-rest`. Naming a service in `henge.serve` and also setting
 its mode to `internal-rest` fails startup rather than picking one.
 
+## At small scale: Docker Compose and Caddy
+
+You don't need Kubernetes to run a split. Compose gives every service a DNS name on a private network, which
+is all `henge.remote-url-template` asks for, and [Caddy](https://caddyserver.com) is a small fit for the
+public edge: one binary, a few lines of config, websockets proxied with nothing extra.
+
+```yaml
+services:
+  store:
+    image: redis:8
+  shop:
+    image: shop:1.0
+    # Each replica advertises its own container hostname, which Compose's DNS resolves.
+    entrypoint: ["sh", "-c", "exec java -jar /app.jar --henge.advertise.url=http://$$(hostname):8080 \"$$@\"", "--"]
+    command:
+      - --henge.store.type=redis
+      - --henge.store.redis.uri=redis://store:6379
+    deploy:
+      replicas: 3
+    depends_on: [store]
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro"]
+```
+
+```
+example.com {
+    # /_henge is for your own processes. Never route it from the edge.
+    respond /_henge/* 404
+    reverse_proxy shop:8080
+}
+```
+
+Three things to get right:
+
+- **Only Caddy publishes ports.** The services reach each other over the Compose network, which is the
+  boundary [Operating](07-operating.md#security-the-network-is-the-boundary) relies on. Publishing a
+  service's port next to Caddy's puts `/_henge` on the host's network.
+- **Replicas need the store.** Three replicas of one monolith look like a single process and are not caught
+  by the [check above](#a-split-needs-a-store): without `henge.store.type`, each keeps its own leases, rate
+  limits and jobs. Point them all at the same store.
+- **Advertise an address.** A process that hosts a service tells the others where it is only if
+  `henge.advertise.url` is set. Without it, a replica that [didn't win a lease](06-leases-and-rate-limits.md)
+  has no url for the service and fails every call to it with `RemoteServiceException`, while its
+  neighbours work, so it looks like one bad node. Each replica needs its own address, hence the container
+  hostname in the example.
+- **Run at least three.** See [how many instances](07-operating.md#how-many-instances).
+
 ## Per service, per version
 
 `henge.services` configures one service, or one version of it, explicitly:

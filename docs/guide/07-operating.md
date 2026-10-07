@@ -41,6 +41,21 @@ Sessions are stateless and CSRF is off for this path, which is sound: CSRF defen
 authentication, and this path has neither. To apply a policy of your own (JWT, mTLS, ...), define a
 `SecurityFilterChain` bean named `hengeSecurityFilterChain`, and Henge's backs off.
 
+## How many instances
+
+Run at least **three** of anything that isn't a development setup. This is advice from the failure modes,
+not a quorum requirement: Henge works with one or two.
+
+With one instance nothing is distributed, so nothing can disagree. With two, a disagreement is a tie: when
+one node says a lease is held and the other says it isn't, you can't tell which is wrong. With three, the
+odd one out is visible, and so are the bugs that only exist between nodes: a limit that holds per process,
+a job that fires twice, a service two nodes both think they host, a node that has dropped out of the
+cluster's view while still serving. Those are the [gotchas](../gotchas.md) Henge exists to catch, and a
+deployment too small to show them is not testing them.
+
+It also lets you lose one and still have two to compare, and roll a deploy one node at a time without
+dropping to a single survivor.
+
 ## Failures, in the logs
 
 A caller gets an exception's type and message; the process that ran the method logs the stack trace:
