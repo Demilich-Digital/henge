@@ -3,6 +3,7 @@ package digital.demilich.henge.redis;
 import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
+import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandExecutionException;
 import io.lettuce.core.RedisNoScriptException;
@@ -11,6 +12,7 @@ import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulConnection;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisScriptingCommands;
+import io.lettuce.core.SocketOptions;
 import io.lettuce.core.cluster.ClusterClientOptions;
 import io.lettuce.core.cluster.ClusterTopologyRefreshOptions;
 import io.lettuce.core.cluster.RedisClusterClient;
@@ -146,6 +148,7 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
     public static RedisEphemeralDatastore connect(String uri) {
         RedisURI redisUri = parse(uri);
         RedisClient client = RedisClient.create(redisUri);
+        client.setOptions(ClientOptions.builder().socketOptions(socketOptions(redisUri)).build());
         try {
             StatefulRedisConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE);
             return new RedisEphemeralDatastore(connection, connection.sync(), client::shutdown);
@@ -174,6 +177,7 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
         }
         RedisClusterClient client = RedisClusterClient.create(seeds);
         client.setOptions(ClusterClientOptions.builder()
+                .socketOptions(socketOptions(seeds.get(0)))
                 .topologyRefreshOptions(ClusterTopologyRefreshOptions.builder()
                         .enablePeriodicRefresh(Duration.ofSeconds(30))
                         .enableAllAdaptiveRefreshTriggers()
@@ -194,7 +198,12 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
      * refusing the connection) holds every caller for all of it before the first failure starts the
      * backoff that makes the rest fail fast.
      */
-    static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(2);
+    static final Duration DEFAULT_TIMEOUT = Duration.ofMillis(500);
+
+    /** The TCP connect timeout (initial, and every reconnect) is the command timeout; Lettuce defaults it to 10s. */
+    private static SocketOptions socketOptions(RedisURI uri) {
+        return SocketOptions.builder().connectTimeout(uri.getTimeout()).build();
+    }
 
     private static RedisURI parse(String uri) {
         try {

@@ -41,7 +41,7 @@ class RedisDatastoreProviderTest {
             long start = System.nanoTime();
             assertThatThrownBy(() -> provider.create(properties::get)).isInstanceOf(StoreUnavailableException.class);
 
-            assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(15));
+            assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(5));
         }
     }
 }
