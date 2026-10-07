@@ -167,7 +167,7 @@ open http://localhost:8080/_henge/topology/ui
 ```
 
 For each service version: how it was configured and why (explicit, `henge.serve`, or the default), its
-state here (`hosted`, `remote`, or `lease-refused`), the route a call would take, and who advertises it.
+state here (`hosted`, `remote`, or `lease-refused`: its lease isn't this process's, because it was refused at start or has been given up since), the route a call would take, and who advertises it.
 Then which of your beans inject which services, with the edges that cross the network marked, and each
 lease's capacity and holders (marking one that is giving the lease up, which still counts as held), read fresh from the store.
 

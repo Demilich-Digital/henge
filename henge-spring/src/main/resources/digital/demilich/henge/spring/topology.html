@@ -95,7 +95,7 @@
   <div class="legend" aria-label="Legend">
     <span class="hosted">hosted here</span>
     <span class="remote">remote</span>
-    <span class="refused">lease refused, remote</span>
+    <span class="refused">lease unavailable, remote</span>
     <span class="bean">application bean</span>
     <span class="dashed">call crosses the network</span>
   </div>
@@ -188,7 +188,7 @@
     var nodes = [];
     data.consumers.forEach(function (c) { nodes.push({ id: c.id, kind: "bean", title: simple(c.type), sub: "application bean", ref: c }); });
     data.services.forEach(function (s) {
-      nodes.push({ id: s.id, kind: s.state, title: s.id, sub: s.state === "hosted" ? "hosted here" : s.state === "remote" ? "remote" : "lease refused", ref: s });
+      nodes.push({ id: s.id, kind: s.state, title: s.id, sub: s.state === "hosted" ? "hosted here" : s.state === "remote" ? "remote" : "lease unavailable", ref: s });
     });
     var byId = {};
     nodes.forEach(function (n) { byId[n.id] = n; n.layer = 0; });

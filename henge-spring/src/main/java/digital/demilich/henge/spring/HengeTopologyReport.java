@@ -44,7 +44,7 @@ class HengeTopologyReport {
         HOSTED,
         /** Configured {@code internal-rest}: called wherever it is. */
         REMOTE,
-        /** Embedded by configuration, but its lease was refused here, so it is called remotely. */
+        /** Embedded by configuration, but its lease isn't this process's (refused at start, or given up since), so it is called remotely. */
         LEASE_REFUSED;
 
         /** As the JSON writes it: {@code hosted}, {@code remote}, {@code lease-refused}. */
