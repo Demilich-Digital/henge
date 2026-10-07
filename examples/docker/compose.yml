@@ -1,0 +1,34 @@
+# Three replicas of the shop on one shared Redis store, behind Caddy.
+#
+#   ./gradlew :examples:shop-app:bootJar
+#   docker compose -f examples/docker/compose.yml up -d --build
+#   curl 'localhost:8088/api/stock?sku=lantern'
+services:
+  store:
+    image: redis:8
+
+  shop:
+    build:
+      context: ../..
+      dockerfile: examples/docker/Dockerfile
+    # Each replica advertises its own container hostname, which Compose's DNS resolves. Without an
+    # address, a replica that lost the inventory lease has nowhere to send its inventory calls.
+    entrypoint: ["sh", "-c", "exec java -jar /app.jar --henge.advertise.url=http://$$(hostname):8080 \"$$@\"", "--"]
+    command:
+      - --henge.store.type=redis
+      - --henge.store.redis.uri=redis://store:6379
+    healthcheck:
+      # Readiness, not liveness: Docker reports a node healthy once it has reached the store.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+    deploy:
+      replicas: 3
+    depends_on: [store]
+
+  caddy:
+    image: caddy:2
+    ports: ["8088:80"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro"]
+    depends_on: [shop]

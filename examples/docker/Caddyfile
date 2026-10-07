@@ -1,0 +1,12 @@
+:80 {
+    # /_henge is for your own processes. Never route it from the edge.
+    respond /_henge/* 404
+
+    reverse_proxy {
+        # Every replica behind the "shop" name, not whichever one DNS answered first.
+        dynamic a shop 8080
+        # A node that hasn't reached the store is alive but not ready: it gets no traffic.
+        health_uri /actuator/health/readiness
+        health_interval 2s
+    }
+}

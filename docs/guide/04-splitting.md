@@ -160,7 +160,8 @@ its mode to `internal-rest` fails startup rather than picking one.
 
 You don't need Kubernetes to run a split. Compose gives every service a DNS name on a private network, which
 is all `henge.remote-url-template` asks for, and [Caddy](https://caddyserver.com) is a small fit for the
-public edge: one binary, a few lines of config, websockets proxied with nothing extra.
+public edge: one binary, a few lines of config, websockets proxied with nothing extra. The shop, as three
+replicas on a shared Redis store, is in [`examples/docker`](../../examples/docker); the parts that matter:
 
 ```yaml
 services:
@@ -173,6 +174,10 @@ services:
     command:
       - --henge.store.type=redis
       - --henge.store.redis.uri=redis://store:6379
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      interval: 5s
+      start_period: 30s
     deploy:
       replicas: 3
     depends_on: [store]
@@ -186,11 +191,16 @@ services:
 example.com {
     # /_henge is for your own processes. Never route it from the edge.
     respond /_henge/* 404
-    reverse_proxy shop:8080
+
+    reverse_proxy {
+        dynamic a shop 8080
+        health_uri /actuator/health/readiness
+        health_interval 2s
+    }
 }
 ```
 
-Three things to get right:
+Four things to get right:
 
 - **Only Caddy publishes ports.** The services reach each other over the Compose network, which is the
   boundary [Operating](07-operating.md#security-the-network-is-the-boundary) relies on. Publishing a
@@ -202,7 +212,13 @@ Three things to get right:
   `henge.advertise.url` is set. Without it, a replica that [didn't win a lease](06-leases-and-rate-limits.md)
   has no url for the service and fails every call to it with `RemoteServiceException`, while its
   neighbours work, so it looks like one bad node. Each replica needs its own address, hence the container
-  hostname in the example.
+  hostname.
+- **Health-check readiness, at the edge too.** A node that hasn't reached the store, or hasn't yet seen who
+  hosts a service, is alive but [not ready](07-operating.md#starting-without-the-store), and answers `503`.
+  Add Spring Boot Actuator, and check `/actuator/health/readiness` in both places: in the container, so
+  Docker reports what is true, and in Caddy, which with `dynamic a` health-checks each replica behind the
+  name on its own, instead of sending whichever DNS answered first a request it can't serve. Don't use
+  liveness for this: a node waiting for its store is live, and restarting it won't bring the store back.
 - **Run at least three.** See [how many instances](07-operating.md#how-many-instances).
 
 ## Per service, per version

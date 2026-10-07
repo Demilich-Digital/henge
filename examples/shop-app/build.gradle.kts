@@ -11,6 +11,8 @@ dependencies {
     // Only used with henge.store.type=redis: the shared ephemeral store.
     runtimeOnly(project(":henge-redis"))
     implementation("org.springframework.boot:spring-boot-starter-web")
+    // Liveness and readiness probes: a node that hasn't reached the shared store is alive, not ready.
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
     // The websocket customers watch their orders on; a node that serves it needs a websocket server.
     implementation("org.springframework.boot:spring-boot-starter-websocket")
 

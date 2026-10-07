@@ -7,6 +7,12 @@ spring:
     # before a lease is asked for. Inventory's pool is the lease's: see InventoryDatabase.
     exclude: org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
 
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 henge:
   leases:
     # Inventory's connection pool: however many processes host inventory, the database sees at
