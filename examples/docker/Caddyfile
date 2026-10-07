@@ -5,8 +5,13 @@
     reverse_proxy {
         # Every replica behind the "shop" name, not whichever one DNS answered first.
         dynamic a shop 8080
-        # A node that hasn't reached the store is alive but not ready: it gets no traffic.
-        health_uri /actuator/health/readiness
-        health_interval 2s
+
+        # Caddy runs no active health checks (health_uri) against dynamic upstreams, so a replica that
+        # isn't ready is found out by what it answers: a 503 takes it out of rotation for 5s. That costs
+        # one request per replica per window; a replica that is down is retried elsewhere.
+        fail_duration 5s
+        max_fails 1
+        unhealthy_status 503
+        lb_try_duration 2s
     }
 }

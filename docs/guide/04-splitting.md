@@ -194,8 +194,10 @@ example.com {
 
     reverse_proxy {
         dynamic a shop 8080
-        health_uri /actuator/health/readiness
-        health_interval 2s
+        fail_duration 5s
+        max_fails 1
+        unhealthy_status 503
+        lb_try_duration 2s
     }
 }
 ```
@@ -213,12 +215,16 @@ Four things to get right:
   has no url for the service and fails every call to it with `RemoteServiceException`, while its
   neighbours work, so it looks like one bad node. Each replica needs its own address, hence the container
   hostname.
-- **Health-check readiness, at the edge too.** A node that hasn't reached the store, or hasn't yet seen who
-  hosts a service, is alive but [not ready](07-operating.md#starting-without-the-store), and answers `503`.
-  Add Spring Boot Actuator, and check `/actuator/health/readiness` in both places: in the container, so
-  Docker reports what is true, and in Caddy, which with `dynamic a` health-checks each replica behind the
-  name on its own, instead of sending whichever DNS answered first a request it can't serve. Don't use
-  liveness for this: a node waiting for its store is live, and restarting it won't bring the store back.
+- **Check readiness in the container, and let Caddy learn from the `503`.** A node that hasn't reached the
+  store is alive but [not ready](07-operating.md#starting-without-the-store), and answers `503` to
+  everything but its health endpoints. Add Spring Boot Actuator and point the container's `healthcheck` at
+  `/actuator/health/readiness`, so Docker reports what is true. Caddy's own active health checks
+  (`health_uri`) are **not run against `dynamic a` upstreams**: with it, a replica failing its check still
+  got its share of requests. Passive checks do work: `unhealthy_status 503` takes a replica out of rotation
+  for `fail_duration` after it answers one, at the price of that one request. Listing the replicas as
+  static upstreams would get real active checks, but Compose names and counts them for you, which is what
+  `dynamic a` is for. Don't use liveness for either: a node waiting for its store is live, and restarting
+  it won't bring the store back.
 - **Run at least three.** See [how many instances](07-operating.md#how-many-instances).
 
 ## Per service, per version
