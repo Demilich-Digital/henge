@@ -188,9 +188,21 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
         }
     }
 
+    /**
+     * How long a command, or a connection attempt, may take unless the URI says otherwise with
+     * {@code ?timeout=}. Lettuce's own default is a minute, and a store that drops packets (rather than
+     * refusing the connection) holds every caller for all of it before the first failure starts the
+     * backoff that makes the rest fail fast.
+     */
+    static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(2);
+
     private static RedisURI parse(String uri) {
         try {
-            return RedisURI.create(Objects.requireNonNull(uri, "uri"));
+            RedisURI parsed = RedisURI.create(Objects.requireNonNull(uri, "uri"));
+            if (!uri.contains("timeout=")) {
+                parsed.setTimeout(DEFAULT_TIMEOUT);
+            }
+            return parsed;
         } catch (IllegalArgumentException e) {
             throw new IllegalStateException("'" + uri + "' is not a Redis URI, e.g. redis://localhost:6379/0", e);
         }
