@@ -273,27 +273,32 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware, ApplicationE
     }
 
     void renewAll() {
-        record Renewal(LeaseNeed need, boolean leaving) {
-        }
-        List<Renewal> held;
+        List<Held> held;
         synchronized (this) {
-            held = heldByLease.values().stream().map(h -> new Renewal(h.need, h.leaving)).toList();
+            held = List.copyOf(heldByLease.values());
         }
-        for (Renewal renewal : held) {
-            LeaseNeed need = renewal.need();
-            try {
-                if (renewal.leaving()) {
-                    // Being given up: the claim is kept as one until it is handed back, and written again if the store lost it.
-                    datastore.claim(key(need.name()), MEMBER, -need.amount(), need.capacity(), ttl);
-                } else if (datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl)) {
-                    metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.RENEWED);
-                } else {
-                    metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.LOST);
-                    lost(need);
+        for (Held lease : held) {
+            LeaseNeed need = lease.need;
+            // Under the lock, and only if still held, so a claim is never written back after it was handed back:
+            // by the context closing, or a service letting go, while this was between leases.
+            synchronized (this) {
+                if (heldByLease.get(need.name()) != lease) {
+                    continue;
                 }
-            } catch (RuntimeException e) {
-                metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.ERROR);
-                GuardedDatastore.logFailure(log, "Renewing lease '" + need.name() + "' failed", e);
+                try {
+                    if (lease.leaving) {
+                        // Being given up: the claim is kept as one until it is handed back, and written again if the store lost it.
+                        datastore.claim(key(need.name()), MEMBER, -need.amount(), need.capacity(), ttl);
+                    } else if (datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl)) {
+                        metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.RENEWED);
+                    } else {
+                        metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.LOST);
+                        lost(need);
+                    }
+                } catch (RuntimeException e) {
+                    metrics.leaseRenewed(need.name(), SystemMetrics.Renewal.ERROR);
+                    GuardedDatastore.logFailure(log, "Renewing lease '" + need.name() + "' failed", e);
+                }
             }
         }
     }
