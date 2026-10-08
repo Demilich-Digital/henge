@@ -92,8 +92,7 @@ The code calling inventory is the same in both runs, and doesn't know which one 
   [design: partition tolerance](docs/design/partition-tolerance.md),
   [design: store capacity](docs/design/store-capacity.md),
   [design: hot keys](docs/design/hot-keys.md),
-  [design: a store of sub-clusters](docs/design/subcluster-store.md)
-  (from [an infrastructure DHT](docs/design/infrastructure-dht.md) and [its scaling](docs/design/dht-scaling.md))
+  [design: the built-in store](docs/design/built-in-store.md)
 
 ## Building
 

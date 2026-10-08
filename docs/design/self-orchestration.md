@@ -7,7 +7,7 @@ how to use what's built; this is why it's built that way, and the plan for the r
 **Status.** Phases 1 to 4 (see [Phasing](#phasing)) are built: the store contract with its in-process
 and Redis adapters, leases, cluster-wide rate limits, and advertisement-based routing with retries and
 failover. Also built: a refused lease is taken up later by polling, and a lease that can't be kept is given up
-(de-allocation). Not built: load-weighted routing and withdrawal when overloaded, the built-in DHT, a child
+(de-allocation). Not built: load-weighted routing and withdrawal when overloaded, the built-in store, a child
 context per service, eviction under memory pressure, lease rebalancing, and self-organized role selection.
 Sections below say which parts are built where it isn't obvious.
 
@@ -145,18 +145,19 @@ The contract is Henge's; each adapter owns its own topology and configuration (`
 | **In-process** | Built; the default | One map, one lock, so `claim` and `tryAcquire` are atomic. Expiry is lazy: an expired member is dropped when its key is next touched. |
 | **Redis** | Built (`henge-redis`) | Member = hash field with its own TTL (`HPEXPIRE`, Redis 7.4+). Every operation is one Lua script on one key, so `claim` and `tryAcquire` are atomic where Redis serializes the key. Redis Cluster works as is: the cluster routes each script to its key's slot, and a key's epoch is its shard's `run_id`; a failover or resharding can lose data, which is the wipe the epoch reports. No persistence needed. Valkey support is unverified. |
 | **Hazelcast** | Possible, not built | Composite `(key, member)` entries, partition-aware on `key`, per-entry TTL; a read is a single-partition query. `claim` is an entry processor, run serially on the key's partition. |
-| **Built-in store** | Not built | [A store of sub-clusters](subcluster-store.md). |
+| **Built-in store** | Not built | [The built-in store](built-in-store.md). |
 
-### A built-in DHT (not built)
+### A built-in store (not built)
 
-Eventually, Henge nodes hold the shared state themselves, with no separate system to run: a distributed
-hash table, built into the cluster. It is not a traditional peer-to-peer DHT. It assumes **private
+Eventually, Henge nodes hold the shared state themselves, with no separate system to run: a store built
+into the cluster. It is not a peer-to-peer system. It assumes **private
 network usage**: a trusted cluster on a network the operator controls, with the same security model as
 `/_henge`. That removes most of what makes open peer-to-peer systems hard (untrusted peers, churn at internet
 scale, routing across nodes that can't all see each other), and leaves the problem the cluster actually has:
-surviving its own rolling deploys. The design is [a store of sub-clusters](subcluster-store.md): a gossiped
-directory of key families, each served by a group of store nodes sized to its load. It grew out of
-[an infrastructure DHT](infrastructure-dht.md), which Henge's small, uneven keyset turned out not to need.
+surviving its own rolling deploys. The design is [the built-in store](built-in-store.md): a gossiped
+directory of key families, each served by a group of store nodes sized to its load. A distributed hash table
+was considered and dropped: Henge's keyset is small, known and uneven, which is what a directory suits and a
+hash table doesn't.
 
 ## Part 2: signals built on the primitive
 
@@ -490,7 +491,7 @@ Each phase is independently useful and testable, and maps onto the ladder's rung
    *Rung 4 begins.*
 6. **Eviction**: memory pressure and misbehavior, drain, remembered evictions, on the same mechanism. (Not the
    same as giving up a lost lease, above, which is not a choice.)
-7. **Built-in DHT**: a fast ephemeral store built into the cluster, for private networks. *No separate
+7. **Built-in store**: a fast ephemeral store built into the cluster, for private networks. *No separate
    system to run.*
 8. **Self-organized role selection**, preceded by a discrete-event simulation of the decision loop, with
    slow dependencies and partitions injected, before any of it touches a real cluster.

@@ -96,9 +96,9 @@ A bucket's keyspace is separate from the members'. Implementations must be threa
   noeviction` all the same: a process warns at connect about one that can evict. Every process sharing a
   Redis must be on a version with the token, since earlier ones can't read a key that has it. How big a Redis a cluster needs, and why memory is
   the wrong thing to size by, is in [store capacity](design/store-capacity.md).
-- **A private DHT** (planned): the store built into the cluster itself, with no separate system to run,
+- **A built-in store** (planned): the store built into the cluster itself, with no separate system to run,
   designed for a trusted private network rather than open peer-to-peer use. See [the design
-  doc](design/self-orchestration.md#a-built-in-dht-not-built).
+  doc](design/built-in-store.md).
 
 Anything else that can expire members individually, read a key's live members, merge copies by the rules
 above, make `claim` and `tryAcquire` atomic within a copy, and change a key's epoch on every way it can lose

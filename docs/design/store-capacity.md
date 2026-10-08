@@ -314,7 +314,7 @@ scripts for CPU, which is 4.5 µs of every operation's 10 to 30.
 
 **Connections.** Every node connects to every shard, so each shard holds *N* client connections. Redis's
 `maxclients` defaults to 10,000, which a 10,000-node cluster reaches; raise it with the cluster. The
-[DHT scaling](dht-scaling.md#connections) doc compares this fan-in with a DHT's, where gateways remove it.
+[built-in store](built-in-store.md) has no such fan-in: its clients connect only to gateways.
 
 Shards needed are then about *N* / 1,500 at cloud speed, with each shard as small as an instance with a dedicated
 core and a steady network allows. Memory headroom costs nothing at these sizes, and it is what keeps a Redis from

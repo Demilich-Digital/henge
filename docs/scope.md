@@ -92,6 +92,6 @@ The [ladder's](philosophy.md#every-layer-is-opt-in) top rung, in phases, each us
    a lost one. Not built: the child contexts.
 2. **Eviction**: a process that stops hosting a service under memory pressure or misbehavior, draining
    first.
-3. A **built-in DHT** as the ephemeral store, with no separate system to run.
+3. A **built-in store** as the ephemeral store, with no separate system to run.
 4. **Self-organized role selection**, preceded by a simulation of the decision loop, with slow
    dependencies and partitions injected, before any of it touches a real cluster.

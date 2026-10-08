@@ -63,7 +63,7 @@ ephemeral store** instead, and the store is built so that nothing in it has to b
 
 This is convergent distributed state: replicas that diverge, writes that are repeated, a store that
 restarts, all settle back to the same answer without anyone deciding it. That
-lets the store be fast and cheap to run: Redis today, a DHT built for private clusters later, or anything
+lets the store be fast and cheap to run: Redis today, a store built into the cluster later, or anything
 else that honors [the contract](ephemeral-store.md). What needs a hard guarantee (a lock, exactly-once, a
 transaction) is out of its scope on purpose, and belongs in a system built on consensus.
 

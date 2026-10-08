@@ -193,12 +193,12 @@ Each phase is useful alone.
 
 ## Open questions
 
-- **The built-in DHT breaks the assumption.** A store that lives in the nodes partitions *with* them: a cut
+- **The built-in store breaks the assumption.** A store that lives in the nodes partitions *with* them: a cut
   inside the cluster is no longer global, it splits the store too, and each side is a cluster with a store
   that believes it is whole. That is shape D inside one cluster, the case the single-store model rules out.
-  The built-in store takes this up ([the minority rule, per family](subcluster-store.md#failure-partition-and-lifecycle)):
-  a store node that reaches fewer than half of a family's sub-cluster treats that family as away, which brings a
-  split back to the bound of shape A, one family at a time.
+  The built-in store takes this up with [the majority rule](built-in-store.md#the-majority-rule): a node that
+  reaches fewer than half of the last stable membership treats the store as away, so only one side of a cut
+  serves, and a split comes back to the single-store model.
 - **Whether shape B deserves more than the caller's memory.** A host advertised and unreachable is invisible
   to the store; callers back off from it independently. Anything that pooled what callers saw would be new
   coordination, so the recommendation is no.
