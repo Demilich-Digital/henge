@@ -4,6 +4,7 @@ import digital.demilich.henge.core.StoreUnavailableException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -81,9 +82,17 @@ final class RedisMemoryWatch implements AutoCloseable {
     /** Samples every server once. Never throws, so the schedule survives anything one sample does. */
     void sample() {
         try {
-            servers.get().forEach(this::sample);
+            // Each on its own thread: a server that is blackholed holds its sample for the connect timeout, and
+            // must not hold back the others' (or, at connect, the startup of all of them in turn).
+            List<Thread> sampling = servers.get().entrySet().stream()
+                    .map(server -> Thread.ofVirtual().start(() -> sample(server.getKey(), server.getValue()))).toList();
+            for (Thread thread : sampling) {
+                thread.join();
+            }
         } catch (RuntimeException e) {
             log.log(Level.DEBUG, "Couldn't list the Redis servers to sample", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
