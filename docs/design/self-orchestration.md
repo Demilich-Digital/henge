@@ -81,9 +81,9 @@ key → (level, at)                          a bucket, written by tryAcquire
 - **TTLs are mandatory and relative** ("30s", not a timestamp). The store computes deadlines on its own
   clock, so writers' clock skew is irrelevant. The key itself also carries a TTL, extended by every write,
   so a key whose writers have all gone eventually vanishes.
-- **Reads return live members only**, plus an **epoch** identifying the storage that answered (Redis's
-  `run_id`). An epoch change means "this data may have been wiped", which consumers use to tell "nobody
-  is there" from "the store just restarted".
+- **Reads return live members only**, plus the key's **epoch**, which changes whenever its members may have
+  been lost other than by expiry. Consumers use it to tell "nobody is there" from "the store just lost
+  them". How a store produces it is the store's business ([the contract](../ephemeral-store.md)).
 
 A store with one copy of each key (Redis) has nothing to merge; one that keeps several makes them
 converge by these rules, and how is its own concern. Either way, each operation's behavior under an
@@ -145,16 +145,18 @@ The contract is Henge's; each adapter owns its own topology and configuration (`
 | **In-process** | Built; the default | One map, one lock, so `claim` and `tryAcquire` are atomic. Expiry is lazy: an expired member is dropped when its key is next touched. |
 | **Redis** | Built (`henge-redis`) | Member = hash field with its own TTL (`HPEXPIRE`, Redis 7.4+). Every operation is one Lua script on one key, so `claim` and `tryAcquire` are atomic where Redis serializes the key. Redis Cluster works as is: the cluster routes each script to its key's slot, and a key's epoch is its shard's `run_id`; a failover or resharding can lose data, which is the wipe the epoch reports. No persistence needed. Valkey support is unverified. |
 | **Hazelcast** | Possible, not built | Composite `(key, member)` entries, partition-aware on `key`, per-entry TTL; a read is a single-partition query. `claim` is an entry processor, run serially on the key's partition. |
-| **Built-in DHT** | Not built | See below. |
+| **Built-in store** | Not built | [A store of sub-clusters](subcluster-store.md). |
 
 ### A built-in DHT (not built)
 
 Eventually, Henge nodes hold the shared state themselves, with no separate system to run: a distributed
 hash table, built into the cluster. It is not a traditional peer-to-peer DHT. It assumes **private
-network usage**: a trusted cluster of tens to low hundreds of nodes, on a network the operator controls,
-with the same security model as `/_henge`. That removes most of what makes open peer-to-peer systems
-hard (untrusted peers, churn at internet scale, routing across nodes that can't all see each other), and
-leaves the problem the cluster actually has: surviving its own rolling deploys. Its design is to come.
+network usage**: a trusted cluster on a network the operator controls, with the same security model as
+`/_henge`. That removes most of what makes open peer-to-peer systems hard (untrusted peers, churn at internet
+scale, routing across nodes that can't all see each other), and leaves the problem the cluster actually has:
+surviving its own rolling deploys. The design is [a store of sub-clusters](subcluster-store.md): a gossiped
+directory of key families, each served by a group of store nodes sized to its load. It grew out of
+[an infrastructure DHT](infrastructure-dht.md), which Henge's small, uneven keyset turned out not to need.
 
 ## Part 2: signals built on the primitive
 
@@ -308,7 +310,8 @@ henge:
   again, advertised again when it is hosted again, looking for room under the capacity its node believes in: a
   node that is outvoted keeps finding the lease full. In a wiped store the holder that loses is whichever renewed
   after the poller's claim; the epoch wait makes that unlikely, not impossible. Only a store that answers and
-  refuses is a loss; one that is away is not, and holders sit still.
+  refuses is a loss; one that is away is not, and holders sit still. What it takes for every path here to heal,
+  and to make the window after a store reset small, is in [lease healing](lease-healing.md).
 - **A service with several leases stays all-or-nothing**, and different leases are independent keys with
   independent capacities. A node that holds lease X for one service and is refused Y for another sends
   the second remote; X stays held by the first.

@@ -85,8 +85,15 @@ The code calling inventory is the same in both runs, and doesn't know which one 
   [modules](docs/reference/modules.md)
 - **More**: [the ephemeral store's contract](docs/ephemeral-store.md), [internals](docs/internals.md),
   [without Spring Boot](docs/plain-spring.md), [scope and roadmap](docs/scope.md),
+  [failure modes and recovery](docs/failure-modes.md),
   [design: self-orchestration](docs/design/self-orchestration.md),
-  [design: scheduled jobs](docs/design/scheduling.md)
+  [design: scheduled jobs](docs/design/scheduling.md),
+  [design: lease healing](docs/design/lease-healing.md),
+  [design: partition tolerance](docs/design/partition-tolerance.md),
+  [design: store capacity](docs/design/store-capacity.md),
+  [design: hot keys](docs/design/hot-keys.md),
+  [design: a store of sub-clusters](docs/design/subcluster-store.md)
+  (from [an infrastructure DHT](docs/design/infrastructure-dht.md) and [its scaling](docs/design/dht-scaling.md))
 
 ## Building
 
