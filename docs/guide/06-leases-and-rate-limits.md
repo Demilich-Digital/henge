@@ -268,8 +268,9 @@ holds to it, only coarser. When the store answers again the limiter is back on t
 once. `henge.rate-limit.degraded` counts the answers given this way.
 
 A process that has never reached the store doesn't start, so *N* is always known. Shares are soft, like
-everything here: a node that joins during the outage can't count itself, and a limit of fewer permits
-than nodes can't be divided below one permit each, so either can let a little too much through.
+everything here: a limit of fewer permits than nodes can't be divided below one permit each, and a node
+that became ready in the last heartbeat before an outage may not be counted by the others yet, so either can
+let a little too much through.
 
 ## The cluster, deciding
 

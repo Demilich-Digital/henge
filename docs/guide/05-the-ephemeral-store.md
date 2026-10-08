@@ -147,6 +147,11 @@ A restart of Redis is an outage followed by a wipe. For the seconds it takes:
   which time everyone has heartbeated. An empty answer from the *same* store is believed at once.
 - Every process writes its advertisements, leases and limiter membership again within one heartbeat.
 
+A flush, or Redis evicting keys when it runs out of memory, is a wipe too. Today the cluster can't tell either
+from expiry, so it heals from them more roughly than from a restart; that is a known gap with a fix designed
+([the store's contract](../ephemeral-store.md#what-fits)). Set `maxmemory-policy noeviction`, so a full Redis
+fails as an outage the cluster rides out, instead of dropping claims that are in use.
+
 ### What this doesn't give you
 
 It is a mode to ride out, not a way to run without the store. During a long outage:
@@ -155,8 +160,9 @@ It is a mode to ride out, not a way to run without the store. During a long outa
   retired: other processes don't hear of it, so their routes go stale. Failover covers the host that
   died; it can't cover one that hasn't been found.
 - **Shares are frozen.** A rate limit's share is a fraction of the number of nodes counted before the
-  outage. Nodes that join during it are not counted, and together can let a little more through than the
-  limit; nodes that leave leave their share unused.
+  outage. A process can't join during it, since one that hasn't reached the store serves nothing, so the count
+  only goes stale: nodes that leave leave their share unused, and a node that became ready in the last
+  heartbeat before the outage may not be counted by the others yet.
 - **Leases only move to a process that was refused.** A refused process picks one up when it has room
   ([chapter 6](06-leases-and-rate-limits.md#taking-up-a-lease-later)). A holder is never asked to give one up.
 - **It is soft.** The limits and leases are over-granted, if at all, by a bounded amount; that is what
