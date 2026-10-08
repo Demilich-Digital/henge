@@ -17,7 +17,9 @@ import io.lettuce.core.SocketOptions;
 import io.lettuce.core.cluster.ClusterClientOptions;
 import io.lettuce.core.cluster.ClusterTopologyRefreshOptions;
 import io.lettuce.core.cluster.RedisClusterClient;
+import io.lettuce.core.cluster.SlotHash;
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
+import io.lettuce.core.cluster.models.partitions.RedisClusterNode;
 import io.lettuce.core.codec.ByteArrayCodec;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +31,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
 import java.util.UUID;
 
 /**
@@ -46,6 +49,9 @@ import java.util.UUID;
  * write touches the token, so a read stays a read. Every read still goes to a key's primary, since a
  * replica has its own {@code run_id}. No persistence or replication is needed or wanted. A key lives
  * wholly on one node, so {@link #connectCluster} shards by Redis Cluster slot with nothing more to do.
+ *
+ * <p>A Redis that is evicting keys is treated as unreachable until it stops, and a full one under
+ * {@code noeviction} fails its writes as unreachable: see {@link RedisMemoryWatch}.
  *
  * <p>A version of this class from before the token can't read or claim a key that has one, so every
  * process sharing a Redis has to be on a version with it: an upgrade across it restarts the cluster.
@@ -223,14 +229,19 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
     private final String nodeId = UUID.randomUUID().toString();
     private static final String TRY_ACQUIRE_DIGEST = sha1(TRY_ACQUIRE);
 
+    /** How often each server's memory is sampled, to tell whether it is evicting. */
+    static final Duration MEMORY_SAMPLE_INTERVAL = Duration.ofSeconds(5);
+
     private final StatefulConnection<byte[], byte[]> connection;
     private final RedisScriptingCommands<byte[], byte[]> scripts;
+    private final RedisMemoryWatch memory;
     private final Runnable shutdown;
 
     private RedisEphemeralDatastore(StatefulConnection<byte[], byte[]> connection,
-            RedisScriptingCommands<byte[], byte[]> scripts, Runnable shutdown) {
+            RedisScriptingCommands<byte[], byte[]> scripts, RedisMemoryWatch memory, Runnable shutdown) {
         this.connection = connection;
         this.scripts = scripts;
+        this.memory = memory;
         this.shutdown = shutdown;
     }
 
@@ -245,12 +256,20 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     /** As {@link #connect(String)}, with {@code timeout} (if not {@code null}) in place of the URI's or the default. */
     public static RedisEphemeralDatastore connect(String uri, Duration timeout) {
+        return connect(uri, timeout, MEMORY_SAMPLE_INTERVAL);
+    }
+
+    /** As {@link #connect(String, Duration)}, sampling the server's memory every {@code memorySampleInterval}. */
+    static RedisEphemeralDatastore connect(String uri, Duration timeout, Duration memorySampleInterval) {
         RedisURI redisUri = parse(uri, timeout);
         RedisClient client = RedisClient.create(redisUri);
         client.setOptions(ClientOptions.builder().socketOptions(socketOptions(redisUri)).build());
         try {
             StatefulRedisConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE);
-            return new RedisEphemeralDatastore(connection, connection.sync(), client::shutdown);
+            String server = redisUri.getHost() + ":" + redisUri.getPort();
+            RedisMemoryWatch memory = new RedisMemoryWatch(
+                    () -> Map.of(server, section -> connection.sync().info(section)), key -> server, memorySampleInterval);
+            return new RedisEphemeralDatastore(connection, connection.sync(), memory, client::shutdown);
         } catch (RuntimeException e) {
             client.shutdown();
             // RedisURI's toString() masks the password.
@@ -275,6 +294,11 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     /** As {@link #connectCluster(List)}, with {@code timeout} (if not {@code null}) in place of the URIs' or the default. */
     public static RedisEphemeralDatastore connectCluster(List<String> seedUris, Duration timeout) {
+        return connectCluster(seedUris, timeout, MEMORY_SAMPLE_INTERVAL);
+    }
+
+    /** As {@link #connectCluster(List, Duration)}, sampling each primary's memory every {@code memorySampleInterval}. */
+    static RedisEphemeralDatastore connectCluster(List<String> seedUris, Duration timeout, Duration memorySampleInterval) {
         List<RedisURI> seeds = Objects.requireNonNull(seedUris, "seedUris").stream().map(uri -> parse(uri, timeout)).toList();
         if (seeds.isEmpty()) {
             throw new IllegalArgumentException("A Redis Cluster needs at least one seed node");
@@ -289,11 +313,31 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
                 .build());
         try {
             StatefulRedisClusterConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE);
-            return new RedisEphemeralDatastore(connection, connection.sync(), client::shutdown);
+            RedisMemoryWatch memory = new RedisMemoryWatch(() -> primaries(connection), key -> {
+                RedisClusterNode node = connection.getPartitions().getMasterBySlot(SlotHash.getSlot(key));
+                return node == null ? null : name(node);
+            }, memorySampleInterval);
+            return new RedisEphemeralDatastore(connection, connection.sync(), memory, client::shutdown);
         } catch (RuntimeException e) {
             client.shutdown();
             throw new StoreUnavailableException("Can't connect to the Redis Cluster at " + seeds + ": " + e.getMessage(), e);
         }
+    }
+
+    /** Each primary of the cluster as it is known now, by name, as a function from an {@code INFO} section to its text. */
+    private static Map<String, Function<String, String>> primaries(StatefulRedisClusterConnection<byte[], byte[]> connection) {
+        Map<String, Function<String, String>> primaries = new HashMap<>();
+        for (RedisClusterNode node : connection.getPartitions()) {
+            if (node.is(RedisClusterNode.NodeFlag.UPSTREAM)) {
+                String nodeId = node.getNodeId();
+                primaries.put(name(node), section -> connection.getConnection(nodeId).sync().info(section));
+            }
+        }
+        return primaries;
+    }
+
+    private static String name(RedisClusterNode node) {
+        return node.getUri().getHost() + ":" + node.getUri().getPort();
     }
 
     /**
@@ -414,23 +458,50 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
         }
         byte[][] keys = {bytes(BUCKET_PREFIX + key)};
         byte[][] arguments = {bytes(amount), bytes(limit.capacity()), bytes(limit.permits()), bytes(limit.periodMillis())};
+        memory.check(keys[0]);
         List<Long> reply;
         try {
-            reply = scripts.evalsha(TRY_ACQUIRE_DIGEST, ScriptOutputType.MULTI, keys, arguments);
-        } catch (RedisNoScriptException e) {
-            reply = scripts.eval(bytes(TRY_ACQUIRE), ScriptOutputType.MULTI, keys, arguments);
+            try {
+                reply = scripts.evalsha(TRY_ACQUIRE_DIGEST, ScriptOutputType.MULTI, keys, arguments);
+            } catch (RedisNoScriptException e) {
+                reply = scripts.eval(bytes(TRY_ACQUIRE), ScriptOutputType.MULTI, keys, arguments);
+            }
+        } catch (RedisCommandExecutionException e) {
+            throw fullOr(e);
         }
         return reply.get(0) == 1 ? Acquisition.GRANTED : Acquisition.refused(Duration.ofMillis(reply.get(1)));
     }
 
     @Override
     public void close() {
+        memory.close();
         connection.close();
         shutdown.run();
     }
 
     private <T> T eval(String script, ScriptOutputType type, String key, byte[]... arguments) {
-        return scripts.eval(bytes(script), type, new byte[][] {bytes(KEY_PREFIX + key)}, arguments);
+        byte[] hash = bytes(KEY_PREFIX + key);
+        memory.check(hash);
+        try {
+            return scripts.eval(bytes(script), type, new byte[][] {hash}, arguments);
+        } catch (RedisCommandExecutionException e) {
+            throw fullOr(e);
+        }
+    }
+
+    /**
+     * A Redis at {@code maxmemory} under {@code noeviction} refuses a script's first write, and runs the
+     * rest, so what is there can still be read. A refused write is the store failing honestly as an outage,
+     * so it is {@link StoreUnavailableException}, said as the store being full rather than unreachable. Any
+     * other error is {@code e} itself.
+     */
+    private static RuntimeException fullOr(RedisCommandExecutionException e) {
+        String message = e.getMessage();
+        if (message != null && message.contains("OOM command not allowed")) {
+            return new StoreUnavailableException("Redis is full (used memory is over maxmemory, under maxmemory-policy "
+                    + "noeviction), so it refuses Henge's writes; treating it as unreachable until it has room", e);
+        }
+        return e;
     }
 
     private static String sha1(String text) {

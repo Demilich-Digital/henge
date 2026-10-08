@@ -5,8 +5,10 @@ and what a store that runs out of memory means. Henge's keys do not scale with u
 **services**, which grow with what developers write, and with **nodes**, which grow with how far the cluster is
 scaled out. Nodes are the unbounded factor, so this is a model in nodes.
 
-**Status.** The numbers are measured. [Memory pressure](#memory-pressure) and
-[lifting the read ceiling](#lifting-the-read-ceiling) are designs, not built.
+**Status.** The numbers are measured. [Memory pressure](#memory-pressure) is built, without gauges, which aren't
+planned.
+[Lifting the read ceiling](#lifting-the-read-ceiling) is a design: the store operations it needs are built, and
+their use is not.
 
 ## The variables
 
@@ -212,10 +214,14 @@ The design, all inside `henge-redis`:
   Upstream that is an outage: holders sit still, pollers claim nothing, and the outage-ended wait of
   [lease healing](lease-healing.md#trust-less-and-wait-less) covers whatever lapsed meanwhile. A store shedding
   live state can't answer honestly, and the contract already says what to do with one that can't.
-- **An OOM error is an outage** that is logged as the store being full, not as it being unreachable.
+- **An OOM error is an outage** that is logged as the store being full, not as it being unreachable. Under
+  `noeviction`, Redis refuses a script at its first write, not before, so reads keep working while it is full
+  (measured on Redis 8.10); a process's guard still treats the store as away after the first refused write.
 - **At connect, warn about a policy that can evict** and expose it as a metric. It is not refused: it is legitimate
   on managed services, and with the above it is safe, only noisier than `noeviction`.
 - **Gauges** of `used_memory / maxmemory` and of evictions per server, so the alert comes before the store is full.
+  Not planned: a dedicated, unshared Redis isn't expected to fill, so the eviction and OOM handling above is a
+  backstop, and the warning at connect is enough notice of a policy that can evict.
 
 ## Lifting the read ceiling
 

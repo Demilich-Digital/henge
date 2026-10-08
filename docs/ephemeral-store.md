@@ -89,10 +89,12 @@ A bucket's keyspace is separate from the members'. Implementations must be threa
   to merge. On Redis Cluster each key lives in one slot, so it shards with no cross-node coordination. The
   epoch is the `run_id` of the server holding the key and a token kept in the key itself
   ([design](design/lease-healing.md#every-redis-loss-changes-the-epoch)): a restart or failover changes the
-  first, and a flush or an eviction under `maxmemory` the second, while members lapsing changes neither. Set
-  `maxmemory-policy noeviction` all the same, so a full Redis fails as an outage instead of shedding claims
-  that are in use: the token makes eviction seen, not harmless. Every process sharing a Redis must be on a
-  version with the token, since earlier ones can't read a key that has it. How big a Redis a cluster needs, and why memory is
+  first, and a flush or an eviction under `maxmemory` the second, while members lapsing changes neither. A
+  Redis that is evicting, which each process samples every few seconds, is treated as unreachable until it
+  stops, and a full one under `noeviction` fails its writes as unreachable, so either is an outage the cluster
+  sits still through ([memory pressure](design/store-capacity.md#memory-pressure)). Set `maxmemory-policy
+  noeviction` all the same: a process warns at connect about one that can evict. Every process sharing a
+  Redis must be on a version with the token, since earlier ones can't read a key that has it. How big a Redis a cluster needs, and why memory is
   the wrong thing to size by, is in [store capacity](design/store-capacity.md).
 - **A private DHT** (planned): the store built into the cluster itself, with no separate system to run,
   designed for a trusted private network rather than open peer-to-peer use. See [the design
