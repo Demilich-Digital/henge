@@ -316,6 +316,20 @@ It is `examples/docker/measure-window.sh [wipe|outage] [runs]`, against the Comp
 | wipe (3 runs) | 10 | 0, 0, 0 | 3, 4, 4 | 3, 4, 4 |
 | outage of 35s (1 run) | 10 | 0 | 12 | 43 (8 after the store returned) |
 
+**Re-run** (2026-10-08, with phases 1 to 3 and the later robustness fixes, same cluster):
+
+| Mode | Most claimed | Seconds over capacity | Seconds with no advertiser | Seconds to recover |
+|---|---|---|---|---|
+| wipe (3 runs) | 10 | 0, 0, 0 | 6, 4, 4 | 7, 5, 5 |
+| outage of 35s (2 runs) | 10 | 0, 0 | 28, 8 | 30, 41 |
+
+Still nothing over capacity. Seconds to recover is counted from the store's return. The wipe is within a second or
+two of the baseline. The outage is slower than the baseline's 8, and the logs say why: it is Lettuce's reconnect
+delay, not Henge. Its watchdog backs off exponentially to 30 seconds between attempts, so a store that returns just
+after an attempt isn't found for up to 30 seconds more, and the nodes then wait out the poller's whole TTL for the
+holders to say so. Where the store returns in that schedule is the variance between runs. Capping the reconnect delay
+would shorten it; that is a client setting, not a lease change.
+
 Nothing was over capacity, so the window didn't open in these runs. The poller's whole-TTL wait is not
 visible in the wipe (no candidate was waiting), and the 43 seconds after an outage is mostly the outage itself.
 Shortening either is not justified by this; phase 3 waits on a measurement that shows an over-commit.

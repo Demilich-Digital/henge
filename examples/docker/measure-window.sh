@@ -55,7 +55,12 @@ wait_ready() {
 
 for run in $(seq "$RUNS"); do
     wait_ready
+    # Taken before the reset and kept after it: "lacking" counts these keys without a member, so a wipe that
+    # deletes them is what it should see.
     mapfile -t ADV < <(redis --raw --scan --pattern 'henge:adv:*')
+    if [ "${#ADV[@]}" -eq 0 ]; then
+        echo "run $run: no advertisements in the store, so there is nothing to wait for; is the cluster up?" >&2; exit 1
+    fi
     read -r before _ < <(sample "${ADV[@]}")
     if [ "${before:-0}" -le 0 ]; then
         echo "run $run: nothing is claimed on $LEASE, is the cluster up?" >&2; exit 1
