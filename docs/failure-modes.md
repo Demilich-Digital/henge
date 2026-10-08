@@ -117,8 +117,9 @@ below that depends on seeing one applies to them:
 - **An outage longer than a lease TTL.** Every claim and advertisement lapsed while the store was away, which
   is expiry, not loss, so no store reports it. A refused process doesn't wait, and its first read may come
   before the holders' heartbeats.
-- **A loss the store doesn't report.** The contract says it must report every one; the Redis store doesn't
-  yet see a flush or an eviction under `maxmemory` ([known gap](ephemeral-store.md#what-fits)).
+- **A loss the store doesn't report.** The contract says it must report every one, and the stores Henge ships
+  do, the Redis store's flushes and evictions included. A store that adds a way to lose data without
+  extending its epoch falls here.
 
 Both heal the same way as a wipe, by the give-up below; they only lose the wait that makes it rare.
 
@@ -216,10 +217,6 @@ each is a path that **does not heal by itself**:
   is given up but never becomes a candidate again, so this process never hosts it again. Restarting the process
   clears either.
 - **A refusal that lands just before a service registers its eviction** runs no eviction, with the same result.
-- **A Redis flush, or an eviction under `maxmemory`, keeps the epoch.** It heals, by the give-up, but without
-  the wait that keeps an over-grant rare after a wipe. Until the
-  [epoch token](design/lease-healing.md#every-redis-loss-changes-the-epoch) is built, set
-  `maxmemory-policy noeviction`.
 - **A heartbeat or poller that dies from an unexpected error stops without a sound.** The lease heartbeat, the
   lease poll and the advertisement refresh each end their schedule if one run throws something they don't catch,
   in practice an `Error`.

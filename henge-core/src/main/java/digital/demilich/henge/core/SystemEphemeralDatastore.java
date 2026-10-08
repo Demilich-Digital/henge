@@ -2,7 +2,12 @@ package digital.demilich.henge.core;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Henge's own shared, expiring state: what the process knows about the rest of the cluster, and
@@ -48,6 +53,39 @@ public interface SystemEphemeralDatastore {
     Snapshot read(String key);
 
     /**
+     * How many members {@code key} has, across all writers, plus the key's {@link Epoch}: what
+     * {@link #read} would show, without the members, except that it may also count members that have
+     * lapsed and that the store hasn't reclaimed yet. So it is never fewer than the live members a read
+     * of the same copy would see, and may be more for as long as the store lags in reclaiming. A store
+     * should answer in constant time, which is why it may over-count; the default reads them all, and is
+     * exact.
+     */
+    default Count count(String key) {
+        Snapshot snapshot = read(key);
+        return new Count(snapshot.members().size(), snapshot.epoch());
+    }
+
+    /**
+     * Up to {@code limit} of {@code key}'s live members, distinct and chosen at random, plus how many
+     * members it has, counted as {@link #count} counts them, and its {@link Epoch}. The members are never
+     * lapsed ones, and are empty only when the key has no live members. A store should answer in time
+     * proportional to {@code limit}; the default reads them all.
+     *
+     * @throws IllegalArgumentException if {@code limit} is less than 1
+     */
+    default Sample sample(String key, int limit) {
+        if (limit < 1) {
+            throw new IllegalArgumentException("limit must be at least 1, got " + limit);
+        }
+        Snapshot snapshot = read(key);
+        List<Map.Entry<MemberId, byte[]>> members = new ArrayList<>(snapshot.members().entrySet());
+        Collections.shuffle(members, ThreadLocalRandom.current());
+        Map<MemberId, byte[]> chosen = new HashMap<>();
+        members.stream().limit(limit).forEach(member -> chosen.put(member.getKey(), member.getValue()));
+        return new Sample(Map.copyOf(chosen), members.size(), snapshot.epoch());
+    }
+
+    /**
      * Atomically within a copy of the key: if the sum of the live members' amounts under {@code key}, excluding this node's
      * own member {@code localName} (so renewing never fails against itself), plus {@code amount} is at
      * most {@code capacity}, writes (or renews) this node's member and returns {@code true};
@@ -75,20 +113,22 @@ public interface SystemEphemeralDatastore {
 
     /**
      * Leaks the bucket at {@code key} for the time since it was last touched, then, if {@code amount}
-     * more permits fit under the limit's capacity, adds them and returns {@code true}; otherwise changes
-     * nothing and returns {@code false}. The check and the take are atomic within a copy of the bucket.
+     * more permits fit under the limit's capacity, adds them and returns {@link Acquisition#GRANTED};
+     * otherwise changes nothing and returns a refusal with the time until one permit fits, computed from
+     * the level it read. The check and the take are atomic within a copy of the bucket.
      * A bucket nobody has touched is empty, and one that has drained completely is forgotten, so there
      * is nothing to clean up.
      *
      * <p>A bucket is one level shared by every node that draws on it, not a member. Copies of it merge
      * by taking the highest level, each leaked to now, so a copy that missed some takes reads low, never
-     * high: the rate can overshoot by a bounded amount, and a call it should allow is never refused. The
-     * leak is computed on the store's own clock. Its keyspace is separate from the members', so a key
-     * may be used for a bucket and for members at once.
+     * high: the rate can overshoot by a bounded amount, and a call it should allow is never refused. A
+     * low level also gives a short wait, never a long one. The leak is computed on the store's own clock.
+     * Its keyspace is separate from the members', so a key may be used for a bucket and for members at
+     * once.
      *
      * @throws IllegalArgumentException if {@code amount} is negative
      */
-    boolean tryAcquire(String key, int amount, RateLimit limit);
+    Acquisition tryAcquire(String key, int amount, RateLimit limit);
 
     /** The amount a member written by {@link #claim} holds, decoded from its value; negative if it is being given up. */
     static int claimedAmount(byte[] value) {
@@ -119,5 +159,16 @@ public interface SystemEphemeralDatastore {
 
     /** The live members of a key as of one read. The byte arrays are the reader's own copies. */
     record Snapshot(Map<MemberId, byte[]> members, Epoch epoch) {
+    }
+
+    /** How many members a key has as of one {@link #count}: at least the live ones, possibly some lapsed. */
+    record Count(int live, Epoch epoch) {
+    }
+
+    /**
+     * Some of a key's live members as of one {@link #sample}, and how many it has in all, counted as
+     * {@link #count} counts them. The byte arrays are the reader's own copies.
+     */
+    record Sample(Map<MemberId, byte[]> members, int live, Epoch epoch) {
     }
 }

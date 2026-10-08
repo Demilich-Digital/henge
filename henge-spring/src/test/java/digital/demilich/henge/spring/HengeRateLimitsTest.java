@@ -116,9 +116,9 @@ class HengeRateLimitsTest {
             ctx.refresh();
             Gate gate = ctx.getBean(Gate.class);
 
-            assertThat(gate.byField.tryAcquire()).isTrue();
-            assertThat(gate.byParameter.tryAcquire()).isTrue();
-            assertThat(gate.byField.tryAcquire()).isFalse();
+            assertThat(gate.byField.tryAcquire().granted()).isTrue();
+            assertThat(gate.byParameter.tryAcquire().granted()).isTrue();
+            assertThat(gate.byField.tryAcquire().granted()).isFalse();
 
             // Another name is another bucket.
             assertThat(ctx.getBean(SendService.class).send("alice")).isTrue();

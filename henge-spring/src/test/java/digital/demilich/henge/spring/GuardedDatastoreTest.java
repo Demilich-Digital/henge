@@ -3,6 +3,7 @@ package digital.demilich.henge.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import digital.demilich.henge.core.Acquisition;
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.StoreUnavailableException;
@@ -52,7 +53,7 @@ class GuardedDatastoreTest {
             return inner.claim(key, localName, amount, capacity, ttl);
         }
 
-        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+        public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
             reached();
             return inner.tryAcquire(key, amount, limit);
         }

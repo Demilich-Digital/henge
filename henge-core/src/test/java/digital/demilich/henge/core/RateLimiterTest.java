@@ -33,10 +33,10 @@ class RateLimiterTest {
         var limiter = limiter("api");
 
         for (int i = 0; i < 5; i++) {
-            assertThat(limiter.tryAcquire()).as("permit %d", i).isTrue();
+            assertThat(limiter.tryAcquire().granted()).as("permit %d", i).isTrue();
         }
 
-        assertThat(limiter.tryAcquire()).isFalse();
+        assertThat(limiter.tryAcquire().granted()).isFalse();
     }
 
     @Test
@@ -45,21 +45,21 @@ class RateLimiterTest {
         limiter.tryAcquire(5);
 
         advance(Duration.ofMillis(99));
-        assertThat(limiter.tryAcquire()).isFalse();
+        assertThat(limiter.tryAcquire().granted()).isFalse();
         advance(Duration.ofMillis(1));
-        assertThat(limiter.tryAcquire()).isTrue();
-        assertThat(limiter.tryAcquire()).isFalse();
+        assertThat(limiter.tryAcquire().granted()).isTrue();
+        assertThat(limiter.tryAcquire().granted()).isFalse();
     }
 
     @Test
     void eachSubjectHasItsOwnBucketApartFromTheWholeLimiters() {
         var limiter = limiter("api");
 
-        assertThat(limiter.tryAcquire("alice", 5)).isTrue();
-        assertThat(limiter.tryAcquire("alice")).isFalse();
+        assertThat(limiter.tryAcquire("alice", 5).granted()).isTrue();
+        assertThat(limiter.tryAcquire("alice").granted()).isFalse();
 
-        assertThat(limiter.tryAcquire("bob", 5)).isTrue();
-        assertThat(limiter.tryAcquire(5)).isTrue();
+        assertThat(limiter.tryAcquire("bob", 5).granted()).isTrue();
+        assertThat(limiter.tryAcquire(5).granted()).isTrue();
     }
 
     @Test
@@ -67,9 +67,9 @@ class RateLimiterTest {
         var limiter = limiter("api");
         limiter.tryAcquire(4);
 
-        assertThat(limiter.tryAcquire(2)).isFalse();
+        assertThat(limiter.tryAcquire(2).granted()).isFalse();
 
-        assertThat(limiter.tryAcquire(1)).isTrue();
+        assertThat(limiter.tryAcquire(1).granted()).isTrue();
     }
 
     @Test
@@ -79,38 +79,38 @@ class RateLimiterTest {
 
         advance(Duration.ofDays(3));
 
-        assertThat(limiter.tryAcquire(5)).isTrue();
-        assertThat(limiter.tryAcquire()).isFalse();
+        assertThat(limiter.tryAcquire(5).granted()).isTrue();
+        assertThat(limiter.tryAcquire().granted()).isFalse();
     }
 
     @Test
     void aRequestLargerThanTheCapacityIsNeverGranted() {
-        assertThat(limiter("api").tryAcquire(6)).isFalse();
+        assertThat(limiter("api").tryAcquire(6).granted()).isFalse();
         advance(Duration.ofDays(1));
-        assertThat(limiter("api").tryAcquire(6)).isFalse();
+        assertThat(limiter("api").tryAcquire(6).granted()).isFalse();
     }
 
     @Test
     void bucketsAreIndependentByKey() {
         limiter("a").tryAcquire(5);
 
-        assertThat(limiter("a").tryAcquire()).isFalse();
-        assertThat(limiter("b").tryAcquire()).isTrue();
+        assertThat(limiter("a").tryAcquire().granted()).isFalse();
+        assertThat(limiter("b").tryAcquire().granted()).isTrue();
     }
 
     @Test
     void aSlowRateLeaksExactlyEvenWhenPolledOften() {
         var slow = new RateLimiter(store, "slow", new RateLimit(1, 1, Duration.ofMinutes(1)));
-        assertThat(slow.tryAcquire()).isTrue();
+        assertThat(slow.tryAcquire().granted()).isTrue();
 
         // Polling every millisecond must not lose the fractions that add up to a permit.
         for (int i = 0; i < 59_999; i++) {
             advance(Duration.ofMillis(1));
-            assertThat(slow.tryAcquire()).isFalse();
+            assertThat(slow.tryAcquire().granted()).isFalse();
         }
         advance(Duration.ofMillis(1));
 
-        assertThat(slow.tryAcquire()).isTrue();
+        assertThat(slow.tryAcquire().granted()).isTrue();
     }
 
     @Test
@@ -120,14 +120,14 @@ class RateLimiterTest {
 
         advance(Duration.ofSeconds(-10));
 
-        assertThat(limiter.tryAcquire()).isFalse();
+        assertThat(limiter.tryAcquire().granted()).isFalse();
     }
 
     @Test
     void aBucketAndMembersMayShareAKey() {
         store.claim("shared", "a", 1, 5, Duration.ofSeconds(30));
 
-        assertThat(limiter("shared").tryAcquire(5)).isTrue();
+        assertThat(limiter("shared").tryAcquire(5).granted()).isTrue();
         assertThat(store.read("shared").members()).hasSize(1);
     }
 
@@ -151,7 +151,7 @@ class RateLimiterTest {
             for (int i = 0; i < callers; i++) {
                 Callable<Boolean> call = () -> {
                     start.await();
-                    return limiter.tryAcquire();
+                    return limiter.tryAcquire().granted();
                 };
                 results.add(executor.submit(call));
             }

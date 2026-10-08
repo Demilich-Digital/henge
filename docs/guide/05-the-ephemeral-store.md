@@ -147,10 +147,10 @@ A restart of Redis is an outage followed by a wipe. For the seconds it takes:
   which time everyone has heartbeated. An empty answer from the *same* store is believed at once.
 - Every process writes its advertisements, leases and limiter membership again within one heartbeat.
 
-A flush, or Redis evicting keys when it runs out of memory, is a wipe too. Today the cluster can't tell either
-from expiry, so it heals from them more roughly than from a restart; that is a known gap with a fix designed
-([the store's contract](../ephemeral-store.md#what-fits)). Set `maxmemory-policy noeviction`, so a full Redis
-fails as an outage the cluster rides out, instead of dropping claims that are in use.
+A flush, or Redis evicting keys when it runs out of memory, is a wipe too, and is seen as one: each key
+carries a token that goes with it, so its epoch changes ([the store's contract](../ephemeral-store.md#what-fits)).
+Set `maxmemory-policy noeviction` all the same, so a full Redis fails as an outage the cluster rides out,
+instead of dropping claims that are in use.
 
 ### What this doesn't give you
 

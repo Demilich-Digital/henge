@@ -12,8 +12,10 @@ ceiling that adding shards can't lift. [Store capacity](store-capacity.md) measu
 
 This design makes each one's cost grow at most linearly, so that sharding carries the rest.
 
-**Status.** Not built. [Decisions](#decisions) were made in discussion; [open questions](#open-questions) come
-with a recommendation.
+**Status.** [The contract](#the-contract) is built: `tryAcquire` returns an `Acquisition` with the wait, which
+`RateLimiter` passes to its caller, and `count` and `sample` exist on every store. Nothing uses them yet: the
+refusal window, membership by count, and sampled advertisements are not built. [Decisions](#decisions) were
+made in discussion; [open questions](#open-questions) come with a recommendation.
 
 ## Decisions
 
@@ -109,9 +111,13 @@ read of *n* members by each of *n* nodes, every beat.
 heartbeat becomes a `put` and a `count`. The wipe rule (a smaller count from a new epoch isn't believed until the
 next beat) works unchanged, since the count carries the epoch.
 
-Redis's `HLEN` counts only live fields: measured on Redis 8, fields whose TTL has passed and that haven't been
-reclaimed yet are not counted, in the small and the large encoding alike. The
-[epoch token](lease-healing.md#every-redis-loss-changes-the-epoch) field, when built, is subtracted.
+Redis's `HLEN` is O(1) but not exact: measured on Redis 8.10 with active expiry off, it counts fields whose TTL
+has passed and that haven't been reclaimed yet, inside a script and out. (An earlier measurement said otherwise;
+with active expiry on, the fields are usually reclaimed before the count, which hides it.) An `HGETALL` reclaims
+them, so a count can only be exact at O(*n*). So the contract's `count` is **never fewer than the live members,
+and may be more** while the store lags in reclaiming, and every use of it has to be safe with a count that is too
+high. Membership is: a larger *n* gives a smaller degraded share, which admits less, never more, and a slightly
+longer stretch, which is still capped at `drain`. The [epoch token](lease-healing.md#every-redis-loss-changes-the-epoch) field is subtracted.
 
 The cost falls from O(*n*²) to O(*n*) per beat on one key, which ends this ceiling for good: 10,000 subscribers is
 about 2,000 small operations a second.
@@ -145,8 +151,9 @@ them, not all of them, but enough callers have to see each host for the load to 
 and every other node a host, *C* = 1 and the caller reads everyone, which is one read. In the two-tier case at
 10,000 nodes, a service's key costs about 2% of a core, where it would cost 83% today.
 
-Redis's `HRANDFIELD` with a count returns distinct live fields only: measured on Redis 8, expired fields are never
-returned. The epoch token is asked for and dropped (`k + 1`, minus the token).
+Redis's `HRANDFIELD` with a count returns distinct live fields only: measured on Redis 8.10 with active expiry off,
+expired fields are never returned. The host count *H* comes from `HLEN`, so it may be too high, which only makes
+*k* a little larger. The epoch token is asked for and dropped (`k + 1`, minus the token).
 
 **A sample is better routing, not only a cheaper read.** It would be worth having at any size:
 
@@ -182,8 +189,8 @@ Three changes to `SystemEphemeralDatastore`, each implemented by every store:
 | Change | Returns | Redis |
 |---|---|---|
 | `tryAcquire` returns a result, not a boolean | granted, or refused with the wait until one permit fits | the wait is computed in the existing script |
-| `count(key)`, new | the number of live members, and the epoch | `HLEN` |
-| `sample(key, k)`, new | up to *k* live members at random, the number of live members, and the epoch | `HRANDFIELD key k WITHVALUES` and `HLEN`, in one script |
+| `count(key)`, new | the number of members, at least the live ones and possibly some lapsed, and the epoch | `HLEN` |
+| `sample(key, k)`, new | up to *k* live members at random, the number of members as `count` gives it, and the epoch | `HRANDFIELD key k WITHVALUES` and `HLEN`, in one script |
 
 `read(key)` stays for what needs everyone: leases, the topology report, and job runs.
 

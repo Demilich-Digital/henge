@@ -1,5 +1,6 @@
 package digital.demilich.henge.redis;
 
+import digital.demilich.henge.core.Acquisition;
 import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
@@ -34,18 +35,20 @@ import java.util.UUID;
  * A {@link SystemEphemeralDatastore} on Redis (7.4 or later, for hash-field expiry; Valkey is
  * untested). A key is a hash, {@code henge:<key>}, with one field per member
  * ({@code <nodeId>/<localName>}) that carries its own TTL ({@code HPEXPIRE}), so a member expires on
- * its own and the hash vanishes with its last one. Each operation is one Lua script, which is what
- * makes {@link #claim} atomic: Redis runs one at a time, and it does so on its own clock, so deadlines
- * never depend on a writer's.
+ * its own. Each operation is one Lua script, which is what makes {@link #claim} atomic: Redis runs one
+ * at a time, and it does so on its own clock, so deadlines never depend on a writer's.
  *
- * <p>The epoch is the server's {@code run_id}: a Redis restart changes it, and with it everything it
- * held is gone. No persistence or replication is needed or wanted. A key lives wholly on one node,
- * so {@link #connectCluster} shards by Redis Cluster slot with nothing more to do, and the epoch a
- * read reports is that of the shard holding the key.
+ * <p>A key's epoch is the server's {@code run_id} and a token kept in the key's own hash, created from
+ * the server's clock by the first write after it is missing. A restart, or a failover to a replica that
+ * missed writes, changes the {@code run_id}. A flush, or an eviction under {@code maxmemory}, removes the
+ * hash, token and all, so a read sees no token, and the next write makes a new one. Expiry keeps it: the
+ * token has no TTL of its own, and the hash outlives the last write to it by {@link #RETENTION}. Only a
+ * write touches the token, so a read stays a read. Every read still goes to a key's primary, since a
+ * replica has its own {@code run_id}. No persistence or replication is needed or wanted. A key lives
+ * wholly on one node, so {@link #connectCluster} shards by Redis Cluster slot with nothing more to do.
  *
- * <p><b>Known gap:</b> a flush ({@code FLUSHALL}, {@code FLUSHDB}) and eviction under {@code maxmemory}
- * lose data and keep the {@code run_id}, so the epoch doesn't report them, as the contract requires. The
- * fix is a token in each key ({@code docs/design/lease-healing.md}, "Every Redis loss changes the epoch").
+ * <p>A version of this class from before the token can't read or claim a key that has one, so every
+ * process sharing a Redis has to be on a version with it: an upgrade across it restarts the cluster.
  */
 public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, AutoCloseable {
 
@@ -53,61 +56,121 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
     private static final String BUCKET_PREFIX = "henge:bucket:";
 
     /**
-     * Gives {@code field} its TTL (writing a field clears it) and the hash its own: the hash lives as
-     * long as its longest-lived member. Expects the script's locals {@code ttl} and {@code field}.
+     * How long a hash outlives the last write to it, holding its token so that an empty key from the same
+     * epoch is still believed. Longer than any member's TTL, and than any reader goes between reads of a
+     * key it cares about, so a reader sees the members lapse under the token they were written under. A
+     * key nobody writes for this long is forgotten, and its epoch changes from one that was already empty:
+     * a change with nothing lost, which the contract allows.
      */
-    private static final String EXPIRE = """
-            redis.call('HPEXPIRE', KEYS[1], ttl, 'FIELDS', 1, field)
-            local pttl = redis.call('PTTL', KEYS[1])
-            if pttl < tonumber(ttl) then redis.call('PEXPIRE', KEYS[1], ttl) end
+    static final Duration RETENTION = Duration.ofHours(1);
+
+    /**
+     * Sets the locals {@code run_id}, the server's, and {@code token}, the key's, or {@code false} if it
+     * has none. Together they are the key's epoch. The token is the field {@code ~epoch}, which isn't a
+     * member: members are {@code <nodeId>/<localName>}, and a node id is a UUID, so none starts with
+     * {@code ~}. Writes nothing, so a read stays a read.
+     */
+    private static final String EPOCH = """
+            local run_id = string.match(redis.call('INFO', 'server'), 'run_id:(%x+)')
+            local token = redis.call('HGET', KEYS[1], '~epoch')
             """;
+
+    /**
+     * After a member is written: gives {@code field} its TTL (writing a field clears it), creates the
+     * key's token from the server's clock if it has none (a key that was flushed or evicted lost its token
+     * with its members), and keeps the hash at least as long as the member or the retention, whichever is
+     * longer, never shortening it. Expects the script's locals {@code ttl} and {@code field}.
+     */
+    private static final String WRITTEN = """
+            redis.call('HPEXPIRE', KEYS[1], ttl, 'FIELDS', 1, field)
+            if redis.call('HEXISTS', KEYS[1], '~epoch') == 0 then
+              local now = redis.call('TIME')
+              redis.call('HSET', KEYS[1], '~epoch', now[1] .. '.' .. now[2])
+            end
+            local keep = math.max(%d, tonumber(ttl))
+            if redis.call('PTTL', KEYS[1]) < keep then redis.call('PEXPIRE', KEYS[1], keep) end
+            """.formatted(RETENTION.toMillis());
 
     /** KEYS: hash. ARGV: field, value, ttl-millis. */
     private static final String PUT = """
             redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
             local ttl, field = ARGV[3], ARGV[1]
-            """ + EXPIRE + """
+            """ + WRITTEN + """
             return 1
             """;
 
-    /** KEYS: hash. ARGV: field. */
+    /** KEYS: hash. ARGV: field. The token stays, so an empty key keeps its epoch until the hash lapses. */
     private static final String REMOVE = """
             return redis.call('HDEL', KEYS[1], ARGV[1])
             """;
 
-    /** KEYS: hash. Returns the server's run_id, then field, value for every live member. */
-    private static final String READ = """
-            local result = {string.match(redis.call('INFO', 'server'), 'run_id:(%x+)')}
-            for _, item in ipairs(redis.call('HGETALL', KEYS[1])) do result[#result + 1] = item end
+    /** KEYS: hash. Returns the run_id and the token (empty if none), then field, value for every live member. */
+    private static final String READ = EPOCH + """
+            local result = {run_id, token or ''}
+            local all = redis.call('HGETALL', KEYS[1])
+            for i = 1, #all, 2 do
+              if all[i] ~= '~epoch' then
+                result[#result + 1] = all[i]
+                result[#result + 1] = all[i + 1]
+              end
+            end
+            return result
+            """;
+
+    /** KEYS: hash. Returns the run_id, the token (empty if none), and HLEN less the token, as a string. */
+    private static final String COUNT = EPOCH + """
+            local live = redis.call('HLEN', KEYS[1]) - (token and 1 or 0)
+            return {run_id, token or '', tostring(live)}
+            """;
+
+    /**
+     * KEYS: hash. ARGV: the most members to return. Returns the run_id, the token (empty if none), HLEN
+     * less the token as a string, then field, value for up to that many distinct live members at
+     * random. One more is asked for than wanted, since the token may be among them.
+     */
+    private static final String SAMPLE = EPOCH + """
+            local limit = tonumber(ARGV[1])
+            local result = {run_id, token or '', tostring(redis.call('HLEN', KEYS[1]) - (token and 1 or 0))}
+            local drawn = redis.call('HRANDFIELD', KEYS[1], limit + 1, 'WITHVALUES')
+            local taken = 0
+            for i = 1, #drawn, 2 do
+              if drawn[i] ~= '~epoch' and taken < limit then
+                result[#result + 1] = drawn[i]
+                result[#result + 1] = drawn[i + 1]
+                taken = taken + 1
+              end
+            end
             return result
             """;
 
     /**
      * KEYS: hash. ARGV: field, amount, capacity, ttl-millis, amount as 4 big-endian bytes. A member's value is a signed amount: negative is a claim being given up, which a claim being
-     * renewed isn't asked to make room for, and a new one is.
+     * renewed isn't asked to make room for, and a new one is. A new claim that is refused writes nothing.
      */
     private static final String CLAIM = """
             local ttl, field = ARGV[4], ARGV[1]
             local amount = tonumber(ARGV[2])
             local function write(value)
               redis.call('HSET', KEYS[1], field, value)
-            """ + EXPIRE + """
+            """ + WRITTEN + """
             end
             if amount < 0 then write(ARGV[5]); return 1 end
             local own = nil
             local others, leaving = 0, 0
             local all = redis.call('HGETALL', KEYS[1])
             for i = 1, #all, 2 do
-              if #all[i + 1] ~= 4 then return redis.error_reply('not a claimed amount: ' .. all[i]) end
-              local b1, b2, b3, b4 = string.byte(all[i + 1], 1, 4)
-              local value = ((b1 * 256 + b2) * 256 + b3) * 256 + b4
-              if value >= 2147483648 then value = value - 4294967296 end
-              if all[i] == field then
-                own = value
-              elseif value < 0 then
-                leaving = leaving - value
-              else
-                others = others + value
+              if all[i] ~= '~epoch' then
+                if #all[i + 1] ~= 4 then return redis.error_reply('not a claimed amount: ' .. all[i]) end
+                local b1, b2, b3, b4 = string.byte(all[i + 1], 1, 4)
+                local value = ((b1 * 256 + b2) * 256 + b3) * 256 + b4
+                if value >= 2147483648 then value = value - 4294967296 end
+                if all[i] == field then
+                  own = value
+                elseif value < 0 then
+                  leaving = leaving - value
+                else
+                  others = others + value
+                end
               end
             end
             local renewing = own ~= nil and own >= 0
@@ -128,7 +191,8 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
      * KEYS: the bucket, a string {@code level:at}. ARGV: amount, capacity, permits, period-millis.
      * Levels are in units of 1/period of a permit, so the leak is exact integer arithmetic: each
      * elapsed millisecond drains {@code permits} units. Time is the server's. A drained bucket is
-     * the same as no bucket, so the key's TTL is how long it takes to drain.
+     * the same as no bucket, so the key's TTL is how long it takes to drain. Returns granted (1 or 0),
+     * then the milliseconds until one permit fits (0 when granted).
      */
     private static final String TRY_ACQUIRE = """
             local t = redis.call('TIME')
@@ -144,14 +208,16 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
               level = math.max(0, tonumber(l) - elapsed * permits)
               now = math.max(now, at)
             end
-            if level + cost > capacity then return 0 end
+            if level + cost > capacity then
+              return {0, math.max(0, math.ceil((level + period - capacity) / permits))}
+            end
             level = level + cost
             if level == 0 then
               redis.call('DEL', KEYS[1])
             else
               redis.call('SET', KEYS[1], string.format('%d:%d', level, now), 'PX', string.format('%d', math.ceil(level / permits)))
             end
-            return 1
+            return {1, 0}
             """;
 
     private final String nodeId = UUID.randomUUID().toString();
@@ -276,13 +342,46 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
     @Override
     public Snapshot read(String key) {
         List<byte[]> reply = eval(READ, ScriptOutputType.MULTI, key);
+        return new Snapshot(members(reply, 2), epoch(reply));
+    }
+
+    /**
+     * {@code HLEN}, less the token. It is O(1), and counts fields that have lapsed and that Redis hasn't
+     * reclaimed yet (measured on Redis 8.10), which the contract allows: never fewer than the live members.
+     */
+    @Override
+    public Count count(String key) {
+        List<byte[]> reply = eval(COUNT, ScriptOutputType.MULTI, key);
+        return new Count(Integer.parseInt(text(reply.get(2))), epoch(reply));
+    }
+
+    /**
+     * {@code HRANDFIELD} with a count, less the token: it returns distinct live fields only (measured on
+     * Redis 8.10). The total is {@code HLEN}'s, as {@link #count} gives it.
+     */
+    @Override
+    public Sample sample(String key, int limit) {
+        if (limit < 1) {
+            throw new IllegalArgumentException("limit must be at least 1, got " + limit);
+        }
+        List<byte[]> reply = eval(SAMPLE, ScriptOutputType.MULTI, key, bytes(limit));
+        return new Sample(members(reply, 3), Integer.parseInt(text(reply.get(2))), epoch(reply));
+    }
+
+    /** A reply's epoch: the server's {@code run_id} and the key's token, its first two items; {@code <run_id>/} for none. */
+    private static Epoch epoch(List<byte[]> reply) {
+        return new Epoch(text(reply.get(0)) + "/" + text(reply.get(1)));
+    }
+
+    /** The members in {@code reply} from {@code from} on, as field, value pairs. */
+    private static Map<MemberId, byte[]> members(List<byte[]> reply, int from) {
         Map<MemberId, byte[]> members = new HashMap<>();
-        for (int i = 1; i < reply.size(); i += 2) {
-            String field = new String(reply.get(i), StandardCharsets.UTF_8);
+        for (int i = from; i < reply.size(); i += 2) {
+            String field = text(reply.get(i));
             int slash = field.indexOf('/');
             members.put(new MemberId(field.substring(0, slash), field.substring(slash + 1)), reply.get(i + 1));
         }
-        return new Snapshot(Map.copyOf(members), new Epoch(new String(reply.get(0), StandardCharsets.UTF_8)));
+        return Map.copyOf(members);
     }
 
     @Override
@@ -309,19 +408,19 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
      * teaches it.
      */
     @Override
-    public boolean tryAcquire(String key, int amount, RateLimit limit) {
+    public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
         if (amount < 0) {
             throw new IllegalArgumentException("amount must not be negative, got " + amount);
         }
         byte[][] keys = {bytes(BUCKET_PREFIX + key)};
         byte[][] arguments = {bytes(amount), bytes(limit.capacity()), bytes(limit.permits()), bytes(limit.periodMillis())};
-        Long granted;
+        List<Long> reply;
         try {
-            granted = scripts.evalsha(TRY_ACQUIRE_DIGEST, ScriptOutputType.INTEGER, keys, arguments);
+            reply = scripts.evalsha(TRY_ACQUIRE_DIGEST, ScriptOutputType.MULTI, keys, arguments);
         } catch (RedisNoScriptException e) {
-            granted = scripts.eval(bytes(TRY_ACQUIRE), ScriptOutputType.INTEGER, keys, arguments);
+            reply = scripts.eval(bytes(TRY_ACQUIRE), ScriptOutputType.MULTI, keys, arguments);
         }
-        return granted == 1;
+        return reply.get(0) == 1 ? Acquisition.GRANTED : Acquisition.refused(Duration.ofMillis(reply.get(1)));
     }
 
     @Override
@@ -344,6 +443,10 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     private String field(String localName) {
         return nodeId + "/" + localName;
+    }
+
+    private static String text(byte[] bytes) {
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private static byte[] bytes(String text) {

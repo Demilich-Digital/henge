@@ -2,6 +2,7 @@ package digital.demilich.henge.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import digital.demilich.henge.core.Acquisition;
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.StoreUnavailableException;
@@ -49,7 +50,7 @@ class ClusterSchedulerTest {
         }
 
         @Override
-        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+        public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
             return shared.tryAcquire(key, amount, limit);
         }
     }
@@ -208,7 +209,7 @@ class ClusterSchedulerTest {
             }
 
             @Override
-            public boolean tryAcquire(String key, int amount, RateLimit limit) {
+            public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
                 throw new StoreUnavailableException("away", null);
             }
         };
@@ -518,7 +519,7 @@ class ClusterSchedulerTest {
         }
 
         @Override
-        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+        public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
             return view.tryAcquire(key, amount, limit);
         }
     }

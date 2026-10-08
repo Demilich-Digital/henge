@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.Acquisition;
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.RateLimiter;
@@ -72,19 +73,19 @@ final class RateLimiters {
             implements SystemEphemeralDatastore {
 
         @Override
-        public boolean tryAcquire(String key, int amount, RateLimit limit) {
-            boolean granted;
+        public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
+            Acquisition acquisition;
             try {
-                granted = delegate.tryAcquire(key, amount, limit);
+                acquisition = delegate.tryAcquire(key, amount, limit);
             } catch (StoreUnavailableException e) {
                 if (subscription.nodes() == 0) {
                     throw e; // never reached the store, so no share to take: refuse
                 }
                 metrics.rateLimitDegraded(name);
-                granted = local.tryAcquire(key, amount, share(limit, subscription.nodes()));
+                acquisition = local.tryAcquire(key, amount, share(limit, subscription.nodes()));
             }
-            metrics.rateLimitAcquired(name, granted);
-            return granted;
+            metrics.rateLimitAcquired(name, acquisition.granted());
+            return acquisition;
         }
 
         @Override
@@ -105,6 +106,16 @@ final class RateLimiters {
         @Override
         public Snapshot read(String key) {
             return delegate.read(key);
+        }
+
+        @Override
+        public Count count(String key) {
+            return delegate.count(key);
+        }
+
+        @Override
+        public Sample sample(String key, int limit) {
+            return delegate.sample(key, limit);
         }
 
         @Override

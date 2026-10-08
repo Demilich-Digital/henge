@@ -3,7 +3,9 @@ package digital.demilich.henge.redis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import digital.demilich.henge.core.EphemeralDatastoreContract;
 import digital.demilich.henge.core.RateLimit;
+import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastore.MemberId;
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -21,7 +23,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /** Against a real Redis in a container; skipped where there's no Docker. */
 @Testcontainers(disabledWithoutDocker = true)
-class RedisEphemeralDatastoreTest {
+class RedisEphemeralDatastoreTest extends EphemeralDatastoreContract {
 
     @Container
     static final GenericContainer<?> REDIS = new GenericContainer<>("redis:8").withExposedPorts(6379);
@@ -40,6 +42,16 @@ class RedisEphemeralDatastoreTest {
     static void disconnect() {
         store.close();
         otherNode.close();
+    }
+
+    @Override
+    protected SystemEphemeralDatastore store() {
+        return store;
+    }
+
+    @Override
+    protected void advance(Duration duration) throws InterruptedException {
+        Thread.sleep(duration.toMillis());
     }
 
     /** A key nobody else is using, so tests don't see each other's members. */
@@ -64,7 +76,7 @@ class RedisEphemeralDatastoreTest {
 
         assertThat(snapshot.members()).containsOnlyKeys(new MemberId(store.nodeId(), "a"));
         assertThat(snapshot.members().get(new MemberId(store.nodeId(), "a"))).containsExactly(1, 0, 2);
-        assertThat(snapshot.epoch().id()).hasSize(40);
+        assertThat(snapshot.epoch().id()).matches("[0-9a-f]{40}/[0-9]+\\.[0-9]+");
     }
 
     @Test
@@ -85,8 +97,15 @@ class RedisEphemeralDatastoreTest {
     }
 
     @Test
-    void theEpochIsTheServersAndSharedByEveryNode() {
-        assertThat(store.read(freshKey()).epoch()).isEqualTo(otherNode.read(freshKey()).epoch());
+    void aKeysEpochIsSharedByEveryNodeAndEachKeyHasItsOwn() {
+        String key = freshKey();
+        String other = freshKey();
+        store.put(key, "a", new byte[] {1}, Duration.ofSeconds(30));
+        store.put(other, "a", new byte[] {1}, Duration.ofSeconds(30));
+        var epoch = store.read(key).epoch();
+
+        assertThat(otherNode.read(key).epoch()).isEqualTo(epoch);
+        assertThat(otherNode.read(other).epoch()).isNotEqualTo(epoch);
     }
 
     @Test
@@ -378,32 +397,32 @@ class RedisEphemeralDatastoreTest {
         String key = freshKey();
         var limit = RateLimit.perSecond(1, 5);
 
-        assertThat(store.tryAcquire(key, 3, limit)).isTrue();
-        assertThat(otherNode.tryAcquire(key, 2, limit)).isTrue();
+        assertThat(store.tryAcquire(key, 3, limit).granted()).isTrue();
+        assertThat(otherNode.tryAcquire(key, 2, limit).granted()).isTrue();
 
-        assertThat(store.tryAcquire(key, 1, limit)).isFalse();
-        assertThat(otherNode.tryAcquire(key, 1, limit)).isFalse();
+        assertThat(store.tryAcquire(key, 1, limit).granted()).isFalse();
+        assertThat(otherNode.tryAcquire(key, 1, limit).granted()).isFalse();
     }
 
     @Test
     void aBucketLeaksOnTheServersClock() throws Exception {
         String key = freshKey();
         var limit = new RateLimit(2, 10, Duration.ofSeconds(1));
-        assertThat(store.tryAcquire(key, 2, limit)).isTrue();
-        assertThat(store.tryAcquire(key, 1, limit)).isFalse();
+        assertThat(store.tryAcquire(key, 2, limit).granted()).isTrue();
+        assertThat(store.tryAcquire(key, 1, limit).granted()).isFalse();
 
         sleep(Duration.ofMillis(150));
 
-        assertThat(store.tryAcquire(key, 1, limit)).isTrue();
+        assertThat(store.tryAcquire(key, 1, limit).granted()).isTrue();
         sleep(Duration.ofMillis(300));
-        assertThat(store.tryAcquire(key, 2, limit)).isTrue();
+        assertThat(store.tryAcquire(key, 2, limit).granted()).isTrue();
     }
 
     @Test
     void aRequestLargerThanTheCapacityIsRefusedAndNegativeIsRejected() {
         var limit = RateLimit.perSecond(1, 5);
 
-        assertThat(store.tryAcquire(freshKey(), 6, limit)).isFalse();
+        assertThat(store.tryAcquire(freshKey(), 6, limit).granted()).isFalse();
         assertThatThrownBy(() -> store.tryAcquire(freshKey(), -1, limit)).isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -412,7 +431,7 @@ class RedisEphemeralDatastoreTest {
         String key = freshKey();
         store.claim(key, "a", 1, 5, Duration.ofSeconds(30));
 
-        assertThat(store.tryAcquire(key, 5, RateLimit.perSecond(1, 5))).isTrue();
+        assertThat(store.tryAcquire(key, 5, RateLimit.perSecond(1, 5)).granted()).isTrue();
         assertThat(store.read(key).members()).hasSize(1);
     }
 
@@ -420,7 +439,7 @@ class RedisEphemeralDatastoreTest {
     void theLimiterKeepsWorkingWhenRedisForgetsItsScripts() {
         String key = freshKey();
         var limit = RateLimit.perSecond(1, 5);
-        assertThat(store.tryAcquire(key, 1, limit)).isTrue();
+        assertThat(store.tryAcquire(key, 1, limit).granted()).isTrue();
 
         // SCRIPT FLUSH, as after a restart: the cached digest is now unknown to the server.
         var client = io.lettuce.core.RedisClient.create("redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379));
@@ -430,7 +449,7 @@ class RedisEphemeralDatastoreTest {
             client.shutdown();
         }
 
-        assertThat(store.tryAcquire(key, 1, limit)).isTrue();
+        assertThat(store.tryAcquire(key, 1, limit).granted()).isTrue();
     }
 
     @Test
@@ -445,7 +464,7 @@ class RedisEphemeralDatastoreTest {
             for (int i = 0; i < callers; i++) {
                 results.add(executor.submit(() -> {
                     start.await();
-                    return store.tryAcquire(key, 1, limit);
+                    return store.tryAcquire(key, 1, limit).granted();
                 }));
             }
             start.countDown();
@@ -461,5 +480,138 @@ class RedisEphemeralDatastoreTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    // The epoch: every loss changes it, expiry doesn't
+
+    /** Runs {@code command} against the Redis directly, as an operator or the server itself would. */
+    private static <T> T redis(java.util.function.Function<io.lettuce.core.api.sync.RedisCommands<String, String>, T> command) {
+        var client = io.lettuce.core.RedisClient.create("redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379));
+        try (var connection = client.connect()) {
+            return command.apply(connection.sync());
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    @Test
+    void aFlushChangesTheEpoch() {
+        String key = freshKey();
+        store.put(key, "a", new byte[] {1}, Duration.ofSeconds(30));
+        var before = store.read(key).epoch();
+
+        redis(commands -> commands.flushall());
+
+        var after = otherNode.read(key);
+        assertThat(after.members()).isEmpty();
+        assertThat(after.epoch()).isNotEqualTo(before);
+        assertThat(store.count(key).epoch()).isEqualTo(after.epoch());
+    }
+
+    @Test
+    void anEvictedKeyChangesItsEpochAndNoOtherKeys() {
+        String evicted = freshKey();
+        String kept = freshKey();
+        store.claim(evicted, "a", 1, 10, Duration.ofSeconds(30));
+        store.put(kept, "a", new byte[] {1}, Duration.ofSeconds(30));
+        var evictedBefore = store.read(evicted).epoch();
+        var keptBefore = store.read(kept).epoch();
+
+        // Eviction takes a whole key, as DEL does.
+        redis(commands -> commands.del("henge:" + evicted));
+
+        assertThat(store.read(evicted).epoch()).isNotEqualTo(evictedBefore);
+        assertThat(store.read(kept).epoch()).isEqualTo(keptBefore);
+    }
+
+    @Test
+    void membersLapsingKeepTheEpoch() throws InterruptedException {
+        String key = freshKey();
+        store.put(key, "a", new byte[] {1}, Duration.ofMillis(100));
+        store.claim(freshKey(), "a", 1, 10, Duration.ofMillis(100));
+        var before = store.read(key).epoch();
+
+        sleep(Duration.ofMillis(300));
+
+        var after = store.read(key);
+        assertThat(after.members()).isEmpty();
+        assertThat(after.epoch()).isEqualTo(before);
+        assertThat(store.count(key).live()).isZero();
+        assertThat(store.sample(key, 5).members()).isEmpty();
+    }
+
+    @Test
+    void theTokenIsNeverAMember() {
+        String claimed = freshKey();
+        assertThat(store.claim(claimed, "a", 5, 10, Duration.ofSeconds(30))).isTrue();
+        assertThat(otherNode.claim(claimed, "a", 5, 10, Duration.ofSeconds(30))).isTrue();
+        assertThat(otherNode.claim(claimed, "b", 1, 10, Duration.ofSeconds(30))).as("the token holds nothing").isFalse();
+
+        assertThat(store.read(claimed).members()).hasSize(2);
+        assertThat(store.count(claimed).live()).isEqualTo(2);
+        assertThat(store.sample(claimed, 1).members()).hasSize(1);
+        assertThat(store.sample(claimed, 10).members()).hasSize(2);
+    }
+
+    @Test
+    void onlyAWrittenMemberLeavesAKeyAndThatKeyLapses() {
+        String read = freshKey();
+        String counted = freshKey();
+        String sampled = freshKey();
+        String removed = freshKey();
+        String refused = freshKey();
+        String put = freshKey();
+        String claimed = freshKey();
+        store.read(read);
+        store.count(counted);
+        store.sample(sampled, 1);
+        store.remove(removed, "a");
+        store.claim(refused, "a", 2, 1, Duration.ofSeconds(30));
+        store.put(put, "a", new byte[] {1}, Duration.ofSeconds(30));
+        store.claim(claimed, "a", 1, 1, Duration.ofSeconds(30));
+
+        for (String key : java.util.List.of(read, counted, sampled, removed, refused)) {
+            long exists = redis(commands -> commands.exists("henge:" + key));
+            assertThat(exists).as(key).isZero();
+        }
+        for (String key : java.util.List.of(put, claimed)) {
+            long ttl = redis(commands -> commands.pttl("henge:" + key));
+            assertThat(ttl).as(key).isPositive().isLessThanOrEqualTo(RedisEphemeralDatastore.RETENTION.toMillis());
+        }
+    }
+
+    @Test
+    void aReadLeavesTheHashsTtlAsTheLastWriteSetIt() throws InterruptedException {
+        String key = freshKey();
+        store.put(key, "a", new byte[] {1}, Duration.ofSeconds(30));
+        sleep(Duration.ofMillis(50));
+        long before = redis(commands -> commands.pttl("henge:" + key));
+
+        store.read(key);
+        store.count(key);
+        store.sample(key, 1);
+
+        long after = redis(commands -> commands.pttl("henge:" + key));
+        assertThat(after).isLessThanOrEqualTo(before);
+    }
+
+    @Test
+    void theFirstWriteToAnEmptyKeyIsANewEpoch() {
+        String key = freshKey();
+        var empty = store.read(key).epoch();
+
+        store.put(key, "a", new byte[] {1}, Duration.ofSeconds(30));
+
+        assertThat(store.read(key).epoch()).isNotEqualTo(empty);
+    }
+
+    @Test
+    void aMemberLongerThanTheRetentionKeepsItsHash() {
+        String key = freshKey();
+        store.put(key, "a", new byte[] {1}, RedisEphemeralDatastore.RETENTION.multipliedBy(2));
+        store.read(key);
+
+        long ttl = redis(commands -> commands.pttl("henge:" + key));
+        assertThat(ttl).isGreaterThan(RedisEphemeralDatastore.RETENTION.toMillis());
     }
 }

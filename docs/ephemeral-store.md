@@ -56,7 +56,9 @@ The Java interface is `SystemEphemeralDatastore`, in `henge-core`:
 | `put(key, localName, value, ttl)` | Writes or renews this node's member | |
 | `remove(key, localName)` | Removes this node's member early, for a graceful exit | |
 | `read(key)` | The live members, and the epoch | Sees fewer members than exist; writers re-assert on their heartbeat. |
-| `tryAcquire(key, amount, limit)` | Leaks a leaky bucket for the time since it was last touched, then takes `amount` permits if they fit. Atomic within a copy of the bucket. | Reads a level that is correct or too low: a limit lets a bounded few too many through, and never refuses a call it should allow. |
+| `count(key)` | How many members there are, and the epoch: what `read` would show, without the members. It may also count members that have lapsed and that the store hasn't reclaimed yet, so it is never fewer than the live members of the copy it reads, and may be more. That is the price of answering in constant time, which a store should; the default reads them all, and is exact. Every use of it has to be safe with a count that is too high. | Counts fewer members than exist. |
+| `sample(key, limit)` | Up to `limit` live members, distinct and at random, never a lapsed one, how many there are in all (counted as `count` counts), and the epoch. Empty only when the key has no live members. A store should answer in time proportional to `limit`; the default reads them all. | Samples from, and counts, fewer members than exist. |
+| `tryAcquire(key, amount, limit)` | Leaks a leaky bucket for the time since it was last touched, then takes `amount` permits if they fit. Atomic within a copy of the bucket. A refusal says how long until one permit fits, during which nothing fits for anyone. | Reads a level that is correct or too low: a limit lets a bounded few too many through, and never refuses a call it should allow, and a wait is too short, never too long. |
 | `claim(key, localName, amount, capacity, ttl)` | Writes this node's member only if the sum of everyone else's amounts plus this one fits the capacity, the caller's own. Atomic within a copy of the key. A negative amount is a claim being given up: always granted, still counted against new claims and not against renewals. A refused renewal turns the claim into one being given up. | Reads a sum that is correct or too low: a lease can be over-granted by a bounded amount, and is never refused when there is room. |
 
 Both limits err the same way, toward over-admitting, and both are handled the same way: the configured
@@ -85,11 +87,12 @@ A bucket's keyspace is separate from the members'. Implementations must be threa
 - **Redis**, 7.4 or later (`henge-redis`): hash-field TTLs give each member its own expiry, and every
   operation is one Lua script on one key, and Redis serializes each key, so there is one copy and nothing
   to merge. On Redis Cluster each key lives in one slot, so it shards with no cross-node coordination. The
-  epoch is the `run_id` of the server holding the key. **Known gap:** a flush, and eviction under
-  `maxmemory`, keep the `run_id`, so the epoch misses them today. The cluster still heals from either, by the
-  give-up after an over-grant, but without the wait that keeps it rare. A token kept in each key closes it
-  ([design](design/lease-healing.md#every-redis-loss-changes-the-epoch)). Set `maxmemory-policy noeviction`, so
-  a full Redis fails as an outage instead of shedding claims. How big a Redis a cluster needs, and why memory is
+  epoch is the `run_id` of the server holding the key and a token kept in the key itself
+  ([design](design/lease-healing.md#every-redis-loss-changes-the-epoch)): a restart or failover changes the
+  first, and a flush or an eviction under `maxmemory` the second, while members lapsing changes neither. Set
+  `maxmemory-policy noeviction` all the same, so a full Redis fails as an outage instead of shedding claims
+  that are in use: the token makes eviction seen, not harmless. Every process sharing a Redis must be on a
+  version with the token, since earlier ones can't read a key that has it. How big a Redis a cluster needs, and why memory is
   the wrong thing to size by, is in [store capacity](design/store-capacity.md).
 - **A private DHT** (planned): the store built into the cluster itself, with no separate system to run,
   designed for a trusted private network rather than open peer-to-peer use. See [the design
@@ -111,4 +114,7 @@ Implement `SystemEphemeralDatastore`, and either:
 - **define it as a bean** of type `SystemEphemeralDatastore`. Setting `henge.store.type` as well fails
   startup.
 
-`henge-redis`'s tests are a good template for testing one: the same behaviors, against a real store.
+Test it by extending `EphemeralDatastoreContract`, from `henge-core`'s test fixtures
+(`testImplementation(testFixtures("digital.demilich.henge:henge-core"))`): the contract's tests, given the
+store and a way to let time pass. `henge-redis`'s own tests are a template for the rest, the same behaviors
+against a real store.

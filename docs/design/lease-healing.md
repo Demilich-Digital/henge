@@ -5,7 +5,7 @@ that forgets everything is claimed from afresh. This document is about what that
 leads to healing**. That is the priority. Making the window after a store reset smaller is secondary, and
 [comes last](#shrinking-the-window-secondary).
 
-**Status.** Not built. What exists is [taking up a lease later and giving one up](self-orchestration.md#behavior)
+**Status.** Not built, except [the Redis epoch token](#every-redis-loss-changes-the-epoch). What exists is [taking up a lease later and giving one up](self-orchestration.md#behavior)
 (`HengeLeasePoller`, `HengeLeaseKeeper`, and the negative claim in `SystemEphemeralDatastore.claim`). This is
 the design for making that machinery heal from its own failures; shrinking the window after a store reset is
 optional work behind it. [Decisions](#decisions) were made in discussion; [open questions](#open-questions) come with a
@@ -208,21 +208,29 @@ today is the server's `run_id`, which sees only some of them:
 
 A token per server can't cover eviction, which takes one key and leaves the rest. **The token lives in the
 key.** Each key's hash carries one field that isn't a member, `~epoch` (members are `<nodeId>/<localName>`, so
-the name can't collide). Every script, the read included, creates it with `HSETNX` when it is missing, valued
-from `TIME`, and the epoch a read reports is `run_id` and the token together:
+the name can't collide). Every script that writes a member creates it when it is missing, valued from `TIME`.
+The epoch a read reports is `run_id` and the token together, or `run_id` and nothing when the key has no token:
 
 - A restart or a failover changes the `run_id`.
-- A flush or an eviction removes the hash, token and all, so the next touch creates a new token.
-- **Natural expiry keeps it.** The token has no field TTL, and every script keeps the hash alive at least a
+- A flush or an eviction removes the hash, token and all, so a read sees no token, and the next write creates a
+  new one.
+- **Natural expiry keeps it.** The token has no field TTL, and every write keeps the hash alive at least a
   retention period past now (an hour), longer than any member. When every member lapses the token stays, so an
   empty key from the same epoch is still believed at once, as the routing table and the poller need.
-- A key nobody touches for the retention period is forgotten, and its next token is new. That is a change with
-  nothing lost, which the contract allows. No reader goes that long between reads of a key it cares about: the
-  poller's longest interval is 5 minutes.
+- A key nobody writes for the retention period is forgotten. Its epoch then changes from one that was already
+  empty, which is a change with nothing lost, and the contract allows it. No reader is fooled by it: a reader goes
+  no longer than 5 minutes (the poller's longest interval) between reads, so it has seen the members lapse under
+  the old token, and the rules that distrust a new epoch only distrust a *smaller* answer, or, for the poller,
+  wait before claiming, which an empty key doesn't need.
 - A resharding moves a key with its token to a server with another `run_id`, which is also a change with
   nothing lost.
 
-The read becomes a write, which is fine, since Henge reads from primaries, and it costs one small field per key.
+**Reads stay reads.** A read that created the token would catch one more case: a key read with no token,
+written, and lost, all between two reads by the same reader. That reader saw an empty key before and sees one
+after, from the same epoch, and believes it, so the loss is unreported. It changes no decision: the reader
+believed the key empty already, and a poller that finds an empty key claims it on that read rather than waiting
+for a second. Paying a write on every routing read for it is not worth it. A replica still can't serve reads,
+since it has its own `run_id`. It costs one small field per key.
 Buckets (`tryAcquire`) carry no epoch. A lost bucket restarts empty, which over-admits by at most one bucket and
 is already inside the soft-limit contract.
 

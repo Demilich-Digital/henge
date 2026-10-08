@@ -3,6 +3,7 @@ package digital.demilich.henge.spring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import digital.demilich.henge.core.Acquisition;
 import digital.demilich.henge.core.InProcessEphemeralDatastore;
 import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.RateLimiter;
@@ -63,7 +64,7 @@ class RateLimitFallbackTest {
         }
 
         @Override
-        public boolean tryAcquire(String key, int amount, RateLimit limit) {
+        public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
             unreachableIfDown();
             return mine.tryAcquire(key, amount, limit);
         }
@@ -111,7 +112,7 @@ class RateLimitFallbackTest {
     private static int granted(RateLimiter limiter, int attempts) {
         int granted = 0;
         for (int i = 0; i < attempts; i++) {
-            granted += limiter.tryAcquire() ? 1 : 0;
+            granted += limiter.tryAcquire().granted() ? 1 : 0;
         }
         return granted;
     }
@@ -154,10 +155,10 @@ class RateLimitFallbackTest {
         anotherNodeSubscribes();
         down = true;
 
-        assertThat(limiter.tryAcquire("a")).isTrue();
-        assertThat(limiter.tryAcquire("a")).isTrue();
-        assertThat(limiter.tryAcquire("a")).isFalse();
-        assertThat(limiter.tryAcquire("b")).isTrue();
+        assertThat(limiter.tryAcquire("a").granted()).isTrue();
+        assertThat(limiter.tryAcquire("a").granted()).isTrue();
+        assertThat(limiter.tryAcquire("a").granted()).isFalse();
+        assertThat(limiter.tryAcquire("b").granted()).isTrue();
     }
 
     @Test
@@ -224,7 +225,7 @@ class RateLimitFallbackTest {
             Thread.sleep(50);
         }
         assertThat(gate.isReady()).isTrue();
-        assertThat(limiter.tryAcquire()).isTrue();
+        assertThat(limiter.tryAcquire().granted()).isTrue();
         assertThat(subscribersReported).last().isEqualTo(1);
     }
 

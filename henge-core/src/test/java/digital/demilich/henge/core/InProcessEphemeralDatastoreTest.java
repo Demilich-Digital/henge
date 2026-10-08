@@ -15,13 +15,53 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
-class InProcessEphemeralDatastoreTest {
+class InProcessEphemeralDatastoreTest extends EphemeralDatastoreContract {
 
     private final AtomicReference<Instant> now = new AtomicReference<>(Instant.parse("2026-01-01T00:00:00Z"));
     private final InProcessEphemeralDatastore store = new InProcessEphemeralDatastore(now::get);
 
-    private void advance(Duration by) {
+    @Override
+    protected SystemEphemeralDatastore store() {
+        return store;
+    }
+
+    @Override
+    protected void advance(Duration by) {
         now.updateAndGet(t -> t.plus(by));
+    }
+
+    @Test
+    void countIsExactAfterALapse() {
+        store.put("k", "staying", new byte[] {1}, Duration.ofSeconds(30));
+        store.put("k", "lapsing", new byte[] {1}, Duration.ofSeconds(1));
+        advance(Duration.ofSeconds(2));
+
+        assertThat(store.count("k").live()).isEqualTo(1);
+        assertThat(store.sample("k", 5).live()).isEqualTo(1);
+    }
+
+    @Test
+    void theWaitIsExactOnTheStoresClock() {
+        var limit = new RateLimit(2, 1, Duration.ofSeconds(10));
+        store.tryAcquire("bucket", 2, limit);
+        advance(Duration.ofMillis(2_500));
+
+        var refused = store.tryAcquire("bucket", 1, limit);
+        assertThat(refused.retryAfter()).isEqualTo(Duration.ofMillis(7_500));
+
+        advance(refused.retryAfter().minusMillis(1));
+        assertThat(store.tryAcquire("bucket", 1, limit).granted()).as("a millisecond early").isFalse();
+        advance(Duration.ofMillis(1));
+        assertThat(store.tryAcquire("bucket", 1, limit).granted()).isTrue();
+    }
+
+    @Test
+    void theWaitRoundsUpToAWholeMillisecond() {
+        // Three permits a millisecond: a permit is one unit, and a millisecond leaks three.
+        var limit = new RateLimit(1, 3, Duration.ofMillis(1));
+        store.tryAcquire("bucket", 1, limit);
+
+        assertThat(store.tryAcquire("bucket", 1, limit).retryAfter()).isEqualTo(Duration.ofMillis(1));
     }
 
     private static byte[] amount(int value) {

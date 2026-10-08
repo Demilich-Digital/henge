@@ -5,6 +5,7 @@ dependencies {
     // doesn't need Spring itself.
     implementation("io.lettuce:lettuce-core")
 
+    testImplementation(testFixtures(project(":henge-core")))
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("org.assertj:assertj-core")

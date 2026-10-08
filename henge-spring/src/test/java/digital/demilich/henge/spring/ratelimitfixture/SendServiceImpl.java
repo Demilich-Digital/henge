@@ -16,6 +16,6 @@ public class SendServiceImpl implements SendService {
 
     @Override
     public boolean send(String recipient) {
-        return limiter.tryAcquire(recipient);
+        return limiter.tryAcquire(recipient).granted();
     }
 }

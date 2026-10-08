@@ -1,5 +1,6 @@
 package digital.demilich.henge.examples.shop.notifications;
 
+import digital.demilich.henge.core.Acquisition;
 import digital.demilich.henge.core.ImmutableList;
 import digital.demilich.henge.core.RateLimited;
 import digital.demilich.henge.core.RateLimiter;
@@ -33,8 +34,9 @@ public class NotificationServiceImpl implements NotificationService {
 
     @Override
     public boolean notify(String customer, String text) {
-        if (!perCustomer.tryAcquire(customer)) {
-            log.info("Not sending to {}, who has had enough lately: {}", customer, text);
+        Acquisition acquisition = perCustomer.tryAcquire(customer);
+        if (!acquisition.granted()) {
+            log.info("Not sending to {}, who has had enough lately (next in {}): {}", customer, acquisition.retryAfter(), text);
             return false;
         }
         log.info("To {}: {}", customer, text);

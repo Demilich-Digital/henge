@@ -2,7 +2,9 @@ package digital.demilich.henge.redis;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import digital.demilich.henge.core.EphemeralDatastoreContract;
 import digital.demilich.henge.core.RateLimit;
+import digital.demilich.henge.core.SystemEphemeralDatastore;
 import digital.demilich.henge.core.SystemEphemeralDatastore.MemberId;
 import io.lettuce.core.RedisClient;
 import java.time.Duration;
@@ -24,7 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * client follows the addresses the cluster gives it, not the one it was started with.
  */
 @Testcontainers(disabledWithoutDocker = true)
-class RedisClusterEphemeralDatastoreTest {
+class RedisClusterEphemeralDatastoreTest extends EphemeralDatastoreContract {
 
     private static final int[] PORTS = {17001, 17002, 17003};
 
@@ -72,13 +74,23 @@ class RedisClusterEphemeralDatastoreTest {
         }
     }
 
+    @Override
+    protected SystemEphemeralDatastore store() {
+        return store;
+    }
+
+    @Override
+    protected void advance(Duration duration) throws InterruptedException {
+        Thread.sleep(duration.toMillis());
+    }
+
     private static String freshKey() {
         return "test:" + UUID.randomUUID();
     }
 
     @Test
     void membersOnManyShardsAreWrittenAndReadBackWithTheirShardsEpoch() {
-        Set<String> epochs = new HashSet<>();
+        Set<String> servers = new HashSet<>();
         for (int i = 0; i < 60; i++) {
             String key = freshKey();
             store.put(key, "a", new byte[] {1, 2}, Duration.ofSeconds(30));
@@ -86,9 +98,10 @@ class RedisClusterEphemeralDatastoreTest {
             var snapshot = otherNode.read(key);
 
             assertThat(snapshot.members()).containsOnlyKeys(new MemberId(store.nodeId(), "a"));
-            epochs.add(snapshot.epoch().id());
+            // An epoch is the shard's run_id, then the key's token.
+            servers.add(snapshot.epoch().id().substring(0, snapshot.epoch().id().indexOf('/')));
         }
-        assertThat(epochs).as("the keys landed on every shard").hasSize(PORTS.length);
+        assertThat(servers).as("the keys landed on every shard").hasSize(PORTS.length);
     }
 
     @Test
@@ -106,9 +119,9 @@ class RedisClusterEphemeralDatastoreTest {
         var limit = RateLimit.perSecond(1, 5);
         for (int i = 0; i < 20; i++) {
             String key = freshKey();
-            assertThat(store.tryAcquire(key, 3, limit)).isTrue();
-            assertThat(otherNode.tryAcquire(key, 2, limit)).isTrue();
-            assertThat(store.tryAcquire(key, 1, limit)).isFalse();
+            assertThat(store.tryAcquire(key, 3, limit).granted()).isTrue();
+            assertThat(otherNode.tryAcquire(key, 2, limit).granted()).isTrue();
+            assertThat(store.tryAcquire(key, 1, limit).granted()).isFalse();
         }
     }
 
@@ -116,7 +129,7 @@ class RedisClusterEphemeralDatastoreTest {
     void theLimiterKeepsWorkingWhenEveryShardForgetsItsScripts() {
         var limit = RateLimit.perSecond(1, 5);
         for (int i = 0; i < 20; i++) {
-            assertThat(store.tryAcquire(freshKey(), 1, limit)).isTrue();
+            assertThat(store.tryAcquire(freshKey(), 1, limit).granted()).isTrue();
         }
 
         for (int port : PORTS) {
@@ -129,7 +142,7 @@ class RedisClusterEphemeralDatastoreTest {
         }
 
         for (int i = 0; i < 20; i++) {
-            assertThat(store.tryAcquire(freshKey(), 1, limit)).isTrue();
+            assertThat(store.tryAcquire(freshKey(), 1, limit).granted()).isTrue();
         }
     }
 }

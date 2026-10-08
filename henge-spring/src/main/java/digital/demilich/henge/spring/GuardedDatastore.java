@@ -1,5 +1,6 @@
 package digital.demilich.henge.spring;
 
+import digital.demilich.henge.core.Acquisition;
 import digital.demilich.henge.core.RateLimit;
 import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
@@ -84,8 +85,18 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
     }
 
     @Override
-    public boolean tryAcquire(String key, int amount, RateLimit limit) {
+    public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
         return guarded(() -> delegate.tryAcquire(key, amount, limit));
+    }
+
+    @Override
+    public Count count(String key) {
+        return guarded(() -> delegate.count(key));
+    }
+
+    @Override
+    public Sample sample(String key, int limit) {
+        return guarded(() -> delegate.sample(key, limit));
     }
 
     /** Logs a failed use of the datastore: at debug if this guard has already said so, else a warning. */

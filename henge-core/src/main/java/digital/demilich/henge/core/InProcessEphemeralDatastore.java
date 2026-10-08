@@ -100,7 +100,7 @@ public final class InProcessEphemeralDatastore implements SystemEphemeralDatasto
     }
 
     @Override
-    public synchronized boolean tryAcquire(String key, int amount, RateLimit limit) {
+    public synchronized Acquisition tryAcquire(String key, int amount, RateLimit limit) {
         if (amount < 0) {
             throw new IllegalArgumentException("amount must not be negative, got " + amount);
         }
@@ -120,7 +120,7 @@ public final class InProcessEphemeralDatastore implements SystemEphemeralDatasto
             if (level == 0) {
                 buckets.remove(key);
             }
-            return false;
+            return Acquisition.refused(Acquisition.untilOnePermitFits(level, limit));
         }
         level += amount * period;
         if (level == 0) {
@@ -128,7 +128,13 @@ public final class InProcessEphemeralDatastore implements SystemEphemeralDatasto
         } else {
             buckets.put(key, new Bucket(level, now));
         }
-        return true;
+        return Acquisition.GRANTED;
+    }
+
+    @Override
+    public synchronized Count count(String key) {
+        Map<String, Entry> members = liveMembers(key, false);
+        return new Count(members == null ? 0 : members.size(), epoch);
     }
 
     /** The key's live members, with the expired ones dropped; null if there are none and {@code create} is false. */

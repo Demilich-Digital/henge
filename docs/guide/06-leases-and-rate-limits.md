@@ -241,7 +241,7 @@ public NotificationServiceImpl(@RateLimited("customer-notifications") RateLimite
 
 @Override
 public boolean notify(String customer, String text) {
-    if (!perCustomer.tryAcquire(customer)) {
+    if (!perCustomer.tryAcquire(customer).granted()) {
         return false;      // throttled; what that means is the caller's decision
     }
     // ... send
@@ -253,8 +253,11 @@ public boolean notify(String customer, String text) {
 on one bucket for the whole limit. A bucket that has drained is forgotten, so idle customers cost
 nothing. Each call is one operation on the store, and the process keeps no state of its own.
 
-A refusal throws nothing. If it should reach a remote caller as an exception, throw one, with an
-`@ErrorStatus` (`429` reads naturally); it won't be retried. Every process that configures a limit draws
+A refusal throws nothing. The `Acquisition` it returns says whether the permits were taken, and if not,
+`retryAfter()`: how long until one permit fits, during which nothing fits for anyone, so it is an honest
+`Retry-After`. It is the wait for one permit, so a refusal of several when one would fit says zero. If a
+refusal should reach a remote caller as an exception, throw one, with an `@ErrorStatus` (`429` reads
+naturally); it won't be retried. Every process that configures a limit draws
 on the same bucket, so every process must configure it the same way.
 
 ### When the store is away
