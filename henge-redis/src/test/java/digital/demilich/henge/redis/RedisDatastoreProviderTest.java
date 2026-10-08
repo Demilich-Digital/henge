@@ -82,4 +82,14 @@ class RedisDatastoreProviderTest {
                     .hasMessageContaining("henge.store.redis.timeout=" + bad);
         }
     }
+
+    @Test
+    void aBadEvictionIsOutageIsRefusedNamingTheProperty() {
+        var properties = Map.of("henge.store.redis.uri", "redis://localhost:6379",
+                "henge.store.redis.eviction-is-outage", "sometimes");
+
+        assertThatThrownBy(() -> provider.create(properties::get))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("henge.store.redis.eviction-is-outage=sometimes");
+    }
 }

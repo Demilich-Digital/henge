@@ -134,4 +134,32 @@ class RedisMemoryPressureTest {
         store.put(key, "a", new byte[] {1}, Duration.ofSeconds(30));
         assertThat(store.read(key).members()).hasSize(1);
     }
+
+    @Test
+    void aRedisThatIsEvictingIsStillUsedWhenEvictionIsNotAnOutage() throws Exception {
+        String uri = "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379);
+        try (RedisEphemeralDatastore tolerant = RedisEphemeralDatastore.connect(uri, null, SAMPLE, false)) {
+            String key = "lease:" + UUID.randomUUID();
+            limitMemory("allkeys-random");
+
+            AtomicBoolean filling = new AtomicBoolean(true);
+            Thread filler = Thread.ofVirtual().start(() -> {
+                try (var own = client.connect()) {
+                    for (int i = 0; filling.get(); i++) {
+                        own.sync().set("filler:" + i, FILLER);
+                    }
+                }
+            });
+            try {
+                await("the strict store to treat Redis as unreachable", () -> unavailable(() -> store.read(key)));
+                for (int i = 0; i < 5; i++) {
+                    tolerant.claim(key, "a", 1, 10, Duration.ofSeconds(30));
+                    Thread.sleep(SAMPLE.toMillis());
+                }
+            } finally {
+                filling.set(false);
+                filler.join();
+            }
+        }
+    }
 }

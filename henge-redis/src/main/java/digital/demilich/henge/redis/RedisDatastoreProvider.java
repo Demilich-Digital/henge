@@ -13,6 +13,7 @@ import java.util.function.UnaryOperator;
  * as {@code redis://host:6379/0}, {@code rediss://} for TLS, {@code redis://:password@host} for a
  * password, with options as query parameters ({@code ?timeout=5s}); {@code henge.store.redis.timeout} sets the timeout instead. For a Redis Cluster, give
  * {@code henge.store.redis.cluster-nodes} instead: a comma-separated list of seed URIs.
+ * {@code henge.store.redis.eviction-is-outage=false} stops a server's evictions from failing the store.
  */
 public final class RedisDatastoreProvider implements SystemEphemeralDatastoreProvider {
 
@@ -32,10 +33,24 @@ public final class RedisDatastoreProvider implements SystemEphemeralDatastorePro
                     + "redis://localhost:6379) or henge.store.redis.cluster-nodes (e.g. redis://node1:6379,redis://node2:6379)");
         }
         Duration timeout = timeout(property.apply("henge.store.redis.timeout"));
+        boolean evictionIsOutage = evictionIsOutage(property.apply("henge.store.redis.eviction-is-outage"));
         if (hasCluster) {
-            return RedisEphemeralDatastore.connectCluster(Arrays.stream(clusterNodes.split(",")).map(String::trim).toList(), timeout);
+            return RedisEphemeralDatastore.connectCluster(Arrays.stream(clusterNodes.split(",")).map(String::trim).toList(),
+                    timeout, evictionIsOutage);
         }
-        return RedisEphemeralDatastore.connect(uri.trim(), timeout);
+        return RedisEphemeralDatastore.connect(uri.trim(), timeout, evictionIsOutage);
+    }
+
+    /** {@code true} if unset. */
+    private static boolean evictionIsOutage(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return true;
+        }
+        return switch (raw.trim().toLowerCase()) {
+            case "true" -> true;
+            case "false" -> false;
+            default -> throw new IllegalStateException("henge.store.redis.eviction-is-outage=" + raw + " must be true or false");
+        };
     }
 
     /** {@code null} if unset. A bare number is milliseconds; {@code 500ms}, {@code 2s} and ISO-8601 ({@code PT2S}) work too. */

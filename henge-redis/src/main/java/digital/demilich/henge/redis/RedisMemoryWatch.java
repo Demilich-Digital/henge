@@ -31,6 +31,11 @@ import java.util.regex.Pattern;
  * whatever it likes. A server that can evict at all ({@code maxmemory} set, with any policy but
  * {@code noeviction}) is warned about the first time it is sampled.
  *
+ * <p>That is a poor fit for a Redis shared with a cache, which evicts all day. Such a Redis can be
+ * watched without being obeyed ({@code enforce} false): evictions are still sampled and logged, but never
+ * make an operation fail. Henge's claims can then be evicted along with the cache's keys, which is a wipe
+ * the lease machinery heals, but only after the fact.
+ *
  * <p>A sample that fails changes nothing: a server that can't be reached fails its operations anyway.
  */
 final class RedisMemoryWatch implements AutoCloseable {
@@ -49,17 +54,20 @@ final class RedisMemoryWatch implements AutoCloseable {
     private final Supplier<Map<String, Function<String, String>>> servers;
     private final Function<byte[], String> serverOf;
     private final Map<String, Server> state = new ConcurrentHashMap<>();
+    private final boolean enforce;
     private final ScheduledExecutorService sampler;
 
     /**
      * @param servers each server to sample, by name, as a function from an {@code INFO} section to its text;
      *     asked again on every sample, so a cluster's primaries can change
      * @param serverOf the name of the server that holds a key, or {@code null} if it isn't known
+     * @param enforce whether an evicting server fails {@link #check}; if not, it is only logged
      */
     RedisMemoryWatch(Supplier<Map<String, Function<String, String>>> servers, Function<byte[], String> serverOf,
-            Duration interval) {
+            Duration interval, boolean enforce) {
         this.servers = servers;
         this.serverOf = serverOf;
+        this.enforce = enforce;
         sample();
         sampler = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "henge-redis-memory");
@@ -71,6 +79,9 @@ final class RedisMemoryWatch implements AutoCloseable {
 
     /** @throws StoreUnavailableException if the server holding {@code key} is evicting */
     void check(byte[] key) {
+        if (!enforce) {
+            return;
+        }
         String name = serverOf.apply(key);
         Server server = name == null ? null : state.get(name);
         if (server != null && server.evicting) {
@@ -113,8 +124,11 @@ final class RedisMemoryWatch implements AutoCloseable {
             server.warned = true;
             if (maxmemory > 0 && !policy.equals("noeviction")) {
                 log.log(Level.WARNING, "Redis at " + name + " can evict keys (maxmemory " + maxmemory + ", maxmemory-policy "
-                        + policy + "). Henge treats it as unreachable while it evicts; set maxmemory-policy noeviction, "
-                        + "so that a full Redis fails writes instead of shedding claims that are in use");
+                        + policy + "). " + (enforce
+                        ? "Henge treats it as unreachable while it evicts; set maxmemory-policy noeviction, "
+                                + "so that a full Redis fails writes instead of shedding claims that are in use"
+                        : "Henge only logs it (henge.store.redis.eviction-is-outage=false), so claims that are in use "
+                                + "can be shed; set maxmemory-policy noeviction, or give Henge a Redis of its own"));
             }
         }
         long evictedKeys = number(stats, "evicted_keys").orElse(0L);
@@ -125,8 +139,8 @@ final class RedisMemoryWatch implements AutoCloseable {
             server.evicting = evicting;
             if (evicting) {
                 log.log(Level.WARNING, "Redis at " + name + " is evicting keys (used_memory " + memory.get("used_memory")
-                        + " of maxmemory " + maxmemory + ", maxmemory-policy " + policy + "); treating it as unreachable "
-                        + "until it stops");
+                        + " of maxmemory " + maxmemory + ", maxmemory-policy " + policy + ")"
+                        + (enforce ? "; treating it as unreachable until it stops" : ""));
             } else {
                 log.log(Level.INFO, "Redis at " + name + " has stopped evicting keys");
             }

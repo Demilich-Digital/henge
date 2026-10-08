@@ -152,7 +152,8 @@ carries a token that goes with it, so its epoch changes ([the store's contract](
 A Redis that is evicting is treated as unreachable until it stops, since it is dropping claims that are in
 use, and its own keys lapsing then frees the memory. Set `maxmemory-policy noeviction` all the same, so a
 full Redis refuses writes instead, an outage the cluster rides out while reads keep working; each process
-logs a warning at connect about a Redis that can evict.
+logs a warning at connect about a Redis that can evict. The check counts every key the server evicts, so on
+a Redis shared with a cache, `henge.store.redis.eviction-is-outage=false` logs the evictions and keeps using it.
 
 ### What this doesn't give you
 

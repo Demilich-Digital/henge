@@ -256,11 +256,24 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     /** As {@link #connect(String)}, with {@code timeout} (if not {@code null}) in place of the URI's or the default. */
     public static RedisEphemeralDatastore connect(String uri, Duration timeout) {
-        return connect(uri, timeout, MEMORY_SAMPLE_INTERVAL);
+        return connect(uri, timeout, true);
+    }
+
+    /**
+     * As {@link #connect(String, Duration)}; with {@code evictionIsOutage} false, a server that evicts keys is
+     * logged but still used (see {@link RedisMemoryWatch}), for a Redis shared with a cache.
+     */
+    public static RedisEphemeralDatastore connect(String uri, Duration timeout, boolean evictionIsOutage) {
+        return connect(uri, timeout, MEMORY_SAMPLE_INTERVAL, evictionIsOutage);
     }
 
     /** As {@link #connect(String, Duration)}, sampling the server's memory every {@code memorySampleInterval}. */
     static RedisEphemeralDatastore connect(String uri, Duration timeout, Duration memorySampleInterval) {
+        return connect(uri, timeout, memorySampleInterval, true);
+    }
+
+    static RedisEphemeralDatastore connect(String uri, Duration timeout, Duration memorySampleInterval,
+            boolean evictionIsOutage) {
         RedisURI redisUri = parse(uri, timeout);
         RedisClient client = RedisClient.create(redisUri);
         client.setOptions(ClientOptions.builder().socketOptions(socketOptions(redisUri)).build());
@@ -268,7 +281,8 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
             StatefulRedisConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE);
             String server = redisUri.getHost() + ":" + redisUri.getPort();
             RedisMemoryWatch memory = new RedisMemoryWatch(
-                    () -> Map.of(server, section -> connection.sync().info(section)), key -> server, memorySampleInterval);
+                    () -> Map.of(server, section -> connection.sync().info(section)), key -> server, memorySampleInterval,
+                    evictionIsOutage);
             return new RedisEphemeralDatastore(connection, connection.sync(), memory, client::shutdown);
         } catch (RuntimeException e) {
             client.shutdown();
@@ -294,11 +308,21 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     /** As {@link #connectCluster(List)}, with {@code timeout} (if not {@code null}) in place of the URIs' or the default. */
     public static RedisEphemeralDatastore connectCluster(List<String> seedUris, Duration timeout) {
-        return connectCluster(seedUris, timeout, MEMORY_SAMPLE_INTERVAL);
+        return connectCluster(seedUris, timeout, true);
+    }
+
+    /** As {@link #connectCluster(List, Duration)}, with {@code evictionIsOutage} as for {@link #connect(String, Duration, boolean)}. */
+    public static RedisEphemeralDatastore connectCluster(List<String> seedUris, Duration timeout, boolean evictionIsOutage) {
+        return connectCluster(seedUris, timeout, MEMORY_SAMPLE_INTERVAL, evictionIsOutage);
     }
 
     /** As {@link #connectCluster(List, Duration)}, sampling each primary's memory every {@code memorySampleInterval}. */
     static RedisEphemeralDatastore connectCluster(List<String> seedUris, Duration timeout, Duration memorySampleInterval) {
+        return connectCluster(seedUris, timeout, memorySampleInterval, true);
+    }
+
+    static RedisEphemeralDatastore connectCluster(List<String> seedUris, Duration timeout,
+            Duration memorySampleInterval, boolean evictionIsOutage) {
         List<RedisURI> seeds = Objects.requireNonNull(seedUris, "seedUris").stream().map(uri -> parse(uri, timeout)).toList();
         if (seeds.isEmpty()) {
             throw new IllegalArgumentException("A Redis Cluster needs at least one seed node");
@@ -316,7 +340,7 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
             RedisMemoryWatch memory = new RedisMemoryWatch(() -> primaries(connection), key -> {
                 RedisClusterNode node = connection.getPartitions().getMasterBySlot(SlotHash.getSlot(key));
                 return node == null ? null : name(node);
-            }, memorySampleInterval);
+            }, memorySampleInterval, evictionIsOutage);
             return new RedisEphemeralDatastore(connection, connection.sync(), memory, client::shutdown);
         } catch (RuntimeException e) {
             client.shutdown();
