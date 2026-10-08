@@ -42,6 +42,10 @@ import java.util.UUID;
  * held is gone. No persistence or replication is needed or wanted. A key lives wholly on one node,
  * so {@link #connectCluster} shards by Redis Cluster slot with nothing more to do, and the epoch a
  * read reports is that of the shard holding the key.
+ *
+ * <p><b>Known gap:</b> a flush ({@code FLUSHALL}, {@code FLUSHDB}) and eviction under {@code maxmemory}
+ * lose data and keep the {@code run_id}, so the epoch doesn't report them, as the contract requires. The
+ * fix is a token in each key ({@code docs/design/lease-healing.md}, "Every Redis loss changes the epoch").
  */
 public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, AutoCloseable {
 

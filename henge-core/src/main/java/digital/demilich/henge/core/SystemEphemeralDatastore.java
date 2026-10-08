@@ -23,7 +23,15 @@ import java.util.Map;
  * capacities as an intentional underestimate of the real limit, so an over-grant lands in the margin.
  * Nothing here needs consensus.
  *
- * <p>Implementations must be thread-safe. See {@code docs/design/self-orchestration.md}.
+ * <p>Each key stands alone. A key may be unreachable, or lost, while others are fine, and nothing may be
+ * assumed about which keys fail together: that is the store's business.
+ *
+ * <p>An operation that can't be completed throws a {@link RuntimeException}, a
+ * {@link StoreUnavailableException} where the store can tell it is unreachable, and an
+ * {@link IllegalArgumentException} only for the caller's own mistake. An operation that throws may or
+ * may not have taken effect. Whatever it wrote expires like anything else.
+ *
+ * <p>Implementations must be thread-safe. See {@code docs/ephemeral-store.md}.
  */
 public interface SystemEphemeralDatastore {
 
@@ -36,7 +44,7 @@ public interface SystemEphemeralDatastore {
     /** Removes this node's member early, for graceful deregistration. A no-op if it isn't there. */
     void remove(String key, String localName);
 
-    /** The live members of {@code key}, across all writers, plus the epoch of the storage that answered. */
+    /** The live members of {@code key}, across all writers, plus the key's {@link Epoch}. */
     Snapshot read(String key);
 
     /**
@@ -95,9 +103,16 @@ public interface SystemEphemeralDatastore {
     }
 
     /**
-     * Identifies the storage that answered a read. A different epoch from one read to the next means
-     * the data may have been wiped, which is how a reader tells "nobody is there" from "the store
-     * just restarted".
+     * A key's epoch, which changes whenever its members may have been lost other than by expiry or
+     * {@link #remove}: the store restarting, failing over to a copy that missed writes, being cleared, or
+     * the key moving to storage that didn't have it. This is how a reader tells "nobody is there" from
+     * "the store just lost them". It is per key, so two keys may report different epochs, and it may
+     * change without a loss (a reader then waits for nothing).
+     *
+     * <p>It must change for every way the store can lose data in operation, including the ones an operator
+     * causes (clearing it) and the ones it does on its own (evicting under memory pressure): they will all
+     * happen over a cluster's life. Healing never depends on it, since a consumer survives a loss it wasn't
+     * told of as early expiry, only without the warning that keeps the over-grant window small.
      */
     record Epoch(String id) {
     }

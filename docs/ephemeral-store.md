@@ -29,12 +29,22 @@ key → (level, at)                          a bucket
   level, each leaked to now. A copy that missed some takes is lower than the truth, never higher.
 - **Every member expires.** Time to live is relative, and the deadline is computed on the store's own
   clock, so the writers' clocks don't matter. Writers renew what they want kept.
-- **A read returns the live members of a key, across all writers**, and an **epoch**: an identifier of
-  the storage that answered. A different epoch from one read to the next means the data may have been
-  wiped, which is how a reader tells "nobody is there" from "the store just restarted".
+- **A read returns the live members of a key, across all writers**, and the key's **epoch**, which
+  changes whenever its members may have been lost other than by expiry or removal: a restart, a failover
+  to a copy that missed writes, a clear, the key moving to storage that didn't have it. That is how a
+  reader tells "nobody is there" from "the store just lost them". An epoch may change with nothing lost;
+  the reader then waits for nothing. It must change for **every** way the store loses data in operation,
+  the ones an operator causes (a flush) and the ones the store does itself (eviction) included: over a
+  cluster's life they will all happen.
 - **Anything may be lost at any time.** A wipe must look like early expiry, and every consumer
-  re-asserts its state on a heartbeat. The store is never a system of record, and holds no application
+  re-asserts its state on a heartbeat. A loss the epoch didn't report is early expiry with no warning, and
+  consumers survive it the same way. The store is never a system of record, and holds no application
   data.
+- **Each key stands alone.** A key may be unreachable or lost while others are fine. Nothing may assume
+  which keys fail together.
+- **A call that fails may have happened.** An operation that throws may or may not have taken effect, and
+  whatever it wrote expires. `StoreUnavailableException` says the store couldn't be reached;
+  `IllegalArgumentException` is only for the caller's mistake.
 
 ## The operations
 
@@ -75,13 +85,19 @@ A bucket's keyspace is separate from the members'. Implementations must be threa
 - **Redis**, 7.4 or later (`henge-redis`): hash-field TTLs give each member its own expiry, and every
   operation is one Lua script on one key, and Redis serializes each key, so there is one copy and nothing
   to merge. On Redis Cluster each key lives in one slot, so it shards with no cross-node coordination. The
-  epoch is the server's `run_id`.
+  epoch is the `run_id` of the server holding the key. **Known gap:** a flush, and eviction under
+  `maxmemory`, keep the `run_id`, so the epoch misses them today. The cluster still heals from either, by the
+  give-up after an over-grant, but without the wait that keeps it rare. A token kept in each key closes it
+  ([design](design/lease-healing.md#every-redis-loss-changes-the-epoch)). Set `maxmemory-policy noeviction`, so
+  a full Redis fails as an outage instead of shedding claims. How big a Redis a cluster needs, and why memory is
+  the wrong thing to size by, is in [store capacity](design/store-capacity.md).
 - **A private DHT** (planned): the store built into the cluster itself, with no separate system to run,
   designed for a trusted private network rather than open peer-to-peer use. See [the design
   doc](design/self-orchestration.md#a-built-in-dht-not-built).
 
 Anything else that can expire members individually, read a key's live members, merge copies by the rules
-above, and make `claim` and `tryAcquire` atomic within a copy can be one.
+above, make `claim` and `tryAcquire` atomic within a copy, and change a key's epoch on every way it can lose
+it can be one.
 
 ## Writing an adapter
 
