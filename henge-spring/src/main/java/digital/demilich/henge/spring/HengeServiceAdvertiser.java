@@ -51,6 +51,9 @@ class HengeServiceAdvertiser implements SmartLifecycle, ApplicationEventPublishe
             @Nullable SystemMetrics metrics) {
         this.metrics = metrics == null ? SystemMetrics.NONE : metrics;
         this.datastore = this.metrics.measured(datastore, "advertisement");
+        if (datastore instanceof GuardedDatastore guard) {
+            guard.onRecovery(this::renew);
+        }
         this.registry = registry;
         this.advertisement = new ServiceAdvertisement(advertiseUrl);
         this.ttl = ttl;

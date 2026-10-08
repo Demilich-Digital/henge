@@ -7,7 +7,7 @@ leads to healing**. That is the priority. Making the window after a store reset 
 
 **Status.** Phase 1 is built: [the stuck paths](#the-audit), [the poller's wait after an outage](#trust-less-and-wait-less)
 (at a whole TTL, not yet one heartbeat), and [the Redis epoch token](#every-redis-loss-changes-the-epoch). The
-measuring script and re-asserting on recovery are not. What existed before is [taking up a lease later and giving one up](self-orchestration.md#behavior)
+measuring script ([phase 2](#measuring-it)) is built, and so is [re-asserting on recovery](#re-assert-on-recovery) (phase 3), though the measurement doesn't call for it. What existed before is [taking up a lease later and giving one up](self-orchestration.md#behavior)
 (`HengeLeasePoller`, `HengeLeaseKeeper`, and the negative claim in `SystemEphemeralDatastore.claim`). This is
 the design for making that machinery heal from its own failures; shrinking the window after a store reset is
 optional work behind it. [Decisions](#decisions) were made in discussion; [open questions](#open-questions) come with a
@@ -194,6 +194,11 @@ calls the store again.
 
 This needs no change to the store contract.
 
+**Built** as `GuardedDatastore.onRecovery`, with the keeper (`renewAll`) and the advertiser (`renew`) registered.
+The poller isn't: it already asks the guard when the last outage ended, and waits, which re-asserting doesn't
+change. A listener that throws is logged and the others still run. What is not built is the shorter poller wait,
+and noticing a reset that fails no call (below).
+
 ### Notice a reset that isn't an outage
 
 A failover that promotes a copy that missed writes resets the store with no failed call, so the guard sees
@@ -301,6 +306,20 @@ second, reporting:
 It is the same loop that was run by hand to find the over-commit, kept so that it can run on a change and in CI
 later. Its output is the number this design is trying to move.
 
+It is `examples/docker/measure-window.sh [wipe|outage] [runs]`, against the Compose cluster. `wipe` is a
+`FLUSHALL`; `outage` stops the store for 35 seconds, longer than a lease TTL, and starts it again.
+
+**Baseline** (phase 1 as built, three shop replicas, lease capacity 10, defaults):
+
+| Mode | Most claimed | Seconds over capacity | Seconds with no advertiser | Seconds to recover |
+|---|---|---|---|---|
+| wipe (3 runs) | 10 | 0, 0, 0 | 3, 4, 4 | 3, 4, 4 |
+| outage of 35s (1 run) | 10 | 0 | 12 | 43 (8 after the store returned) |
+
+Nothing was over capacity, so the window didn't open in these runs. The poller's whole-TTL wait is not
+visible in the wipe (no candidate was waiting), and the 43 seconds after an outage is mostly the outage itself.
+Shortening either is not justified by this; phase 3 waits on a measurement that shows an over-commit.
+
 ## What stays open
 
 - **The untracked pool.** Between a store resetting and the holder's re-assert, a node's pool is open and the
@@ -337,8 +356,8 @@ Each phase is useful alone.
    them, **the poller waits after an outage ends**, since that is the only thing that shows an outage longer than
    a TTL, and **the Redis epoch token**, so a flush and an eviction are seen like a restart.
 2. **The measuring script**, to see whether the window is worth shrinking. It runs a long outage as well as a
-   wipe.
-3. **Re-assert on recovery, and the shorter wait,** if the measurement says so.
+   wipe. Built; [the baseline](#measuring-it) shows no over-commit.
+3. **Re-assert on recovery** (built, though the measurement says the window is not open), and then **the shorter wait**, which waits on a measurement that shows an over-commit.
 
 ## Open questions
 

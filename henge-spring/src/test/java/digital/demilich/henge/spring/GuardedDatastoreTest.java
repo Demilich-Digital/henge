@@ -10,6 +10,8 @@ import digital.demilich.henge.core.StoreUnavailableException;
 import digital.demilich.henge.core.SystemEphemeralDatastore;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -192,5 +194,26 @@ class GuardedDatastoreTest {
 
         assertThatThrownBy(() -> none.read("k")).isInstanceOf(StoreUnavailableException.class);
         assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void anOutageEndingCallsEveryRecoveryListenerOnceEvenIfOneThrows() throws InterruptedException {
+        var recovered = new CountDownLatch(2);
+        guarded.onRecovery(() -> {
+            throw new IllegalStateException("a listener that fails");
+        });
+        guarded.onRecovery(recovered::countDown);
+        guarded.onRecovery(recovered::countDown);
+        guarded.read("k"); // no outage yet
+        down = true;
+        assertThatThrownBy(() -> guarded.read("k")).isInstanceOf(StoreUnavailableException.class);
+        down = false;
+        advance(INITIAL);
+
+        guarded.read("k");
+        guarded.read("k"); // an ordinary success is not a recovery
+
+        assertThat(recovered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(recovered.getCount()).isZero();
     }
 }

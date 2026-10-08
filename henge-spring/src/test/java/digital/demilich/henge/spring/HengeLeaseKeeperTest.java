@@ -493,4 +493,37 @@ class HengeLeaseKeeperTest {
         assertThat(store.read("lease:a-db").members()).isEmpty();
         assertThat(store.read("lease:b-db").members()).isEmpty();
     }
+
+    @Test
+    void aClaimTheStoreLostIsWrittenAgainAsSoonAsTheStoreIsBack() throws InterruptedException {
+        var down = new java.util.concurrent.atomic.AtomicBoolean();
+        SystemEphemeralDatastore toggling = (SystemEphemeralDatastore) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {SystemEphemeralDatastore.class}, (proxy, method, args) -> {
+                    if (down.get() && !method.getName().equals("nodeId")) {
+                        throw new StoreUnavailableException("down");
+                    }
+                    try {
+                        return method.invoke(store, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        var guard = new GuardedDatastore(toggling, Duration.ofMillis(1), Duration.ofMillis(1), now::get);
+        var guarded = new HengeLeaseKeeper(guard, Duration.ofSeconds(30), null);
+        assertThat(guarded.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+        down.set(true);
+        assertThatThrownBy(() -> guard.read("lease:db")).isInstanceOf(StoreUnavailableException.class);
+        down.set(false);
+        store.remove("lease:db", HengeLeaseKeeper.MEMBER); // the store came back empty
+        advance(Duration.ofMillis(1));
+
+        guard.read("lease:db"); // the call that finds it back; this is also the first look at the loss
+
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (store.read("lease:db").members().isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertThat(store.read("lease:db").members()).hasSize(1);
+        guarded.destroy();
+    }
 }

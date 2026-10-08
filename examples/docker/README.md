@@ -17,3 +17,6 @@ curl 'localhost:8088/api/stock?sku=lantern'
 - `POST /_henge/*` through Caddy is a 404; the replicas reach each other over the Compose network.
 - Try `docker compose -f examples/docker/compose.yml stop store`, then restart a replica: it stays up,
   reports not ready, and joins by itself when the store returns.
+- `examples/docker/measure-window.sh [wipe|outage] [runs]` wipes the store (or stops it for longer than a lease
+  TTL) and reports the most claims held against the capacity, the seconds over it, the seconds a service had no
+  advertiser, and the seconds to recover. See [lease healing](../../docs/design/lease-healing.md#measuring-it).

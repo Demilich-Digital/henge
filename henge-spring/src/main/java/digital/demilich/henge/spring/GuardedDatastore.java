@@ -7,6 +7,8 @@ import digital.demilich.henge.core.SystemEphemeralDatastore;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -42,6 +44,7 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
     private Instant nextAttempt = Instant.MIN;
     private RuntimeException lastFailure;
     private Instant lastOutageEnded;
+    private final List<Runnable> recoveryListeners = new CopyOnWriteArrayList<>();
 
     GuardedDatastore(SystemEphemeralDatastore delegate, Duration initialBackoff, Duration maxBackoff, InstantSource clock) {
         this.delegate = delegate;
@@ -109,6 +112,16 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
         return lastOutageEnded;
     }
 
+    /**
+     * Calls {@code listener} each time an outage ends, so a holder says what it holds again as soon as the store is
+     * back, not at its next heartbeat. It runs on a thread of its own, outside this guard's lock, since it calls
+     * the store, and the call that ended the outage may be a request's. A listener that throws is logged and the
+     * rest still run.
+     */
+    void onRecovery(Runnable listener) {
+        recoveryListeners.add(listener);
+    }
+
     /** Logs a failed use of the datastore: at debug if this guard has already said so, else a warning. */
     static void logFailure(Log log, String message, RuntimeException failure) {
         if (failure instanceof StoreUnavailableException) {
@@ -157,7 +170,22 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
         nextAttempt = now.plus(backoff());
     }
 
-    private synchronized void succeeded() {
+    private void succeeded() {
+        if (endOutage() && !recoveryListeners.isEmpty()) {
+            Thread.ofVirtual().name("henge-store-recovery").start(() -> {
+                for (Runnable listener : recoveryListeners) {
+                    try {
+                        listener.run();
+                    } catch (RuntimeException e) {
+                        log.warn("Re-asserting after the ephemeral store's recovery failed", e);
+                    }
+                }
+            });
+        }
+    }
+
+    /** Whether this call ended an outage. */
+    private synchronized boolean endOutage() {
         if (failures > 0) {
             log.info("The ephemeral store is reachable again, after " + failures + " failed attempts over "
                     + Duration.between(outageStart, clock.instant()).toSeconds() + " s");
@@ -166,7 +194,9 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
             lastOutageEnded = clock.instant();
             lastFailure = null;
             nextAttempt = Instant.MIN;
+            return true;
         }
+        return false;
     }
 
     /** The wait after the failures so far: the initial backoff, doubled for each further one, up to the cap. */

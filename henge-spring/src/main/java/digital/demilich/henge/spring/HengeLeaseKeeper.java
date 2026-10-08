@@ -95,6 +95,9 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware, ApplicationE
         this.metrics = metrics == null ? SystemMetrics.NONE : metrics;
         this.datastore = this.metrics.measured(datastore, "lease");
         this.ttl = ttl;
+        if (datastore instanceof GuardedDatastore guard) {
+            guard.onRecovery(this::renewAll);
+        }
     }
 
     @Override
