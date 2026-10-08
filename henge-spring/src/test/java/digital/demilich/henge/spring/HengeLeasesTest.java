@@ -364,6 +364,105 @@ class HengeLeasesTest {
         }
     }
 
+    /** An in-process store whose removals fail while {@link #failRemoves} is set, as a store that blips would. */
+    static class FailingRemovesDatastore implements SystemEphemeralDatastore {
+        final InProcessEphemeralDatastore delegate = new InProcessEphemeralDatastore();
+        volatile boolean failRemoves;
+
+        FailingRemovesDatastore() {
+            // Another process holds 70 of 100, for far longer than the test runs.
+            delegate.claim("lease:ledger-db", "other-process", 70, 100, Duration.ofHours(1));
+        }
+
+        @Override
+        public String nodeId() {
+            return delegate.nodeId();
+        }
+
+        @Override
+        public void put(String key, String localName, byte[] value, Duration ttl) {
+            delegate.put(key, localName, value, ttl);
+        }
+
+        @Override
+        public void remove(String key, String localName) {
+            if (failRemoves) {
+                throw new digital.demilich.henge.core.StoreUnavailableException("blip");
+            }
+            delegate.remove(key, localName);
+        }
+
+        @Override
+        public Snapshot read(String key) {
+            return delegate.read(key);
+        }
+
+        @Override
+        public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
+            return delegate.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
+            return delegate.tryAcquire(key, amount, limit);
+        }
+    }
+
+    @Configuration
+    static class FailingRemovesConfig {
+        static final FailingRemovesDatastore STORE = new FailingRemovesDatastore();
+
+        @Bean
+        SystemEphemeralDatastore datastore() {
+            return STORE;
+        }
+    }
+
+    @Test
+    void anEvictionWhoseStoreCallsFailStillGivesTheServiceUpAndHostsItAgainLater() throws Exception {
+        Map<String, Object> properties = new HashMap<>(leases(100, 20));
+        properties.put("henge.lease-poll.interval", "20ms");
+        properties.put("henge.lease-poll.max-interval", "40ms");
+        properties.put("henge.lease-evict.grace", "0");
+        properties.put("henge.lease-evict.drain-timeout", "1s");
+        properties.put("henge.store.backoff.initial", "1ms");
+        properties.put("henge.store.backoff.max", "1ms");
+        var store = FailingRemovesConfig.STORE;
+        try (var ctx = context(properties, LeasedConfig.class, FailingRemovesConfig.class, HengeTransportConfiguration.class)) {
+            ctx.refresh();
+            var registry = ctx.getBean(HengeServiceRegistry.class);
+            var keeper = ctx.getBean(HengeLeaseKeeper.class);
+            var poller = ctx.getBean(HengeLeasePoller.class);
+            await(() -> store.delegate.read("adv:ledger-service@1").members().size() == 1);
+
+            // The lease is lost, and every removal the eviction makes fails: the withdrawal and the hand-back.
+            store.failRemoves = true;
+            store.delegate.remove("lease:ledger-db", HengeLeaseKeeper.MEMBER);
+            store.delegate.put("lease:ledger-db", "a-extra",
+                    java.nio.ByteBuffer.allocate(Integer.BYTES).putInt(30).array(), Duration.ofHours(1));
+            keeper.renewAll();
+
+            await(() -> registry.find("ledger-service", 1).isEmpty() && registry.find("report-service", 1).isEmpty());
+            await(() -> !keeper.isHeld("ledger-db"));
+            await(() -> poller.candidates() == 2);
+
+            // The store comes back; what the eviction couldn't take out is gone as if it had lapsed, and so is the excess.
+            store.failRemoves = false;
+            store.delegate.remove("adv:ledger-service@1", HengeServiceAdvertiser.MEMBER);
+            store.delegate.remove("adv:report-service@1", HengeServiceAdvertiser.MEMBER);
+            store.delegate.remove("lease:ledger-db", HengeLeaseKeeper.MEMBER);
+            store.delegate.remove("lease:ledger-db", "a-extra");
+
+            // Past the wait after the store's outage, the candidates are hosted again, and advertised again.
+            await(() -> {
+                poller.tick(java.time.Instant.now().plus(Duration.ofHours(1)));
+                return registry.find("ledger-service", 1).isPresent() && registry.find("report-service", 1).isPresent();
+            });
+            await(() -> store.delegate.read("adv:ledger-service@1").members().size() == 1);
+            assertThat(ctx.getBean(LedgerService.class).grant()).isEqualTo("ledger-db:20");
+        }
+    }
+
     @Test
     void servicesOnTheSameLeaseAreBothHostedWhenOneClaimFits() {
         // 70 held elsewhere leaves 30: one claim of 20 fits, and both services stand on it.

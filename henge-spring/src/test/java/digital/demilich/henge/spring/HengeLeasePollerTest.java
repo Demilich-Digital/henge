@@ -198,6 +198,96 @@ class HengeLeasePollerTest {
         }
     }
 
+    /** The store, or nothing at all while {@code down}. */
+    private static final class Switchable implements SystemEphemeralDatastore {
+        private final SystemEphemeralDatastore delegate;
+        volatile boolean down;
+
+        Switchable(SystemEphemeralDatastore delegate) {
+            this.delegate = delegate;
+        }
+
+        private void reachable() {
+            if (down) {
+                throw new digital.demilich.henge.core.StoreUnavailableException("down");
+            }
+        }
+
+        @Override
+        public String nodeId() {
+            return delegate.nodeId();
+        }
+
+        @Override
+        public void put(String key, String localName, byte[] value, Duration ttl) {
+            reachable();
+            delegate.put(key, localName, value, ttl);
+        }
+
+        @Override
+        public void remove(String key, String localName) {
+            reachable();
+            delegate.remove(key, localName);
+        }
+
+        @Override
+        public Snapshot read(String key) {
+            reachable();
+            return delegate.read(key);
+        }
+
+        @Override
+        public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
+            reachable();
+            return delegate.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
+            reachable();
+            return delegate.tryAcquire(key, amount, limit);
+        }
+    }
+
+    @Test
+    void afterAnOutageNoRoomIsTakenUntilTheHoldersHaveHadTimeToRenew() {
+        // An outage longer than a TTL lets every claim lapse and leaves the epoch as it was: only the guard knows.
+        var guardClock = new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
+        var switchable = new Switchable(store);
+        var guard = new GuardedDatastore(switchable, Duration.ofMillis(1), Duration.ofMillis(1), guardClock::get);
+        var guardedKeeper = new HengeLeaseKeeper(guard, TTL, null);
+        var guardedPoller = new HengeLeasePoller(guard, guardedKeeper, INTERVAL, MAX, TTL,
+                new DefaultListableBeanFactory().getBeanProvider(HengeBootGate.class));
+        var need = new LeaseNeed("db", 5, 10);
+        guardedPoller.add(new HengeLeasePoller.Candidate("a@1", List.of(need), () -> {
+            if (guardedKeeper.acquireAll("a@1", List.of(need)) != null) {
+                return false;
+            }
+            hosted.incrementAndGet();
+            return true;
+        }));
+        switchable.down = true;
+        try {
+            guard.read("lease:db");
+        } catch (digital.demilich.henge.core.StoreUnavailableException expected) {
+            // The outage begins.
+        }
+        switchable.down = false;
+        Instant back = later();
+        guardClock.set(back);
+
+        // The poller's own read is the one that finds the store back.
+        guardedPoller.tick(back);
+
+        assertThat(hosted).hasValue(0);
+        assertThat(guardedPoller.candidates()).isEqualTo(1);
+
+        guardedPoller.tick(later(2));
+
+        assertThat(hosted).hasValue(1);
+        guardedKeeper.destroy();
+    }
+
     @Test
     void jitterStaysWithinAHalfEitherWay() {
         for (int i = 0; i < 1000; i++) {

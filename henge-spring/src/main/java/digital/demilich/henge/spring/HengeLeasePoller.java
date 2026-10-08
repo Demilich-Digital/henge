@@ -19,6 +19,8 @@ import java.util.function.BooleanSupplier;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.ApplicationEventPublisherAware;
 import org.springframework.context.SmartLifecycle;
 
 /**
@@ -39,13 +41,15 @@ import org.springframework.context.SmartLifecycle;
  * <p>A store that was wiped looks empty to everyone, and the holders of a lease only say otherwise on their
  * next renewal. A poller that took the room it saw then would take a holder's place, and push the cluster
  * over the capacity. So when a lease's {@linkplain SystemEphemeralDatastore.Epoch epoch} changes between two
- * looks, it waits one lease TTL, enough for every holder to have renewed, before it trusts what it reads.
+ * looks, it waits one lease TTL, enough for every holder to have renewed, before it trusts what it reads. It
+ * waits the same after an outage of the store ends, which the {@link GuardedDatastore} says: an outage longer
+ * than the TTL lets every claim lapse and changes no epoch, so nothing else shows it.
  *
  * <p>Nothing is polled until the process is ready ({@link HengeBootGate}), and nothing at all while
  * there is no candidate: the common case, where every lease was granted, costs no store operation.
  * The read is advisory, and the claim stays the decision.
  */
-class HengeLeasePoller implements SmartLifecycle {
+class HengeLeasePoller implements SmartLifecycle, ApplicationEventPublisherAware {
 
     static final Duration DEFAULT_INTERVAL = Duration.ofSeconds(30);
     static final Duration DEFAULT_MAX_INTERVAL = Duration.ofMinutes(5);
@@ -80,6 +84,7 @@ class HengeLeasePoller implements SmartLifecycle {
     private ScheduledExecutorService executor;
     private ScheduledFuture<?> scheduled;
     private boolean running;
+    private volatile ApplicationEventPublisher events;
 
     /** @param settle how long to wait after the store may have been wiped: the leases' TTL */
     HengeLeasePoller(SystemEphemeralDatastore datastore, HengeLeaseKeeper keeper, Duration interval, Duration maxInterval,
@@ -109,7 +114,9 @@ class HengeLeasePoller implements SmartLifecycle {
         }
         // Waking up is a local check of the clock; only a due candidate costs the store anything.
         long periodMillis = Math.max(1, interval.toMillis() / 10);
-        scheduled = executor.scheduleWithFixedDelay(() -> tick(Instant.now()), periodMillis, periodMillis, TimeUnit.MILLISECONDS);
+        scheduled = executor.scheduleWithFixedDelay(
+                BackgroundTasks.surviving("lease poll", () -> tick(Instant.now()), log, () -> events),
+                periodMillis, periodMillis, TimeUnit.MILLISECONDS);
     }
 
     /** Attempts every candidate that is due at {@code now}. Also the schedule's own beat. */
@@ -187,6 +194,15 @@ class HengeLeasePoller implements SmartLifecycle {
                     + " for its holders to say so before taking up room in it");
             settlingUntil.put(need.name(), now.plus(settle));
         }
+        // Asked after the read, which may have been the call that ended the outage.
+        Instant outageEnded = datastore instanceof GuardedDatastore guard ? guard.lastOutageEnded() : null;
+        if (outageEnded != null && outageEnded.plus(settle).isAfter(settlingUntil.getOrDefault(need.name(), Instant.MIN))) {
+            settlingUntil.put(need.name(), outageEnded.plus(settle));
+            if (outageEnded.plus(settle).isAfter(now)) {
+                log.info("The store was away until " + outageEnded + ", long enough for claims on lease '" + need.name()
+                        + "' to have lapsed: waiting until " + settle + " after it came back before taking up room in it");
+            }
+        }
         if (settlingUntil.getOrDefault(need.name(), Instant.MIN).isAfter(now)) {
             return Outcome.SETTLING;
         }
@@ -211,6 +227,11 @@ class HengeLeasePoller implements SmartLifecycle {
     /** {@code base}, give or take half of it, at random. */
     static Duration jittered(Duration base) {
         return Duration.ofMillis((long) (base.toMillis() * (0.5 + ThreadLocalRandom.current().nextDouble())));
+    }
+
+    @Override
+    public void setApplicationEventPublisher(ApplicationEventPublisher events) {
+        this.events = events;
     }
 
     @Override

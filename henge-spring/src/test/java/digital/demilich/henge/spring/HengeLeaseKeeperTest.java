@@ -182,6 +182,104 @@ class HengeLeaseKeeperTest {
     }
 
     @Test
+    void aLeaseLostBeforeItsEvictorIsRegisteredIsGivenUpOnRegistration() throws Exception {
+        var evicted = new AtomicInteger();
+        assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+        loseClaim(10);
+        // Refused between the claim and the service being hosted: there is no evictor to run yet.
+        keeper.renewAll();
+
+        keeper.onEviction("a@1", evicted::incrementAndGet);
+
+        awaitTrue(() -> evicted.get() > 0);
+        Thread.sleep(50);
+        assertThat(evicted).hasValue(1);
+    }
+
+    @Test
+    void anEvictorRegisteredOnAHealthyLeaseDoesNotRun() throws Exception {
+        var evicted = new AtomicInteger();
+        assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+
+        keeper.onEviction("a@1", evicted::incrementAndGet);
+
+        Thread.sleep(50);
+        assertThat(evicted).hasValue(0);
+    }
+
+    /** Everything works, except taking a member out, while {@code down} is set. */
+    private static final class FailingRemoves implements SystemEphemeralDatastore {
+        private final SystemEphemeralDatastore delegate;
+        volatile boolean down = true;
+
+        FailingRemoves(SystemEphemeralDatastore delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public String nodeId() {
+            return delegate.nodeId();
+        }
+
+        @Override
+        public void put(String key, String localName, byte[] value, Duration ttl) {
+            delegate.put(key, localName, value, ttl);
+        }
+
+        @Override
+        public void remove(String key, String localName) {
+            if (down) {
+                throw new StoreUnavailableException("down");
+            }
+            delegate.remove(key, localName);
+        }
+
+        @Override
+        public Snapshot read(String key) {
+            return delegate.read(key);
+        }
+
+        @Override
+        public boolean claim(String key, String localName, int amount, int capacity, Duration ttl) {
+            return delegate.claim(key, localName, amount, capacity, ttl);
+        }
+
+        @Override
+        public Acquisition tryAcquire(String key, int amount, RateLimit limit) {
+            return delegate.tryAcquire(key, amount, limit);
+        }
+    }
+
+    @Test
+    void aHandBackTheStoreFailsStillLetsTheLeaseGoAndItLapses() {
+        var flaky = new HengeLeaseKeeper(new FailingRemoves(store), Duration.ofSeconds(30), null);
+        assertThat(flaky.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();
+
+        flaky.release("a@1");
+
+        assertThat(flaky.isHeld("db")).isFalse();
+        // Not taken back, and not renewed either: it lapses with its TTL.
+        assertThat(store.read("lease:db").members()).hasSize(1);
+        advance(Duration.ofSeconds(31));
+        assertThat(store.read("lease:db").members()).isEmpty();
+        flaky.destroy();
+    }
+
+    @Test
+    void aRefusalWhoseHandBackFailsKeepsNothingHeld() {
+        var flaky = new HengeLeaseKeeper(new FailingRemoves(store), Duration.ofSeconds(30), null);
+        store.claim("lease:db", "other-node", 8, 10, Duration.ofSeconds(30));
+
+        // 'cache' and 'events' are claimed, then 'db' is refused, and handing the first two back fails.
+        LeaseNeed refused = flaky.acquireAll("a@1",
+                List.of(new LeaseNeed("cache", 5, 10), new LeaseNeed("db", 5, 10), new LeaseNeed("events", 1, 10)));
+
+        assertThat(refused.name()).isEqualTo("db");
+        assertThat(flaky.isHeld("cache")).isFalse();
+        flaky.destroy();
+    }
+
+    @Test
     void aLeaseBeingGivenUpIsNotGivenUpAgainOnTheNextHeartbeat() throws Exception {
         var evicted = new AtomicInteger();
         assertThat(keeper.acquireAll("a@1", List.of(new LeaseNeed("db", 5, 10)))).isNull();

@@ -115,18 +115,19 @@ no outage. Callers read either as *a new epoch*. Two kinds of emptiness come wit
 below that depends on seeing one applies to them:
 
 - **An outage longer than a lease TTL.** Every claim and advertisement lapsed while the store was away, which
-  is expiry, not loss, so no store reports it. A refused process doesn't wait, and its first read may come
-  before the holders' heartbeats.
+  is expiry, not loss, so no store reports it. A refused process sees it another way: its guard knows when the
+  outage ended, and it waits a lease TTL after that, as after a new epoch, before it believes what it reads.
 - **A loss the store doesn't report.** The contract says it must report every one, and the stores Henge ships
   do, the Redis store's flushes and evictions included. A store that adds a way to lose data without
   extending its epoch falls here.
 
-Both heal the same way as a wipe, by the give-up below; they only lose the wait that makes it rare.
+Both heal the same way as a wipe, by the give-up below. A loss the store doesn't report also loses the wait
+that makes it rare.
 
 | What is exposed | For how long |
 |---|---|
 | A read of the empty store may show no hosts. A caller that had seen hosts keeps them for one more interval when the store has a new epoch; an empty answer from the same store is believed at once. | One advertisement refresh. |
-| **The store forgets who holds what, so a claim that fits the empty store is granted** whether it is a refused process's poll or a booting node's. The pool of a holder that has not re-asserted is open but untracked. | Until every holder has re-asserted: up to a heartbeat (10 s). A refused process that had read the lease before the reset waits a lease TTL after seeing the epoch change before it believes what it reads. |
+| **The store forgets who holds what, so a claim that fits the empty store is granted** whether it is a refused process's poll or a booting node's. The pool of a holder that has not re-asserted is open but untracked. | Until every holder has re-asserted: up to a heartbeat (10 s). A refused process waits a lease TTL before it believes what it reads, after seeing the epoch change (if it had read the lease before the reset) or after an outage ends. |
 | A holder whose claim another process took in that gap is refused on its next renewal, and **gives the lease up**. | About 40 s at the defaults: the grace and the drain, during which it still uses the pool. |
 
 ```mermaid
@@ -206,22 +207,16 @@ calls running the drain timeout, destroy the implementation (closing the pool), 
 | `StoreUnavailableException` / `503` | Not retried: it says the cluster is in trouble, which another try won't fix. | What a `503` means to your clients, and whether they retry. |
 | A hung dependency | The 2 s connect and 10 s read timeouts stop it holding a thread for ever. | The same timeouts on your own clients. |
 
-## Where recovery isn't finished
+## Where recovery depends on a restart
 
-These are known, and are the work of the [lease healing](design/lease-healing.md) design. Until it is built,
-each is a path that **does not heal by itself**:
+Every other path on this page heals with no operator ([lease healing](design/lease-healing.md)). One needs the
+process restarted, and says so:
 
-- **A lease eviction that fails part-way is never retried.** If the store blips while an advertisement is being
-  withdrawn, the failure is logged and the service stays hosted, unadvertised, on a lease the cluster has written
-  off, with its "being given up" marker written for ever. If it blips while the claim is handed back, the service
-  is given up but never becomes a candidate again, so this process never hosts it again. Restarting the process
-  clears either.
-- **A refusal that lands just before a service registers its eviction** runs no eviction, with the same result.
-- **A heartbeat or poller that dies from an unexpected error stops without a sound.** The lease heartbeat, the
-  lease poll and the advertisement refresh each end their schedule if one run throws something they don't catch,
-  in practice an `Error`.
-  A process whose leases are no longer renewed lapses out of the cluster; a process that no longer polls stays
-  remote. Alert on `henge.service.hosted`, and on advertisements that stop being renewed.
+- **A background task that dies of an `Error`.** The lease heartbeat, the lease poll, the advertisement refresh
+  and the rate limiters' membership each survive an unexpected exception, and run again on schedule. An `Error`
+  stops the task, since a process whose heartbeat has stopped keeps hosting on claims that lapse. It is logged at
+  `ERROR`, and with the Boot starter the process reports its liveness as `BROKEN`, so an orchestrator that probes
+  liveness restarts it. Without one, alert on that log, and on `henge.service.hosted`.
 
 ## What no recovery covers
 

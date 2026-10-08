@@ -41,6 +41,7 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
     private Instant outageStart;
     private Instant nextAttempt = Instant.MIN;
     private RuntimeException lastFailure;
+    private Instant lastOutageEnded;
 
     GuardedDatastore(SystemEphemeralDatastore delegate, Duration initialBackoff, Duration maxBackoff, InstantSource clock) {
         this.delegate = delegate;
@@ -99,6 +100,15 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
         return guarded(() -> delegate.sample(key, limit));
     }
 
+    /**
+     * When the last outage ended, or null if there hasn't been one. Something that reads the store after an
+     * outage asks this after its read, since the read may itself be the call that ended it. An outage longer
+     * than an entry's TTL lets every entry lapse with no change of epoch, so this is the only sign of it.
+     */
+    synchronized Instant lastOutageEnded() {
+        return lastOutageEnded;
+    }
+
     /** Logs a failed use of the datastore: at debug if this guard has already said so, else a warning. */
     static void logFailure(Log log, String message, RuntimeException failure) {
         if (failure instanceof StoreUnavailableException) {
@@ -153,6 +163,7 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
                     + Duration.between(outageStart, clock.instant()).toSeconds() + " s");
             failures = 0;
             outageStart = null;
+            lastOutageEnded = clock.instant();
             lastFailure = null;
             nextAttempt = Instant.MIN;
         }

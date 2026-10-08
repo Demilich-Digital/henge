@@ -5,7 +5,9 @@ that forgets everything is claimed from afresh. This document is about what that
 leads to healing**. That is the priority. Making the window after a store reset smaller is secondary, and
 [comes last](#shrinking-the-window-secondary).
 
-**Status.** Not built, except [the Redis epoch token](#every-redis-loss-changes-the-epoch). What exists is [taking up a lease later and giving one up](self-orchestration.md#behavior)
+**Status.** Phase 1 is built: [the stuck paths](#the-audit), [the poller's wait after an outage](#trust-less-and-wait-less)
+(at a whole TTL, not yet one heartbeat), and [the Redis epoch token](#every-redis-loss-changes-the-epoch). The
+measuring script and re-asserting on recovery are not. What existed before is [taking up a lease later and giving one up](self-orchestration.md#behavior)
 (`HengeLeasePoller`, `HengeLeaseKeeper`, and the negative claim in `SystemEphemeralDatastore.claim`). This is
 the design for making that machinery heal from its own failures; shrinking the window after a store reset is
 optional work behind it. [Decisions](#decisions) were made in discussion; [open questions](#open-questions) come with a
@@ -70,6 +72,7 @@ For each way the system can go wrong, how it comes back.
 | **A refusal lands before the evictor is registered** | Nothing | **Yes**: stuck 2 |
 | **An eviction withdrew the advertisement and failed** | Nothing: the service is never advertised again | **Yes**: stuck 3, part of 1 |
 | **The poller or the heartbeat dies** | Nothing | **Yes**: stuck 4 |
+| **A refusal in `acquireAll` fails handing back what it already claimed** | Nothing: the leases it claimed first stay held with no service on them, renewed for ever | **Yes**: stuck 5, found while building stuck 1 |
 | A lease is still `LEAVING` when another service on it is a candidate | `acquireAll` refuses it, so the poller backs off and retries once the lease is handed back | No, unless the other eviction is stuck (stuck 1) |
 
 ### Stuck 1: a failed eviction is never retried
@@ -124,6 +127,16 @@ poller, boot) have no evictor to give.
 eviction. A failed one leaves the service hosted and unadvertised. With stuck 1 fixed, an eviction doesn't fail on
 the store, and `resume` runs on every path that ends with the service remote. The one case left is a context
 that closes mid-eviction, where it doesn't matter.
+
+### Stuck 5: a refusal that can't hand back what it claimed
+
+`acquireAll` claims a service's leases in order, and on a refusal hands back the ones it already claimed, through
+`drop`. `drop` forgot the lease and then removed the claim from the store, which could throw. The first failure
+ended the loop, so every lease after it stayed in the keeper with no holder, and the heartbeat renewed it.
+
+**Fix.** The same as stuck 1: handing a claim back is best-effort in `drop` itself, so everything that lets a
+lease go (a refusal, a release, the context closing) forgets it whatever the store says, and the claim lapses
+within its TTL.
 
 ### Stuck 4: a background task that dies
 

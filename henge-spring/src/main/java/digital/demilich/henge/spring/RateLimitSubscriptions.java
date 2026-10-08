@@ -12,6 +12,8 @@ import java.util.concurrent.TimeUnit;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.ApplicationEventPublisherAware;
 import org.springframework.lang.Nullable;
 
 /**
@@ -24,7 +26,7 @@ import org.springframework.lang.Nullable;
  * node's share smaller, never the cluster's total larger. A node that has never read {@code N} doesn't
  * serve: it is held not ready until it has.
  */
-class RateLimitSubscriptions implements DisposableBean {
+class RateLimitSubscriptions implements DisposableBean, ApplicationEventPublisherAware {
 
     static final Duration DEFAULT_TTL = Duration.ofSeconds(30);
 
@@ -55,6 +57,7 @@ class RateLimitSubscriptions implements DisposableBean {
     private final HengeBootGate gate;
     private final Map<String, Subscription> subscriptions = new ConcurrentHashMap<>();
     private ScheduledExecutorService heartbeat;
+    private volatile ApplicationEventPublisher events;
 
     /** @param metrics null (there are none to report to) is as good as {@link SystemMetrics#NONE} */
     RateLimitSubscriptions(SystemEphemeralDatastore datastore, Duration ttl, @Nullable SystemMetrics metrics, HengeBootGate gate) {
@@ -109,8 +112,14 @@ class RateLimitSubscriptions implements DisposableBean {
                 return thread;
             });
             long periodMillis = Math.max(1, ttl.toMillis() / 3);
-            heartbeat.scheduleWithFixedDelay(this::renewAll, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
+            heartbeat.scheduleWithFixedDelay(BackgroundTasks.surviving("rate limit membership", this::renewAll, log, () -> events),
+                    periodMillis, periodMillis, TimeUnit.MILLISECONDS);
         }
+    }
+
+    @Override
+    public void setApplicationEventPublisher(ApplicationEventPublisher events) {
+        this.events = events;
     }
 
     void renewAll() {

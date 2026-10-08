@@ -20,6 +20,8 @@ import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.ApplicationEventPublisherAware;
 import org.springframework.lang.Nullable;
 
 /**
@@ -46,7 +48,7 @@ import org.springframework.lang.Nullable;
  * caller of {@link #acquireAll} makes that its {@link ServiceBinding}'s target, and
  * {@link HengeServiceRegistry} follows the binding.
  */
-class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
+class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware, ApplicationEventPublisherAware {
 
     static final Duration DEFAULT_TTL = Duration.ofSeconds(30);
 
@@ -86,6 +88,7 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
     private final Map<String, Runnable> evictors = new LinkedHashMap<>();
     private ScheduledExecutorService heartbeat;
     private BeanFactory beanFactory;
+    private volatile ApplicationEventPublisher events;
 
     /** @param metrics null (there are none to report to) is as good as {@link SystemMetrics#NONE} */
     HengeLeaseKeeper(SystemEphemeralDatastore datastore, Duration ttl, @Nullable SystemMetrics metrics) {
@@ -97,6 +100,11 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
     @Override
     public void setBeanFactory(BeanFactory beanFactory) throws BeansException {
         this.beanFactory = beanFactory;
+    }
+
+    @Override
+    public void setApplicationEventPublisher(ApplicationEventPublisher events) {
+        this.events = events;
     }
 
     /**
@@ -122,7 +130,7 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
                 granted = datastore.claim(key(need.name()), MEMBER, need.amount(), need.capacity(), ttl);
             } catch (RuntimeException e) {
                 // Asked again later, from nothing: what this call claimed is let go, as on a refusal.
-                claimedHere.forEach(claimed -> dropQuietly(claimed.name()));
+                claimedHere.forEach(claimed -> drop(claimed.name()));
                 throw e;
             }
             metrics.leaseClaimed(need.name(), granted);
@@ -154,9 +162,21 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
     /**
      * What to run, off the heartbeat, when {@code localName}'s lease can't be kept: it must stop hosting
      * the service and {@link #release} it, which hands the lease back once its last holder here has.
+     *
+     * <p>A service is a holder from {@link #acquireAll}, and registers this once it is hosted, so a renewal
+     * refused in between finds no evictor to run. If a lease it stands on is already being given up, the
+     * evictor runs now, on its own thread as {@link #lost} runs it. Both happen under this lock, so it runs
+     * exactly once.
      */
     synchronized void onEviction(String localName, Runnable evictor) {
         evictors.put(localName, evictor);
+        boolean leaving = leasesByService.getOrDefault(localName, List.of()).stream()
+                .map(heldByLease::get)
+                .anyMatch(held -> held != null && held.leaving);
+        if (leaving) {
+            log.warn("A lease of " + localName + " was lost while it was being hosted; it stops being hosted here");
+            Thread.ofVirtual().name("henge-lease-eviction").start(evictor);
+        }
     }
 
     /** Whether this node already holds {@code lease}, for some service of its own: a claim it needn't ask the cluster for. */
@@ -211,15 +231,12 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
         }
     }
 
-    private void dropQuietly(String lease) {
-        try {
-            drop(lease);
-        } catch (RuntimeException e) {
-            // The claim lapses with its TTL; nothing else to do for it.
-            GuardedDatastore.logFailure(log, "Handing back lease '" + lease + "' failed", e);
-        }
-    }
-
+    /**
+     * Forgets {@code lease} here, closes its resource, and hands its claim back. Handing back is best-effort:
+     * once forgotten nothing renews the claim, so one the store didn't take back lapses within its TTL, and
+     * until then pollers count it as in use. A failure here would otherwise leave the rest of what the caller
+     * was letting go of held, with nothing to retry it.
+     */
     private void drop(String lease) {
         Held held = heldByLease.remove(lease);
         if (held != null) {
@@ -232,7 +249,11 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
                 log.warn("Closing the resource of lease '" + lease + "' failed", e);
             }
         }
-        datastore.remove(key(lease), MEMBER);
+        try {
+            datastore.remove(key(lease), MEMBER);
+        } catch (RuntimeException e) {
+            GuardedDatastore.logFailure(log, "Handing back lease '" + lease + "' failed; it lapses within " + ttl, e);
+        }
     }
 
     private synchronized void startHeartbeat() {
@@ -243,7 +264,8 @@ class HengeLeaseKeeper implements DisposableBean, BeanFactoryAware {
                 return thread;
             });
             long periodMillis = Math.max(1, ttl.toMillis() / 3);
-            heartbeat.scheduleWithFixedDelay(this::renewAll, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
+            heartbeat.scheduleWithFixedDelay(BackgroundTasks.surviving("lease heartbeat", this::renewAll, log, () -> events),
+                    periodMillis, periodMillis, TimeUnit.MILLISECONDS);
         }
     }
 

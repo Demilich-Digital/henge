@@ -6,7 +6,11 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.availability.AvailabilityChangeEvent;
+import org.springframework.boot.availability.LivenessState;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -41,6 +45,16 @@ public class HengeAutoConfiguration {
     @ConditionalOnMissingBean
     HengeTopologyCatalog hengeTopologyCatalog() {
         return new HengeTopologyCatalog(List.of());
+    }
+
+    /**
+     * A background task of Henge's that dies of an {@code Error} (the lease heartbeat, say) leaves the process
+     * hosting on claims that lapse, which only a restart heals: so the process stops being live, and the
+     * orchestrator restarts it. See {@link BackgroundTasks}.
+     */
+    @Bean
+    ApplicationListener<BackgroundTasks.Died> hengeLivenessOnDeadBackgroundTask(ApplicationContext context) {
+        return died -> AvailabilityChangeEvent.publish(context, LivenessState.BROKEN);
     }
 
     /**

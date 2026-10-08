@@ -162,6 +162,11 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
      * Gives this service up because a lease it stands on can't be kept (see {@link HengeLeaseKeeper}): stops
      * hosting it as a retirement does, releasing what it held, and then waits to be hosted again like a service
      * that was refused its lease, since the lease may well come back. Unlike a retirement, which is final.
+     *
+     * <p>The store calls in a retirement are best-effort, each finished by its entry's TTL if the store doesn't
+     * take it, so a store that is away can't stop an eviction part-way. Whatever happens, once the service is no
+     * longer hosted here it is advertised again when it is, and it is a candidate: a service that is neither
+     * hosted nor a candidate would never be hosted here again.
      */
     private void evict() {
         HengeProperties properties = new HengeProperties(applicationContext.getEnvironment());
@@ -169,14 +174,23 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
             applicationContext.getBean(HengeServiceRegistry.class).retire(spec.serviceName(), spec.version(),
                     properties.getLeaseEvictGrace(), properties.getLeaseEvictDrainTimeout());
         } catch (InterruptedException e) {
+            // Only a closing context interrupts an eviction; nothing is hosted again after it.
             Thread.currentThread().interrupt();
             return;
         } catch (RuntimeException e) {
-            log.error("Giving up " + spec.localName() + " failed; it is still hosted here", e);
+            log.error("Giving up " + spec.localName() + " failed", e);
+        }
+        HengeServiceAdvertiser advertiser = applicationContext.getBeanProvider(HengeServiceAdvertiser.class).getIfAvailable();
+        if (binding().isLocal()) {
+            // Still hosted, on a lease that is being given up: a bug, since nothing left in an eviction fails on the
+            // store. It is advertised again, so that it is at least reached while it is hosted.
+            log.error(spec.localName() + " is still hosted here, on a lease this process has given up");
+            if (advertiser != null) {
+                advertiser.resume(spec.serviceName(), spec.version());
+            }
             return;
         }
         retired.set(false);
-        HengeServiceAdvertiser advertiser = applicationContext.getBeanProvider(HengeServiceAdvertiser.class).getIfAvailable();
         if (advertiser != null) {
             advertiser.resume(spec.serviceName(), spec.version());
         }

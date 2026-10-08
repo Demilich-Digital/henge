@@ -10,6 +10,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.ApplicationEventPublisherAware;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.lang.Nullable;
 
@@ -24,7 +26,7 @@ import org.springframework.lang.Nullable;
  * stop, so it withdraws before the server stops answering. Callers read the advertisements to route
  * to a service with no configured url (see {@link AdvertisedEndpoints}).
  */
-class HengeServiceAdvertiser implements SmartLifecycle {
+class HengeServiceAdvertiser implements SmartLifecycle, ApplicationEventPublisherAware {
 
     private static final Log log = LogFactory.getLog(HengeServiceAdvertiser.class);
 
@@ -42,6 +44,7 @@ class HengeServiceAdvertiser implements SmartLifecycle {
     private final Set<String> withdrawn = new HashSet<>();
     private ScheduledExecutorService heartbeat;
     private boolean running;
+    private volatile ApplicationEventPublisher events;
 
     /** @param metrics null (there are none to report to) is as good as {@link SystemMetrics#NONE} */
     HengeServiceAdvertiser(SystemEphemeralDatastore datastore, HengeServiceRegistry registry, String advertiseUrl, Duration ttl,
@@ -51,6 +54,11 @@ class HengeServiceAdvertiser implements SmartLifecycle {
         this.registry = registry;
         this.advertisement = new ServiceAdvertisement(advertiseUrl);
         this.ttl = ttl;
+    }
+
+    @Override
+    public void setApplicationEventPublisher(ApplicationEventPublisher events) {
+        this.events = events;
     }
 
     @Override
@@ -68,7 +76,8 @@ class HengeServiceAdvertiser implements SmartLifecycle {
                 return thread;
             });
             long periodMillis = Math.max(1, ttl.toMillis() / 3);
-            heartbeat.scheduleWithFixedDelay(this::renew, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
+            heartbeat.scheduleWithFixedDelay(BackgroundTasks.surviving("advertisement refresh", this::renew, log, () -> events),
+                    periodMillis, periodMillis, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -97,13 +106,26 @@ class HengeServiceAdvertiser implements SmartLifecycle {
         }
     }
 
-    /** Stops advertising one service version, now and on every later heartbeat; the others carry on. */
+    /**
+     * Stops advertising one service version, now and on every later heartbeat; the others carry on. Taking the
+     * advertisement out of the store is best-effort: it is no longer renewed, so one that stays lapses within its
+     * TTL, and a caller that still routes here meanwhile gets a {@code 404}, which means nothing ran, and is
+     * retried on the next host.
+     */
     synchronized void withdraw(String service, int version) {
         withdrawn.add(service + "@" + version);
         advertised = advertised.stream()
                 .filter(hosted -> !(hosted.name().equals(service) && hosted.version() == version))
                 .toList();
-        datastore.remove(ServiceAdvertisement.key(service, version), MEMBER);
+        remove(service, version);
+    }
+
+    private void remove(String service, int version) {
+        try {
+            datastore.remove(ServiceAdvertisement.key(service, version), MEMBER);
+        } catch (RuntimeException e) {
+            GuardedDatastore.logFailure(log, "Withdrawing " + service + "@" + version + " failed; it lapses within " + ttl, e);
+        }
     }
 
     /** Undoes {@link #withdraw}: the service version is advertised again from the next {@link #renew}, once it is hosted here. */
@@ -122,7 +144,7 @@ class HengeServiceAdvertiser implements SmartLifecycle {
             heartbeat = null;
         }
         for (HengeServiceDescriptor service : advertised) {
-            datastore.remove(ServiceAdvertisement.key(service.name(), service.version()), MEMBER);
+            remove(service.name(), service.version());
         }
     }
 
