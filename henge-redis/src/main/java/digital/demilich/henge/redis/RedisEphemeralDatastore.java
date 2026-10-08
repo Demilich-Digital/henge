@@ -425,7 +425,8 @@ public final class RedisEphemeralDatastore implements SystemEphemeralDatastore, 
 
     /**
      * {@code HRANDFIELD} with a count, less the token: it returns distinct live fields only (measured on
-     * Redis 8.10). The total is {@code HLEN}'s, as {@link #count} gives it.
+     * Redis 7.4.11 and 8.10, with active expiry off, so a lapsed field is not yet reclaimed: {@code RedisLapsedFieldsTest}).
+     * The total is {@code HLEN}'s, as {@link #count} gives it.
      */
     @Override
     public Sample sample(String key, int limit) {
