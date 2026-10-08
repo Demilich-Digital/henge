@@ -178,6 +178,9 @@ final class GuardedDatastore implements SystemEphemeralDatastore {
                         listener.run();
                     } catch (RuntimeException e) {
                         log.warn("Re-asserting after the ephemeral store's recovery failed", e);
+                    } catch (Error e) {
+                        // The next listener still runs: each re-asserts something else, and the heartbeat reports its own death.
+                        log.error("Re-asserting after the ephemeral store's recovery failed", e);
                     }
                 }
             });

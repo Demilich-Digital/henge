@@ -54,4 +54,25 @@ class BackgroundTasksTest {
         assertThat(published).singleElement().isInstanceOfSatisfying(BackgroundTasks.Died.class,
                 died -> assertThat(died.task()).isEqualTo("test task"));
     }
+
+    @Test
+    void aTaskThatDiesOfAnErrorWithNobodyToTellRunsAgain() throws Exception {
+        var runs = new AtomicInteger();
+        var executor = Executors.newSingleThreadScheduledExecutor();
+        try {
+            executor.scheduleWithFixedDelay(BackgroundTasks.surviving("test task", () -> {
+                runs.incrementAndGet();
+                throw new AssertionError("fatal");
+            }, LogFactory.getLog(getClass()), () -> null), 0, 5, TimeUnit.MILLISECONDS);
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (runs.get() < 3 && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(runs.get()).isGreaterThanOrEqualTo(3);
+    }
 }

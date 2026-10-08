@@ -14,7 +14,9 @@ import org.springframework.context.ApplicationEventPublisher;
  * <p>A {@link RuntimeException} is logged and the run ends, so the next one still happens. An {@link Error} is
  * fatal on purpose: a process whose heartbeat has stopped keeps hosting on claims that lapse, which nothing
  * heals but a restart. It is logged, {@link Died} is published (with the Boot starter, the process then
- * reports {@code LivenessState.BROKEN}, so the orchestrator restarts it), and the task stops.
+ * reports {@code LivenessState.BROKEN}, so the orchestrator restarts it), and the task stops. If nobody can
+ * be told (no context to publish to, or publishing failed) it doesn't stop: a task that dies unheard is
+ * worse than one that runs again, so it is logged and runs on schedule.
  */
 final class BackgroundTasks {
 
@@ -51,12 +53,15 @@ final class BackgroundTasks {
                 log.error("Henge's " + task + " died, and has stopped. This process can no longer keep its place in the "
                         + "cluster, and should be restarted", e);
                 ApplicationEventPublisher events = publisher.get();
-                if (events != null) {
-                    try {
-                        events.publishEvent(new Died(task, e));
-                    } catch (RuntimeException publishing) {
-                        log.error("Saying that Henge's " + task + " died failed", publishing);
-                    }
+                if (events == null) {
+                    log.error("Nobody can be told that Henge's " + task + " died, so it runs again on schedule");
+                    return;
+                }
+                try {
+                    events.publishEvent(new Died(task, e));
+                } catch (RuntimeException publishing) {
+                    log.error("Saying that Henge's " + task + " died failed, so it runs again on schedule", publishing);
+                    return;
                 }
                 throw e;
             }
