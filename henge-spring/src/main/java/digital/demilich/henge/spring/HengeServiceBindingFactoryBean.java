@@ -60,6 +60,9 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
     private Object proxy;
     private final AtomicBoolean retired = new AtomicBoolean();
 
+    /** How long an eviction that left the service hosted waits before giving it up again. */
+    private static final Duration EVICT_RETRY = Duration.ofSeconds(5);
+
     HengeServiceBindingFactoryBean(ServiceBindingSpec spec) {
         this.spec = spec;
     }
@@ -170,25 +173,35 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
      */
     private void evict() {
         HengeProperties properties = new HengeProperties(applicationContext.getEnvironment());
-        try {
-            applicationContext.getBean(HengeServiceRegistry.class).retire(spec.serviceName(), spec.version(),
-                    properties.getLeaseEvictGrace(), properties.getLeaseEvictDrainTimeout());
-        } catch (InterruptedException e) {
-            // Only a closing context interrupts an eviction; nothing is hosted again after it.
-            Thread.currentThread().interrupt();
-            return;
-        } catch (RuntimeException e) {
-            log.error("Giving up " + spec.localName() + " failed", e);
-        }
         HengeServiceAdvertiser advertiser = applicationContext.getBeanProvider(HengeServiceAdvertiser.class).getIfAvailable();
-        if (binding().isLocal()) {
+        while (true) {
+            try {
+                applicationContext.getBean(HengeServiceRegistry.class).retire(spec.serviceName(), spec.version(),
+                        properties.getLeaseEvictGrace(), properties.getLeaseEvictDrainTimeout());
+            } catch (InterruptedException e) {
+                // Only a closing context interrupts an eviction; nothing is hosted again after it.
+                Thread.currentThread().interrupt();
+                return;
+            } catch (RuntimeException e) {
+                log.error("Giving up " + spec.localName() + " failed", e);
+            }
+            if (!binding().isLocal()) {
+                break;
+            }
             // Still hosted, on a lease that is being given up: a bug, since nothing left in an eviction fails on the
-            // store. It is advertised again, so that it is at least reached while it is hosted.
-            log.error(spec.localName() + " is still hosted here, on a lease this process has given up");
+            // store. It is advertised again, so that it is at least reached while it is hosted, and given up again:
+            // nothing else would, and the lease is counted as free for others while this keeps serving on it.
+            log.error(spec.localName() + " is still hosted here, on a lease this process has given up; trying again in "
+                    + EVICT_RETRY);
             if (advertiser != null) {
                 advertiser.resume(spec.serviceName(), spec.version());
             }
-            return;
+            try {
+                Thread.sleep(EVICT_RETRY);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
         retired.set(false);
         if (advertiser != null) {
@@ -231,11 +244,13 @@ class HengeServiceBindingFactoryBean implements SmartFactoryBean<Object>, Applic
      */
     void retire(Duration drainTimeout) throws InterruptedException {
         ServiceBinding current = binding();
+        // Before anything changes, so a missing transport leaves the service hosted, not half retired.
+        ServiceTransport transport = transport();
         if (!current.isLocal() || !retired.compareAndSet(false, true)) {
             return;
         }
         try {
-            if (!current.retire(transport(), drainTimeout)) {
+            if (!current.retire(transport, drainTimeout)) {
                 log.warn(spec.localName() + " still had calls running after " + drainTimeout + "; destroying it anyway");
             }
         } finally {
